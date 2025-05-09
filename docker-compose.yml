@@ -1,0 +1,21 @@
+version: '3.8'
+
+services:
+  api:
+    build: 
+      context: ./server
+      dockerfile: Dockerfile
+    volumes:
+      - ./server:/app
+    ports:
+      - "8000:8000"
+    environment:
+      - ENVIRONMENT=development
+    container_name: data-connector-api
+    restart: unless-stopped
+    networks:
+      - connector-network
+
+networks:
+  connector-network:
+    driver: bridge 
