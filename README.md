@@ -29,12 +29,14 @@ pip install -r server/requirements.txt
 
 2. Update the `.env` file with your specific configuration:
    - Database credentials
-   - OpenAI API key
+   - OpenAI or Anthropic API key
    - Redis settings (if using)
 
-### OpenAI Integration
+### LLM Integration
 
-This project uses OpenAI's API for translating natural language to SQL and analyzing query results.
+This project supports both OpenAI and Anthropic APIs for translating natural language to SQL and analyzing query results.
+
+#### OpenAI Integration
 
 1. Set up your OpenAI API key:
    ```bash
@@ -48,6 +50,22 @@ This project uses OpenAI's API for translating natural language to SQL and analy
 2. Test the OpenAI integration:
    ```bash
    python server/agent/llm/test_openai.py
+   ```
+
+#### Anthropic Integration
+
+1. Set up your Anthropic API key:
+   ```bash
+   # Export your API key as an environment variable
+   export ANTHROPIC_API_KEY='your-api-key'
+   
+   # Or add it to your .env file:
+   echo "ANTHROPIC_API_KEY=your-api-key" >> .env
+   ```
+
+2. Test the Anthropic integration:
+   ```bash
+   python server/agent/llm/test_anthropic.py
    ```
 
 ### Git Setup

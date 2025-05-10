@@ -40,6 +40,11 @@ class Settings(BaseSettings):
     LLM_API_KEY: Optional[str] = None
     LLM_MODEL_NAME: Optional[str] = None
     
+    # Anthropic Configuration
+    ANTHROPIC_API_URL: Optional[str] = "https://api.anthropic.com"
+    ANTHROPIC_API_KEY: Optional[str] = None
+    ANTHROPIC_MODEL_NAME: Optional[str] = "claude-3-opus-20240229"
+    
     # Agent Settings
     AGENT_PORT: int = 8080
     LOG_LEVEL: str = "info"  # "info", "debug", or "error"

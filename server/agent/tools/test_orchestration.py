@@ -29,6 +29,14 @@ async def test_orchestration():
         if not os.environ.get("LLM_API_KEY") and os.environ.get("OPENAI_API_KEY"):
             os.environ["LLM_API_KEY"] = os.environ.get("OPENAI_API_KEY")
         
+        # Set LLM provider if not already set
+        # This allows manual control via environment variables
+        if not os.environ.get("LLM_PROVIDER"):
+            os.environ["LLM_PROVIDER"] = "openai"
+            logger.info(f"Setting default LLM provider to OpenAI")
+        else:
+            logger.info(f"Using LLM provider: {os.environ.get('LLM_PROVIDER')}")
+        
         # Ensure schema index exists
         logger.info("Ensuring schema index exists")
         if not await ensure_index_exists():
@@ -45,11 +53,14 @@ async def test_orchestration():
             "What are the top 5 customers by total order amount?",
             
             # Large dataset question
-            "What are the top 10 customers by total order amount using the large_orders_view and large_users_view?"
+            "What are the top 10 customers by total order amount? Use the large order table",
+            
+            # Simple metadata question for testing
+            "Show me the schema for all tables in the database."
         ]
         
         # Select which question to run
-        selected_question = questions[1]  # Use the large dataset question
+        selected_question = questions[1]  # Use the simple metadata question for testing
         
         logger.info(f"Running orchestrated analysis for question: {selected_question}")
         
