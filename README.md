@@ -20,6 +20,18 @@ source connector/bin/activate
 pip install -r server/requirements.txt
 ```
 
+### Environment Configuration
+
+1. Copy the example environment file:
+   ```bash
+   cp .env-example .env
+   ```
+
+2. Update the `.env` file with your specific configuration:
+   - Database credentials
+   - OpenAI API key
+   - Redis settings (if using)
+
 ### OpenAI Integration
 
 This project uses OpenAI's API for translating natural language to SQL and analyzing query results.
@@ -29,16 +41,26 @@ This project uses OpenAI's API for translating natural language to SQL and analy
    # Export your API key as an environment variable
    export OPENAI_API_KEY='your-api-key'
    
-   # Or create a .env file in the server directory:
-   echo "LLM_API_URL=https://api.openai.com/v1" > server/.env
-   echo "LLM_API_KEY=your-api-key" >> server/.env
-   echo "LLM_MODEL_NAME=gpt-4" >> server/.env  # or another model
+   # Or add it to your .env file:
+   echo "LLM_API_KEY=your-api-key" >> .env
    ```
 
 2. Test the OpenAI integration:
    ```bash
    python server/agent/llm/test_openai.py
    ```
+
+### Git Setup
+
+The project includes a comprehensive `.gitignore` file to prevent sensitive information and large files from being committed to the repository. If you've already committed sensitive files, use the cleanup script:
+
+```bash
+# Run the cleanup script to remove sensitive files from git tracking
+./cleanup_git.sh
+
+# Then commit the changes
+git commit -m "Remove sensitive and large files from git tracking"
+```
 
 ### Running with Docker
 
@@ -55,6 +77,18 @@ docker-compose up --build
    ```
 
 2. Or access the API endpoints when running as a service.
+
+### Using Large Views
+
+For testing with large datasets, the project includes virtual views that simulate large amounts of data:
+
+```bash
+# Check schema for large views:
+python -m server.agent.cmd.query check-schema
+
+# Run a query explicitly specifying large views:
+python -m server.agent.cmd.query "What are the top 10 customers by total order amount using the large_orders_view and large_users_view?" --orchestrate
+```
 
 ## Documentation
 
