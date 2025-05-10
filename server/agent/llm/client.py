@@ -59,6 +59,20 @@ class LLMClient:
         """
         raise NotImplementedError("Subclasses must implement generate_sql")
     
+    async def generate_mongodb_query(self, prompt: str) -> str:
+        """
+        Generate MongoDB aggregation pipeline from a natural language prompt
+        
+        This method should be overridden by subclasses
+        
+        Args:
+            prompt: The prompt to send to the LLM
+            
+        Returns:
+            Generated MongoDB query as a JSON string
+        """
+        raise NotImplementedError("Subclasses must implement generate_mongodb_query")
+    
     async def analyze_results(self, rows: List[Dict[str, Any]]) -> str:
         """
         Analyze SQL query results
@@ -248,6 +262,52 @@ class OpenAIClient(LLMClient):
             
         except Exception as e:
             logger.error(f"Error generating SQL with OpenAI: {str(e)}")
+            raise
+    
+    async def generate_mongodb_query(self, prompt: str) -> str:
+        """
+        Generate MongoDB aggregation pipeline from a natural language prompt using OpenAI API
+        
+        Args:
+            prompt: The prompt to send to the OpenAI API
+            
+        Returns:
+            Generated MongoDB query as a JSON string
+        """
+        logger.info("Generating MongoDB query using OpenAI API")
+        
+        try:
+            response = self.client.chat.completions.create(
+                model=self.model_name,
+                messages=[
+                    {"role": "system", "content": "You are a MongoDB expert. Generate only JSON representing a valid MongoDB query."},
+                    {"role": "user", "content": prompt}
+                ],
+                temperature=0.1
+            )
+            
+            mongodb_query = response.choices[0].message.content.strip()
+            logger.info("Successfully generated MongoDB query")
+            
+            # Validate that the response is valid JSON
+            try:
+                json.loads(mongodb_query)
+            except json.JSONDecodeError:
+                # If it's not valid JSON, try to extract JSON from the response
+                # It might be wrapped in ```json and ``` blocks
+                import re
+                json_match = re.search(r'```(?:json)?\s*([\s\S]*?)\s*```', mongodb_query)
+                if json_match:
+                    mongodb_query = json_match.group(1).strip()
+                    # Validate again
+                    json.loads(mongodb_query)
+                else:
+                    raise ValueError("Generated MongoDB query is not valid JSON")
+            
+            return mongodb_query
+            
+        except Exception as e:
+            logger.error(f"Error generating MongoDB query with OpenAI: {str(e)}")
             raise
     
     async def analyze_results(self, rows: List[Dict[str, Any]]) -> str:
@@ -722,6 +782,62 @@ class AnthropicClient(LLMClient):
             logger.error(f"Error generating SQL with Anthropic: {str(e)}")
             raise
     
+    async def generate_mongodb_query(self, prompt: str) -> str:
+        """
+        Generate MongoDB aggregation pipeline from a natural language prompt using Anthropic API
+        
+        Args:
+            prompt: The prompt to send to the Anthropic API
+            
+        Returns:
+            Generated MongoDB query as a JSON string
+        """
+        logger.info("Generating MongoDB query using Anthropic API")
+        
+        try:
+            response = self.client.messages.create(
+                model=self.model_name,
+                messages=[
+                    {"role": "user", "content": prompt}
+                ],
+                system="You are a MongoDB expert. Generate only JSON representing a valid MongoDB query.",
+                temperature=0.1,
+                max_tokens=1000
+            )
+            
+            # Extract text content from the response
+            if hasattr(response, 'content') and len(response.content) > 0:
+                # Handle different response structures
+                if hasattr(response.content[0], 'text'):
+                    mongodb_query = response.content[0].text
+                else:
+                    mongodb_query = response.content[0]
+            else:
+                logger.warning("Unexpected response format from Anthropic API")
+                mongodb_query = ""
+            
+            # Validate that the response is valid JSON
+            try:
+                json.loads(mongodb_query)
+            except json.JSONDecodeError:
+                # If it's not valid JSON, try to extract JSON from the response
+                # It might be wrapped in ```json and ``` blocks
+                import re
+                json_match = re.search(r'```(?:json)?\s*([\s\S]*?)\s*```', mongodb_query)
+                if json_match:
+                    mongodb_query = json_match.group(1).strip()
+                    # Validate again
+                    json.loads(mongodb_query)
+                else:
+                    raise ValueError("Generated MongoDB query is not valid JSON")
+                
+            logger.info("Successfully generated MongoDB query")
+            return mongodb_query
+            
+        except Exception as e:
+            logger.error(f"Error generating MongoDB query with Anthropic: {str(e)}")
+            raise
+    
     async def analyze_results(self, rows: List[Dict[str, Any]]) -> str:
         """
         Analyze SQL query results using Anthropic API
@@ -1145,6 +1261,32 @@ class LocalLLMClient(LLMClient):
         
         # For demonstration purposes, return a placeholder SQL query
         return "SELECT * FROM users LIMIT 10"
+    
+    async def generate_mongodb_query(self, prompt: str) -> str:
+        """
+        Generate MongoDB aggregation pipeline from a natural language prompt using local LLM
+        
+        Args:
+            prompt: The prompt to send to the local LLM
+            
+        Returns:
+            Generated MongoDB query as a JSON string
+        """
+        logger.info("Generating MongoDB query using local LLM")
+        
+        # This is a placeholder - in a real implementation, you would:
+        # 1. Load the local model
+        # 2. Run inference
+        # 3. Extract and return the generated MongoDB query
+        
+        # For demonstration purposes, return a placeholder MongoDB query
+        return '''{
+          "collection": "users",
+          "pipeline": [
+            { "$match": { "active": true } },
+            { "$limit": 10 }
+          ]
+        }'''
     
     async def analyze_results(self, rows: List[Dict[str, Any]]) -> str:
         """

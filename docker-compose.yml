@@ -38,9 +38,26 @@ services:
     networks:
       - connector-network
 
+  mongodb:
+    image: mongo:7
+    ports:
+      - "27000:27017"
+    environment:
+      - MONGO_INITDB_ROOT_USERNAME=dataconnector
+      - MONGO_INITDB_ROOT_PASSWORD=dataconnector
+      - MONGO_INITDB_DATABASE=dataconnector_mongo
+    volumes:
+      - mongodb-data:/data/db
+      - ./init-mongodb:/docker-entrypoint-initdb.d
+    container_name: data-connector-mongodb
+    networks:
+      - connector-network
+    command: ["--auth"]
+
 networks:
   connector-network:
     driver: bridge
 
 volumes:
-  postgres-data: 
+  postgres-data:
+  mongodb-data: 

@@ -1,5 +1,5 @@
 """Performance monitoring utilities for the agent."""
 
-from agent.performance.schema_monitor import SchemaMonitor, ensure_schema_index_updated
+from .schema_monitor import ensure_schema_index_updated, SchemaMonitor
 
-__all__ = ["SchemaMonitor", "ensure_schema_index_updated"]
+__all__ = ['ensure_schema_index_updated', 'SchemaMonitor']

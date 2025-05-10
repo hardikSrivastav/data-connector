@@ -13,6 +13,9 @@ from rich.table import Table
 from rich.panel import Panel
 from rich.markdown import Markdown
 from rich.progress import Progress, SpinnerColumn, TextColumn
+from urllib.parse import urlparse
+
+print("Starting Data Connector CLI...")
 
 # Add parent directory to path
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
@@ -25,6 +28,7 @@ from agent.tools.tools import DataTools
 from agent.tools.state_manager import StateManager
 from agent.config.settings import Settings
 from agent.performance import ensure_schema_index_updated
+from agent.db.orchestrator import Orchestrator
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
@@ -37,23 +41,70 @@ console = Console()
 app = typer.Typer(help="Data Connector CLI")
 
 @app.command()
-def test_connection():
+def test_connection(
+    db_uri: Optional[str] = typer.Option(None, "--uri", "-u", help="Database connection URI (overrides settings)")
+):
     """Test database connection"""
     async def run():
-        conn_ok = await test_conn()
-        if conn_ok:
-            console.print("[green]Connection successful![/green]")
-        else:
-            console.print("[red]Connection failed![/red]")
+        settings = Settings()
+        uri = db_uri or settings.connection_uri
+        
+        # Display the database type
+        db_type = urlparse(uri).scheme
+        console.print(f"Testing connection to [bold]{db_type}[/bold] database...")
+        
+        # Use the orchestrator to test connection
+        try:
+            orchestrator = Orchestrator(uri)
+            conn_ok = await orchestrator.test_connection()
+            
+            if conn_ok:
+                console.print("[green]Connection successful![/green]")
+            else:
+                console.print("[red]Connection failed![/red]")
+        except Exception as e:
+            console.print(f"[red]Connection error: {str(e)}[/red]")
     
     asyncio.run(run())
 
 @app.command()
-def build_index():
+def build_index(
+    db_uri: Optional[str] = typer.Option(None, "--uri", "-u", help="Database connection URI (overrides settings)"),
+    db_type: Optional[str] = typer.Option(None, "--type", "-t", help="Database type ('postgres', 'mongodb', etc.)")
+):
     """Build schema metadata index"""
     async def run():
-        console.print("Building schema metadata index...")
-        if await ensure_index_exists():
+        settings = Settings()
+        
+        # If db_type is specified, update the Settings.DB_TYPE
+        if db_type:
+            settings.DB_TYPE = db_type
+        
+        # Get connection URI (possibly based on the new DB_TYPE)
+        uri = db_uri or settings.connection_uri
+        
+        # Determine database type (from URI or settings)
+        detected_db_type = db_type or urlparse(uri).scheme
+        if not detected_db_type:
+            detected_db_type = settings.DB_TYPE  # Use the setting
+        
+        console.print(f"Building schema metadata index for [bold]{detected_db_type}[/bold]...")
+        
+        # Additional parameters for MongoDB
+        kwargs = {}
+        if detected_db_type.lower() == "mongodb":
+            # Extract database name from MongoDB URI
+            parsed_uri = urlparse(uri)
+            db_name = parsed_uri.path.lstrip('/')
+            if db_name:
+                kwargs['db_name'] = db_name
+                console.print(f"Using MongoDB database: [bold]{db_name}[/bold]")
+            else:
+                console.print("[yellow]Warning: No database name found in MongoDB URI. Using default.[/yellow]")
+                # Use a default database name if not in the URI
+                kwargs['db_name'] = "dataconnector_mongo"
+        
+        if await ensure_index_exists(db_type=detected_db_type, conn_uri=uri, **kwargs):
             console.print("[green]Index built successfully![/green]")
         else:
             console.print("[red]Failed to build index![/red]")
@@ -62,13 +113,58 @@ def build_index():
 
 @app.command()
 def check_schema(
-    force: bool = typer.Option(False, "--force", "-f", help="Force reindexing even if no changes detected")
+    force: bool = typer.Option(False, "--force", "-f", help="Force reindexing even if no changes detected"),
+    db_uri: Optional[str] = typer.Option(None, "--uri", "-u", help="Database connection URI (overrides settings)"),
+    db_type: Optional[str] = typer.Option(None, "--type", "-t", help="Database type ('postgres', 'mongodb', etc.)"),
+    debug: bool = typer.Option(False, "--debug", "-d", help="Show debug output")
 ):
     """Check for schema changes and update index if needed"""
     async def run():
-        console.print("Checking for schema changes...")
+        # Set debug logging if requested
+        if debug:
+            logging.getLogger().setLevel(logging.DEBUG)
+            for handler in logging.getLogger().handlers:
+                handler.setLevel(logging.DEBUG)
+            logger.debug("Debug logging enabled")
         
-        updated, message = await ensure_schema_index_updated(force=force)
+        settings = Settings()
+        
+        # Debug: Print initial DB_TYPE
+        console.print(f"[dim]Initial DB_TYPE: {settings.DB_TYPE}[/dim]")
+        
+        # If db_type is specified, update the Settings.DB_TYPE
+        if db_type:
+            settings.DB_TYPE = db_type
+            console.print(f"[dim]Updated DB_TYPE to: {settings.DB_TYPE}[/dim]")
+        
+        # Get connection URI (possibly based on the new DB_TYPE)
+        uri = db_uri or settings.connection_uri
+        
+        # Debug: Print connection URI
+        console.print(f"[dim]Using connection URI: {uri}[/dim]")
+        
+        # Determine database type (from URI or settings)
+        detected_db_type = db_type or urlparse(uri).scheme
+        if not detected_db_type:
+            detected_db_type = settings.DB_TYPE  # Use the setting
+        
+        console.print(f"Checking for schema changes in [bold]{detected_db_type}[/bold] database...")
+        
+        # Additional parameters for MongoDB
+        kwargs = {}
+        if detected_db_type.lower() == "mongodb":
+            # Extract database name from MongoDB URI
+            parsed_uri = urlparse(uri)
+            db_name = parsed_uri.path.lstrip('/')
+            if db_name:
+                kwargs['db_name'] = db_name
+                console.print(f"Using MongoDB database: [bold]{db_name}[/bold]")
+            else:
+                console.print("[yellow]Warning: No database name found in MongoDB URI. Using default.[/yellow]")
+                # Use a default database name if not in the URI
+                kwargs['db_name'] = "dataconnector_mongo"
+        
+        updated, message = await ensure_schema_index_updated(force=force, db_type=detected_db_type, conn_uri=uri, **kwargs)
         
         if updated:
             console.print(f"[green]{message}[/green]")
@@ -79,45 +175,81 @@ def check_schema(
 
 @app.command()
 def query(
-    question: str = typer.Argument(..., help="Natural language question to translate to SQL"),
+    question: str = typer.Argument(..., help="Natural language question to translate to a database query"),
     analyze: bool = typer.Option(False, "--analyze", "-a", help="Analyze query results"),
-    orchestrate: bool = typer.Option(False, "--orchestrate", "-o", help="Use multi-step orchestrated analysis")
+    orchestrate: bool = typer.Option(False, "--orchestrate", "-o", help="Use multi-step orchestrated analysis"),
+    db_uri: Optional[str] = typer.Option(None, "--uri", "-u", help="Database connection URI (overrides settings)"),
+    db_type: Optional[str] = typer.Option(None, "--type", "-t", help="Database type ('postgres', 'mongodb', etc.)")
 ):
     """
-    Translate natural language to SQL and execute query
+    Translate natural language to a database query and execute it
     """
     async def run():
         try:
+            settings = Settings()
+            
+            # If db_type is specified, update the Settings.DB_TYPE
+            if db_type:
+                settings.DB_TYPE = db_type
+            
+            # Get connection URI (possibly based on the new DB_TYPE)
+            uri = db_uri or settings.connection_uri
+            
+            # Determine database type (from URI or settings)
+            detected_db_type = db_type or urlparse(uri).scheme
+            if not detected_db_type:
+                detected_db_type = settings.DB_TYPE  # Use the setting
+            
+            console.print(f"Processing query for [bold]{detected_db_type}[/bold] database...")
+            
+            # Additional parameters for MongoDB
+            kwargs = {}
+            if detected_db_type.lower() == "mongodb":
+                # Extract database name from MongoDB URI
+                parsed_uri = urlparse(uri)
+                db_name = parsed_uri.path.lstrip('/')
+                if db_name:
+                    kwargs['db_name'] = db_name
+                    console.print(f"Using MongoDB database: [bold]{db_name}[/bold]")
+                else:
+                    console.print("[yellow]Warning: No database name found in MongoDB URI. Using default.[/yellow]")
+                    # Use a default database name if not in the URI
+                    kwargs['db_name'] = "dataconnector_mongo"
+            
+            # Create orchestrator for the specified database
+            orchestrator = Orchestrator(uri, **kwargs)
+            
             # Test connection
-            conn_ok = await test_conn()
-            if not conn_ok:
+            if not await orchestrator.test_connection():
                 console.print("[red]Database connection failed![/red]")
                 return
             
             # Ensure index exists
-            if not await ensure_index_exists():
+            if not await ensure_index_exists(db_type=detected_db_type, conn_uri=uri, **kwargs):
                 console.print("[red]Failed to create schema index![/red]")
                 return
             
             # Automatically check for schema changes (non-forced, quiet)
-            await ensure_schema_index_updated(force=False)
+            await ensure_schema_index_updated(force=False, db_type=detected_db_type, conn_uri=uri, **kwargs)
             
             # Get LLM client
             llm = get_llm_client()
             
             # Use orchestrated analysis if requested
             if orchestrate:
-                await run_orchestrated_analysis(llm, question)
+                await run_orchestrated_analysis(llm, question, orchestrator, detected_db_type)
             else:
                 # Traditional approach
-                await run_traditional_query(llm, question, analyze)
+                await run_traditional_query(llm, question, analyze, orchestrator, detected_db_type)
         
         except Exception as e:
             console.print(f"[red]Error: {str(e)}[/red]")
+            import traceback
+            console.print(traceback.format_exc())
 
     asyncio.run(run())
 
-async def run_orchestrated_analysis(llm, question: str):
+async def run_orchestrated_analysis(llm, question: str, orchestrator: Orchestrator, db_type: str):
     """Run a multi-step orchestrated analysis"""
     
     with Progress(
@@ -128,7 +260,7 @@ async def run_orchestrated_analysis(llm, question: str):
         progress_task = progress.add_task("Analyzing...", total=None)
         
         # Start orchestration
-        result = await llm.orchestrate_analysis(question)
+        result = await llm.orchestrate_analysis(question, db_type=db_type)
         
         progress.update(progress_task, completed=True)
     
@@ -152,18 +284,36 @@ async def run_orchestrated_analysis(llm, question: str):
         console.print("\n[bold]Queries executed:[/bold]")
         for i, query in enumerate(queries):
             console.print(f"\n[bold cyan]Query {i+1}:[/bold cyan]")
-            console.print(f"[cyan]{query['sql']}[/cyan]")
+            if db_type in ["postgresql", "postgres"]:
+                console.print(f"[cyan]{query.get('sql', 'No SQL query')}[/cyan]")
+            else:
+                # Format non-SQL queries as JSON
+                query_str = json.dumps(query, indent=2)
+                console.print(f"[cyan]{query_str}[/cyan]")
+                
             if query.get("description"):
                 console.print(f"[dim]{query['description']}[/dim]")
 
-async def run_traditional_query(llm, question: str, analyze: bool):
-    """Run a traditional NL-to-SQL query"""
+async def run_traditional_query(llm, question: str, analyze: bool, orchestrator: Orchestrator, db_type: str):
+    """Run a traditional natural language to database query"""
     
-    # Search schema metadata
-    searcher = SchemaSearcher()
-    schema_chunks = await searcher.search(question, top_k=5)
+    # Search schema metadata specific to this database type
+    searcher = SchemaSearcher(db_type=db_type)
+    schema_chunks = await searcher.search(question, top_k=5, db_type=db_type)
     
-    # Render prompt template
+    if db_type in ["postgresql", "postgres"]:
+        await run_postgres_query(llm, question, analyze, orchestrator, schema_chunks)
+    elif db_type == "mongodb":
+        await run_mongodb_query(llm, question, analyze, orchestrator, schema_chunks)
+    else:
+        console.print(f"[red]Unsupported database type: {db_type}[/red]")
+        # To run this function for MongoDB, use the following command in the terminal:
+        # python -m server.agent.cmd.query run-traditional-query --question "YOUR_QUESTION" --analyze --db-type mongodb
+
+async def run_postgres_query(llm, question: str, analyze: bool, orchestrator: Orchestrator, schema_chunks: List[Dict]):
+    """Run a PostgreSQL query"""
+    
+    # Render prompt template for PostgreSQL
     prompt = llm.render_template("nl2sql.tpl", schema_chunks=schema_chunks, user_question=question)
     
     # Generate SQL
@@ -177,42 +327,15 @@ async def run_traditional_query(llm, question: str, analyze: bool):
     console.print(f"\n[bold cyan]SQL Query:[/bold cyan]")
     console.print(f"[cyan]{validated_sql}[/cyan]\n")
     
-    # Execute query
+    # Execute query using the orchestrator
     console.print("Executing query...")
     
-    # Import here to avoid circular imports
-    from agent.db.execute import create_connection_pool
-    
-    pool = await create_connection_pool()
     try:
-        async with pool.acquire() as conn:
-            results = await conn.fetch(validated_sql)
-            rows = [dict(row) for row in results]
-        
-        # Convert any non-serializable types to strings
-        for row in rows:
-            for key, value in row.items():
-                if not isinstance(value, (str, int, float, bool, type(None))):
-                    row[key] = str(value)
+        rows = await orchestrator.execute(validated_sql)
         
         # Display results
         if rows:
-            # Create table for display
-            table = Table(title=f"Query Results ({len(rows)} rows)")
-            
-            # Add columns
-            for col in rows[0].keys():
-                table.add_column(col)
-            
-            # Add rows (limit to 20 for display)
-            display_rows = rows[:20]
-            for row in display_rows:
-                table.add_row(*[str(val) for val in row.values()])
-            
-            console.print(table)
-            
-            if len(rows) > 20:
-                console.print(f"[italic](Showing 20 of {len(rows)} rows)[/italic]")
+            display_query_results(rows)
             
             # Analyze results if requested
             if analyze:
@@ -222,8 +345,130 @@ async def run_traditional_query(llm, question: str, analyze: bool):
                 console.print(analysis)
         else:
             console.print("[yellow]No results found[/yellow]")
-    finally:
-        await pool.close()
+    except Exception as e:
+        console.print(f"[red]Error executing query: {str(e)}[/red]")
+
+async def run_mongodb_query(llm, question: str, analyze: bool, orchestrator: Orchestrator, schema_chunks: List[Dict]):
+    """Run a MongoDB query"""
+    
+    # Get default collection (if applicable)
+    default_collection = orchestrator.adapter.default_collection if hasattr(orchestrator.adapter, 'default_collection') else None
+    
+    # Render prompt template for MongoDB
+    prompt = llm.render_template("mongo_query.tpl", 
+                              schema_chunks=schema_chunks, 
+                              user_question=question,
+                              default_collection=default_collection)
+    
+    # Generate MongoDB query
+    console.print("Generating MongoDB query...")
+    
+    try:
+        raw_response = await llm.generate_mongodb_query(prompt)
+        
+        # Parse response as JSON
+        query_data = json.loads(raw_response)
+        
+        # Print the query
+        console.print(f"\n[bold cyan]MongoDB Query:[/bold cyan]")
+        formatted_query = json.dumps(query_data, indent=2)
+        console.print(f"[cyan]{formatted_query}[/cyan]\n")
+        
+        # Execute query
+        console.print("Executing query...")
+        rows = await orchestrator.execute(query_data)
+        
+        # Display results
+        if rows:
+            display_query_results(rows)
+            
+            # Analyze results if requested
+            if analyze:
+                console.print("\n[bold]Analyzing results...[/bold]")
+                analysis = await llm.analyze_results(rows)
+                console.print(f"\n[bold green]Analysis:[/bold green]")
+                console.print(analysis)
+        else:
+            console.print("[yellow]No results found[/yellow]")
+    except Exception as e:
+        console.print(f"[red]Error executing query: {str(e)}[/red]")
+
+def display_query_results(rows):
+    """Display query results in a table"""
+    
+    # Convert any non-serializable types to strings
+    for row in rows:
+        for key, value in row.items():
+            if not isinstance(value, (str, int, float, bool, type(None))):
+                row[key] = str(value)
+    
+    # Create table for display
+    table = Table(title=f"Query Results ({len(rows)} rows)")
+    
+    # Add columns
+    for col in rows[0].keys():
+        table.add_column(col)
+    
+    # Add rows (limit to 20 for display)
+    display_rows = rows[:20]
+    for row in display_rows:
+        table.add_row(*[str(val) for val in row.values()])
+    
+    console.print(table)
+    
+    if len(rows) > 20:
+        console.print(f"[italic](Showing 20 of {len(rows)} rows)[/italic]")
+
+@app.command()
+def search_schema(
+    query: str = typer.Argument(..., help="Search query for schema metadata"),
+    db_type: Optional[str] = typer.Option(None, "--type", "-t", help="Database type ('postgres', 'mongodb', etc.)"),
+    top_k: int = typer.Option(5, "--limit", "-l", help="Maximum number of results to return")
+):
+    """
+    Search schema metadata
+    """
+    async def run():
+        try:
+            settings = Settings()
+
+            # If db_type is specified, update the Settings.DB_TYPE
+            if db_type:
+                settings.DB_TYPE = db_type 
+            
+            # Determine database type from settings if not specified
+            detected_db_type = db_type
+            if not detected_db_type:
+                detected_db_type = urlparse(settings.connection_uri).scheme
+                if not detected_db_type:
+                    detected_db_type = settings.DB_TYPE
+            
+            # Ensure index exists for this database type
+            if not await ensure_index_exists(db_type=detected_db_type):
+                console.print("[red]Failed to create schema index![/red]")
+                return
+            
+            console.print(f"Searching [bold]{detected_db_type}[/bold] schema metadata for: [italic]{query}[/italic]")
+            
+            # Search schema metadata
+            searcher = SchemaSearcher(db_type=detected_db_type)
+            results = await searcher.search(query, top_k=top_k, db_type=detected_db_type)
+            
+            # Display results
+            console.print(f"\n[bold]Schema Search Results ([green]{len(results)}[/green] found):[/bold]")
+            
+            for i, result in enumerate(results):
+                db_identifier = f"[{result.get('db_type', 'unknown')}]" if 'db_type' in result else ""
+                console.print(f"\n[bold cyan]#{i+1}: {result['id']} {db_identifier} (Score: {1.0 - result['distance']:.2f})[/bold cyan]")
+                console.print(result['content'])
+                console.print("-" * 50)
+        
+        except Exception as e:
+            console.print(f"[red]Error: {str(e)}[/red]")
+            import traceback
+            console.print(traceback.format_exc())
+    
+    asyncio.run(run())
 
 @app.command()
 def list_sessions(
@@ -318,37 +563,6 @@ def show_session(
     asyncio.run(run())
 
 @app.command()
-def search_schema(
-    query: str = typer.Argument(..., help="Search query for schema metadata")
-):
-    """
-    Search schema metadata
-    """
-    async def run():
-        try:
-            # Ensure index exists
-            if not await ensure_index_exists():
-                console.print("[red]Failed to create schema index![/red]")
-                return
-            
-            # Search schema metadata
-            searcher = SchemaSearcher()
-            results = await searcher.search(query, top_k=5)
-            
-            # Display results
-            console.print(f"\n[bold]Schema Search Results:[/bold]")
-            
-            for i, result in enumerate(results):
-                console.print(f"\n[bold cyan]#{i+1}: {result['id']} (Score: {1.0 - result['distance']:.2f})[/bold cyan]")
-                console.print(result['content'])
-                console.print("-" * 50)
-        
-        except Exception as e:
-            console.print(f"[red]Error: {str(e)}[/red]")
-    
-    asyncio.run(run())
-
-@app.command()
 def cleanup(
     hours: int = typer.Option(24, help="Clean up sessions older than this many hours")
 ):
@@ -389,4 +603,6 @@ if __name__ == "__main__":
                     pass
     
     create_init_files()
+    print("Running Typer app...")
     app()
+    print("Typer app completed")

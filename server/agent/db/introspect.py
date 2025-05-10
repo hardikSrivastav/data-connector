@@ -1,6 +1,11 @@
 import asyncpg
-from typing import Dict, List, Any
+from typing import Dict, List, Any, Optional
 from ..config.settings import Settings
+from urllib.parse import urlparse
+import logging
+
+# Configure logging
+logger = logging.getLogger(__name__)
 
 async def fetch_schema(pool: asyncpg.Pool) -> Dict[str, Any]:
     """
@@ -197,19 +202,46 @@ async def create_connection_pool() -> asyncpg.Pool:
         max_size=20
     )
 
-async def get_schema_metadata() -> List[Dict[str, str]]:
+async def get_schema_metadata(conn_uri: Optional[str] = None, **kwargs) -> List[Dict[str, str]]:
     """
-    Main function to get formatted schema metadata ready for embedding
+    Main function to get formatted schema metadata ready for embedding.
+    Now database-agnostic, supporting all adapter types.
     
+    Args:
+        conn_uri: Optional connection URI. If None, uses the default from settings.
+        **kwargs: Additional adapter-specific parameters
+        
     Returns:
         List of document dictionaries with 'id' and 'content' keys
     """
-    pool = await create_connection_pool()
-    try:
-        schema_data = await fetch_schema(pool)
-        return await format_schema_for_embedding(schema_data)
-    finally:
-        await pool.close()
+    settings = Settings()
+    
+    # Use provided URI or fall back to settings
+    uri = conn_uri or settings.connection_uri
+    
+    # Get the database type from the URI
+    db_type = urlparse(uri).scheme
+    
+    # Log which database we're introspecting
+    logger.info(f"Introspecting schema for database type: {db_type}")
+    
+    if db_type in ["postgresql", "postgres"]:
+        # Use existing PostgreSQL implementation for backward compatibility
+        pool = await create_connection_pool()
+        try:
+            schema_data = await fetch_schema(pool)
+            return await format_schema_for_embedding(schema_data)
+        finally:
+            await pool.close()
+    else:
+        # For all other database types, use the orchestrator
+        from ..db.orchestrator import Orchestrator
+        
+        # Create orchestrator with the appropriate adapter
+        orchestrator = Orchestrator(uri, **kwargs)
+        
+        # Use the adapter's introspect_schema method
+        return await orchestrator.introspect_schema()
 
 if __name__ == "__main__":
     import asyncio
