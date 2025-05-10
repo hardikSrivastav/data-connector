@@ -1,21 +1,46 @@
 version: '3.8'
 
 services:
-  api:
-    build: 
-      context: ./server
-      dockerfile: Dockerfile
-    volumes:
-      - ./server:/app
+#  api:
+#    build: 
+#      context: ./server
+#      dockerfile: Dockerfile
+#    volumes:
+#      - ./server:/app
+#    ports:
+#      - "8000:8000"
+#    environment:
+#      - ENVIRONMENT=development
+#      - DB_HOST=postgres
+#      - DB_PORT=5432
+#      - DB_NAME=dataconnector
+#      - DB_USER=dataconnector
+#      - DB_PASS=dataconnector
+#    container_name: data-connector-api
+#    restart: unless-stopped
+#    networks:
+#      - connector-network
+#    depends_on:
+#      - postgres
+
+  postgres:
+    image: postgres:16
     ports:
-      - "8000:8000"
+      - "6000:5432"
     environment:
-      - ENVIRONMENT=development
-    container_name: data-connector-api
-    restart: unless-stopped
+      - POSTGRES_USER=dataconnector
+      - POSTGRES_PASSWORD=dataconnector
+      - POSTGRES_DB=dataconnector
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./init-db:/docker-entrypoint-initdb.d
+    container_name: data-connector-postgres
     networks:
       - connector-network
 
 networks:
   connector-network:
-    driver: bridge 
+    driver: bridge
+
+volumes:
+  postgres-data: 

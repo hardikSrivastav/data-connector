@@ -60,7 +60,7 @@ Provide a self‑contained, on‑prem data‑science agent that enables business
 
 ## 5. Use Cases
 
-1. **Basic Query & Results**: Analyst asks “Top 10 customers last quarter,” agent returns a table.
+1. **Basic Query & Results**: Analyst asks "Top 10 customers last quarter," agent returns a table.
 2. **Result Analysis**: Analyst adds `analyze=true`; agent returns LLM‑powered insights and chart suggestions.
 3. **Schema Exploration**: User calls `/schema` to discover table/column names.
 4. **Health Monitoring**: Automated health checks via `/health` endpoint.
@@ -178,12 +178,12 @@ flowchart LR
 
 | Milestone                      | Target Completion | Scope                                               |
 | ------------------------------ | ----------------- | --------------------------------------------------- |
-| **MVP**                        | Week 2            | Health check, DB ping, schema endpoint, dummy FAISS |
-| **NL→SQL Prototype**           | Week 4            | FAISS lookup, prompt → dummy SQL, exec              |
-| **LLM Integration & Analysis** | Week 6            | Cloud/local LLM, analysis endpoint                  |
-| **Performance & Caching**      | Week 8            | LRU cache, quantized index, worker tuning           |
-| **Testing & Hardening**        | Week 10           | Unit + integration tests, security audit            |
-| **GA Release**                 | Week 12           | Docker image, PyPI package, docs                    |
+| **MVP**                        | Day 2             | Health check, DB ping, schema endpoint, dummy FAISS |
+| **NL→SQL Prototype**           | Day 4             | FAISS lookup, prompt → dummy SQL, exec              |
+| **LLM Integration & Analysis** | Day 7             | Cloud/local LLM, analysis endpoint                  |
+| **Performance & Caching**      | Day 10            | LRU cache, quantized index, worker tuning           |
+| **Testing & Hardening**        | Day 12            | Unit + integration tests, security audit            |
+| **GA Release**                 | Day 14            | Docker image, PyPI package, docs                    |
 
 ---
 

@@ -1,4 +1,6 @@
 from fastapi import APIRouter, HTTPException
+import asyncio
+from agent.api.endpoints import router as agent_router
 
 router = APIRouter(prefix="/api", tags=["main"])
 
@@ -9,3 +11,6 @@ async def root():
 @router.get("/health")
 async def health_check():
     return {"status": "healthy"}
+
+# Include agent router
+router.include_router(agent_router, prefix="/agent", tags=["agent"])
