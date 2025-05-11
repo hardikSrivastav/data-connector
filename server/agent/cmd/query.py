@@ -27,6 +27,7 @@ from agent.api.endpoints import sanitize_sql
 from agent.tools.tools import DataTools
 from agent.tools.state_manager import StateManager
 from agent.config.settings import Settings
+from agent.config.config_loader import load_config
 from agent.performance import ensure_schema_index_updated
 from agent.db.orchestrator import Orchestrator
 
@@ -42,20 +43,72 @@ app = typer.Typer(help="Data Connector CLI")
 
 @app.command()
 def test_connection(
-    db_uri: Optional[str] = typer.Option(None, "--uri", "-u", help="Database connection URI (overrides settings)")
+    db_uri: Optional[str] = typer.Option(None, "--uri", "-u", help="Database connection URI (overrides settings)"),
+    db_type: Optional[str] = typer.Option(None, "--type", "-t", help="Database type ('postgres', 'mongodb', 'qdrant', etc.)")
 ):
     """Test database connection"""
     async def run():
         settings = Settings()
+
+        logger.info(f"Settings: {settings}")
+        
+        # Set DB_TYPE if provided
+        if db_type:
+            settings.DB_TYPE = db_type
+            # Force reload of connection URI based on the new DB_TYPE
+            # This is needed because connection_uri may have been cached with the previous DB_TYPE
+            logger.info(f"Setting DB_TYPE to: {db_type}")
+        
+        # Get connection URI
         uri = db_uri or settings.connection_uri
+        logger.info(f"Using connection URI: {uri}")
         
-        # Display the database type
-        db_type = urlparse(uri).scheme
-        console.print(f"Testing connection to [bold]{db_type}[/bold] database...")
+        # Determine database type, with special handling for HTTP-based DBs like Qdrant
+        detected_db_type = db_type
+        if not detected_db_type:
+            # For HTTP URIs, don't use the scheme as db_type, use settings.DB_TYPE
+            parsed_uri = urlparse(uri)
+            if parsed_uri.scheme in ['http', 'https']:
+                detected_db_type = settings.DB_TYPE
+            else:
+                detected_db_type = parsed_uri.scheme
+                
+            if not detected_db_type:
+                detected_db_type = settings.DB_TYPE
+            
+        console.print(f"Testing connection to [bold]{detected_db_type}[/bold] database...")
         
+        # Special handling for Qdrant that uses HTTP protocol
+        if detected_db_type.lower() == "qdrant" and uri.startswith("http"):
+            parsed = urlparse(uri)
+            uri = f"qdrant://{parsed.netloc}{parsed.path}"
+            console.print(f"Converted URI to: {uri}")
+            
         # Use the orchestrator to test connection
         try:
-            orchestrator = Orchestrator(uri)
+            # Prepare kwargs for specific database types
+            kwargs = {}
+            
+            if detected_db_type.lower() == "qdrant":
+                # Add collection name for Qdrant
+                kwargs['collection_name'] = settings.QDRANT_COLLECTION
+                kwargs['api_key'] = settings.QDRANT_API_KEY
+                kwargs['prefer_grpc'] = settings.QDRANT_PREFER_GRPC
+                console.print(f"Using Qdrant collection: [bold]{kwargs.get('collection_name', 'Not specified')}[/bold]")
+                
+            elif detected_db_type.lower() == "mongodb":
+                # Extract database name from MongoDB URI
+                parsed_uri = urlparse(uri)
+                db_name = parsed_uri.path.lstrip('/')
+                if db_name:
+                    kwargs['db_name'] = db_name
+                    console.print(f"Using MongoDB database: [bold]{db_name}[/bold]")
+                else:
+                    console.print("[yellow]Warning: No database name found in MongoDB URI. Using default.[/yellow]")
+                    # Use a default database name if not in the URI
+                    kwargs['db_name'] = "admin"
+                
+            orchestrator = Orchestrator(uri, **kwargs)
             conn_ok = await orchestrator.test_connection()
             
             if conn_ok:
@@ -83,10 +136,18 @@ def build_index(
         # Get connection URI (possibly based on the new DB_TYPE)
         uri = db_uri or settings.connection_uri
         
-        # Determine database type (from URI or settings)
-        detected_db_type = db_type or urlparse(uri).scheme
+        # Determine database type, with special handling for HTTP-based DBs like Qdrant
+        detected_db_type = db_type
         if not detected_db_type:
-            detected_db_type = settings.DB_TYPE  # Use the setting
+            # For HTTP URIs, don't use the scheme as db_type, use settings.DB_TYPE
+            parsed_uri = urlparse(uri)
+            if parsed_uri.scheme in ['http', 'https']:
+                detected_db_type = settings.DB_TYPE
+            else:
+                detected_db_type = parsed_uri.scheme
+                
+            if not detected_db_type:
+                detected_db_type = settings.DB_TYPE  # Use the setting
         
         console.print(f"Building schema metadata index for [bold]{detected_db_type}[/bold]...")
         
@@ -143,10 +204,18 @@ def check_schema(
         # Debug: Print connection URI
         console.print(f"[dim]Using connection URI: {uri}[/dim]")
         
-        # Determine database type (from URI or settings)
-        detected_db_type = db_type or urlparse(uri).scheme
+        # Determine database type, with special handling for HTTP-based DBs like Qdrant
+        detected_db_type = db_type
         if not detected_db_type:
-            detected_db_type = settings.DB_TYPE  # Use the setting
+            # For HTTP URIs, don't use the scheme as db_type, use settings.DB_TYPE
+            parsed_uri = urlparse(uri)
+            if parsed_uri.scheme in ['http', 'https']:
+                detected_db_type = settings.DB_TYPE
+            else:
+                detected_db_type = parsed_uri.scheme
+                
+            if not detected_db_type:
+                detected_db_type = settings.DB_TYPE  # Use the setting
         
         console.print(f"Checking for schema changes in [bold]{detected_db_type}[/bold] database...")
         
@@ -195,15 +264,24 @@ def query(
             # Get connection URI (possibly based on the new DB_TYPE)
             uri = db_uri or settings.connection_uri
             
-            # Determine database type (from URI or settings)
-            detected_db_type = db_type or urlparse(uri).scheme
+            # Determine database type, with special handling for HTTP-based DBs like Qdrant
+            detected_db_type = db_type
             if not detected_db_type:
-                detected_db_type = settings.DB_TYPE  # Use the setting
+                # For HTTP URIs, don't use the scheme as db_type, use settings.DB_TYPE
+                parsed_uri = urlparse(uri)
+                if parsed_uri.scheme in ['http', 'https']:
+                    detected_db_type = settings.DB_TYPE
+                else:
+                    detected_db_type = parsed_uri.scheme
+                    
+                if not detected_db_type:
+                    detected_db_type = settings.DB_TYPE  # Use the setting
             
             console.print(f"Processing query for [bold]{detected_db_type}[/bold] database...")
             
-            # Additional parameters for MongoDB
+            # Additional parameters based on database type
             kwargs = {}
+            
             if detected_db_type.lower() == "mongodb":
                 # Extract database name from MongoDB URI
                 parsed_uri = urlparse(uri)
@@ -216,15 +294,26 @@ def query(
                     # Use a default database name if not in the URI
                     kwargs['db_name'] = "dataconnector_mongo"
             
+            elif detected_db_type.lower() == "qdrant":
+                # Add collection name for Qdrant
+                kwargs['collection_name'] = settings.QDRANT_COLLECTION
+                kwargs['api_key'] = settings.QDRANT_API_KEY
+                kwargs['prefer_grpc'] = settings.QDRANT_PREFER_GRPC
+                console.print(f"Using Qdrant collection: [bold]{kwargs['collection_name']}[/bold]")
+            
+            # Create orchestrator kwargs and connection kwargs separately
+            orchestrator_kwargs = dict(kwargs)
+            orchestrator_kwargs['db_type'] = detected_db_type
+            
             # Create orchestrator for the specified database
-            orchestrator = Orchestrator(uri, **kwargs)
+            orchestrator = Orchestrator(uri, **orchestrator_kwargs)
             
             # Test connection
             if not await orchestrator.test_connection():
                 console.print("[red]Database connection failed![/red]")
                 return
             
-            # Ensure index exists
+            # Ensure index exists without passing db_type twice
             if not await ensure_index_exists(db_type=detected_db_type, conn_uri=uri, **kwargs):
                 console.print("[red]Failed to create schema index![/red]")
                 return
@@ -239,8 +328,15 @@ def query(
             if orchestrate:
                 await run_orchestrated_analysis(llm, question, orchestrator, detected_db_type)
             else:
-                # Traditional approach
-                await run_traditional_query(llm, question, analyze, orchestrator, detected_db_type)
+                # Traditional approach based on database type
+                if detected_db_type.lower() == "postgres" or detected_db_type.lower() == "postgresql":
+                    await run_postgres_query(llm, question, analyze, orchestrator, detected_db_type)
+                elif detected_db_type.lower() == "mongodb":
+                    await run_mongodb_query(llm, question, analyze, orchestrator, detected_db_type)
+                elif detected_db_type.lower() == "qdrant":
+                    await run_qdrant_query(llm, question, analyze, orchestrator, detected_db_type)
+                else:
+                    console.print(f"[red]Unsupported database type: {detected_db_type}[/red]")
         
         except Exception as e:
             console.print(f"[red]Error: {str(e)}[/red]")
@@ -294,24 +390,12 @@ async def run_orchestrated_analysis(llm, question: str, orchestrator: Orchestrat
             if query.get("description"):
                 console.print(f"[dim]{query['description']}[/dim]")
 
-async def run_traditional_query(llm, question: str, analyze: bool, orchestrator: Orchestrator, db_type: str):
-    """Run a traditional natural language to database query"""
+async def run_postgres_query(llm, question: str, analyze: bool, orchestrator: Orchestrator, db_type: str):
+    """Run a PostgreSQL query"""
     
     # Search schema metadata specific to this database type
     searcher = SchemaSearcher(db_type=db_type)
     schema_chunks = await searcher.search(question, top_k=5, db_type=db_type)
-    
-    if db_type in ["postgresql", "postgres"]:
-        await run_postgres_query(llm, question, analyze, orchestrator, schema_chunks)
-    elif db_type == "mongodb":
-        await run_mongodb_query(llm, question, analyze, orchestrator, schema_chunks)
-    else:
-        console.print(f"[red]Unsupported database type: {db_type}[/red]")
-        # To run this function for MongoDB, use the following command in the terminal:
-        # python -m server.agent.cmd.query run-traditional-query --question "YOUR_QUESTION" --analyze --db-type mongodb
-
-async def run_postgres_query(llm, question: str, analyze: bool, orchestrator: Orchestrator, schema_chunks: List[Dict]):
-    """Run a PostgreSQL query"""
     
     # Render prompt template for PostgreSQL
     prompt = llm.render_template("nl2sql.tpl", schema_chunks=schema_chunks, user_question=question)
@@ -348,8 +432,12 @@ async def run_postgres_query(llm, question: str, analyze: bool, orchestrator: Or
     except Exception as e:
         console.print(f"[red]Error executing query: {str(e)}[/red]")
 
-async def run_mongodb_query(llm, question: str, analyze: bool, orchestrator: Orchestrator, schema_chunks: List[Dict]):
+async def run_mongodb_query(llm, question: str, analyze: bool, orchestrator: Orchestrator, db_type: str):
     """Run a MongoDB query"""
+    
+    # Search schema metadata specific to this database type
+    searcher = SchemaSearcher(db_type=db_type)
+    schema_chunks = await searcher.search(question, top_k=5, db_type=db_type)
     
     # Get default collection (if applicable)
     default_collection = orchestrator.adapter.default_collection if hasattr(orchestrator.adapter, 'default_collection') else None
@@ -392,6 +480,94 @@ async def run_mongodb_query(llm, question: str, analyze: bool, orchestrator: Orc
             console.print("[yellow]No results found[/yellow]")
     except Exception as e:
         console.print(f"[red]Error executing query: {str(e)}[/red]")
+
+async def run_qdrant_query(llm, question: str, analyze: bool, orchestrator: Orchestrator, db_type: str):
+    """Run a Qdrant vector similarity search query"""
+    
+    # Search schema metadata specific to this database type
+    searcher = SchemaSearcher(db_type=db_type)
+    schema_chunks = await searcher.search(question, top_k=5, db_type=db_type)
+    
+    # Render prompt template for vector search
+    # Note: You'll need to create a vector_search.tpl template
+    prompt = llm.render_template("vector_search.tpl", 
+                               schema_chunks=schema_chunks, 
+                               user_question=question)
+    
+    console.print("Generating vector search query...")
+    
+    with Progress(
+        SpinnerColumn(),
+        TextColumn("[bold blue]Converting query to vector..."),
+        transient=True,
+    ) as progress:
+        progress_task = progress.add_task("Processing...", total=None)
+        
+        # Generate Qdrant query
+        # This delegates to the adapter's llm_to_query method
+        query = await orchestrator.llm_to_query(question, schema_chunks=schema_chunks)
+        
+        progress.update(progress_task, completed=True)
+    
+    # Execute query
+    console.print("Executing vector search...")
+    
+    try:
+        results = await orchestrator.execute(query)
+        
+        # Display results
+        if results:
+            # Format the vector search results in a more readable way
+            console.print(f"\n[bold]Found {len(results)} similar items:[/bold]")
+            
+            # Create table for display
+            table = Table(title=f"Vector Search Results ({len(results)} items)")
+            
+            # Add score column
+            table.add_column("Score", style="cyan")
+            
+            # Add other columns based on the first result
+            if results:
+                other_cols = [k for k in results[0].keys() if k not in ['score', 'id', 'vector']]
+                for col in other_cols[:5]:  # Limit to first 5 columns to avoid table being too wide
+                    table.add_column(col.capitalize())
+            
+            # Add ID column at the end
+            table.add_column("ID")
+            
+            # Add rows (limit to 20 for display)
+            display_rows = results[:20]
+            for row in display_rows:
+                # Format score as percentage
+                score = f"{row.get('score', 0) * 100:.2f}%"
+                
+                # Get other columns
+                other_values = []
+                for col in other_cols[:5]:
+                    val = row.get(col, "")
+                    # Truncate long values
+                    if isinstance(val, str) and len(val) > 50:
+                        val = val[:47] + "..."
+                    other_values.append(str(val))
+                
+                # Add row to table
+                table.add_row(score, *other_values, str(row.get('id', '')))
+            
+            console.print(table)
+            
+            if len(results) > 20:
+                console.print(f"[italic](Showing 20 of {len(results)} results)[/italic]")
+            
+            # Analyze results if requested
+            if analyze:
+                console.print("\n[bold]Analyzing results...[/bold]")
+                analysis = await llm.analyze_results(results, is_vector_search=True)
+                console.print(f"\n[bold green]Analysis:[/bold green]")
+                console.print(Panel(Markdown(analysis)))
+        else:
+            console.print("[yellow]No results found[/yellow]")
+    except Exception as e:
+        console.print(f"[red]Error executing vector search: {str(e)}[/red]")
 
 def display_query_results(rows):
     """Display query results in a table"""
@@ -436,10 +612,18 @@ def search_schema(
             if db_type:
                 settings.DB_TYPE = db_type 
             
-            # Determine database type from settings if not specified
+            # Determine database type, with special handling for HTTP-based DBs like Qdrant
             detected_db_type = db_type
             if not detected_db_type:
-                detected_db_type = urlparse(settings.connection_uri).scheme
+                # Get URI to check if it's HTTP-based
+                uri = settings.connection_uri
+                # For HTTP URIs, don't use the scheme as db_type, use settings.DB_TYPE
+                parsed_uri = urlparse(uri)
+                if parsed_uri.scheme in ['http', 'https']:
+                    detected_db_type = settings.DB_TYPE
+                else:
+                    detected_db_type = parsed_uri.scheme
+                    
                 if not detected_db_type:
                     detected_db_type = settings.DB_TYPE
             

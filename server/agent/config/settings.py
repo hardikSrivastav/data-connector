@@ -1,4 +1,4 @@
-from pydantic import BaseSettings, validator
+from pydantic import validator, BaseSettings
 from typing import Optional
 import os
 from dotenv import load_dotenv
@@ -56,6 +56,27 @@ class Settings(BaseSettings):
     # If MongoDB URI is not set, construct it from parts
     if not MONGODB_URI:
         MONGODB_URI = f"mongodb://{MONGO_INITDB_ROOT_USERNAME}:{MONGO_INITDB_ROOT_PASSWORD}@{MONGO_HOST}:{MONGO_PORT}/{MONGODB_DB_NAME}?authSource=admin"
+    
+    # Qdrant Vector Database Settings
+    QDRANT_HOST: Optional[str] = yaml_config.get('qdrant', {}).get('host', os.getenv('QDRANT_HOST', 'localhost'))
+    QDRANT_PORT: Optional[int] = yaml_config.get('qdrant', {}).get('port', int(os.getenv('QDRANT_PORT', 7500)))
+    QDRANT_GRPC_PORT: Optional[int] = yaml_config.get('qdrant', {}).get('grpc_port', int(os.getenv('QDRANT_GRPC_PORT', 7501)))
+    QDRANT_API_KEY: Optional[str] = yaml_config.get('qdrant', {}).get('api_key', os.getenv('QDRANT_API_KEY'))
+    QDRANT_COLLECTION: Optional[str] = yaml_config.get('qdrant', {}).get('collection', os.getenv('QDRANT_COLLECTION', 'corporate_knowledge'))
+    QDRANT_URI: Optional[str] = yaml_config.get('qdrant', {}).get('uri', os.getenv('QDRANT_URI'))
+    QDRANT_PREFER_GRPC: bool = yaml_config.get('qdrant', {}).get('prefer_grpc', os.getenv('QDRANT_PREFER_GRPC', 'false').lower() == 'true')
+    
+    # If Qdrant URI is not set, construct it from parts
+    if not QDRANT_URI:
+        QDRANT_URI = f"http://{QDRANT_HOST}:{QDRANT_PORT}"
+    
+    # Vector Embedding Settings
+    VECTOR_EMBEDDING_PROVIDER: str = yaml_config.get('vector_db', {}).get('embedding', {}).get('provider', os.getenv('VECTOR_EMBEDDING_PROVIDER', 'openai'))
+    VECTOR_EMBEDDING_MODEL: Optional[str] = yaml_config.get('vector_db', {}).get('embedding', {}).get('model', os.getenv('VECTOR_EMBEDDING_MODEL', 'text-embedding-ada-002'))
+    VECTOR_EMBEDDING_DIMENSIONS: int = yaml_config.get('vector_db', {}).get('embedding', {}).get('dimensions', int(os.getenv('VECTOR_EMBEDDING_DIMENSIONS', 1536)))
+    VECTOR_EMBEDDING_API_KEY: Optional[str] = yaml_config.get('vector_db', {}).get('embedding', {}).get('api_key', os.getenv('VECTOR_EMBEDDING_API_KEY', os.getenv('LLM_API_KEY')))
+    VECTOR_EMBEDDING_ENDPOINT: Optional[str] = yaml_config.get('vector_db', {}).get('embedding', {}).get('endpoint', os.getenv('VECTOR_EMBEDDING_ENDPOINT'))
+    VECTOR_EMBEDDING_RESPONSE_FIELD: Optional[str] = yaml_config.get('vector_db', {}).get('embedding', {}).get('response_field', os.getenv('VECTOR_EMBEDDING_RESPONSE_FIELD', 'embedding'))
     
     # Debug/Override Settings
     DB_DSN_OVERRIDE: Optional[str] = os.getenv('DB_DSN_OVERRIDE')
@@ -167,21 +188,30 @@ class Settings(BaseSettings):
             logger.info(f"Using {self.DB_TYPE} URI from YAML: {uri}")
             return uri
             
-        # DB type-specific URIs from environment variables
+        # DB type-specific URIs from environment variables or class properties
         if self.DB_TYPE.lower() == "mongodb" and self.MONGODB_URI:
             logger.info(f"Using MONGODB_URI: {self.MONGODB_URI}")
             return self.MONGODB_URI
         elif self.DB_TYPE.lower() == "postgres" and self.db_dsn:
             logger.info(f"Using db_dsn: {self.db_dsn}")
             return self.db_dsn
+        elif self.DB_TYPE.lower() == "qdrant" and self.QDRANT_URI:
+            logger.info(f"Using QDRANT_URI: {self.QDRANT_URI}")
+            return self.QDRANT_URI
             
-        # Fall back to PostgreSQL DSN
-        if self.DB_DSN_OVERRIDE:
+        # Check for DB_DSN_OVERRIDE only if db_type is 'postgres' to avoid overriding other db types
+        if self.DB_TYPE.lower() == "postgres" and self.DB_DSN_OVERRIDE:
             logger.info(f"Using DB_DSN_OVERRIDE: {self.DB_DSN_OVERRIDE}")
             return self.DB_DSN_OVERRIDE
         
-        logger.info(f"Falling back to PostgreSQL DSN: {self.db_dsn}")    
-        return self.db_dsn
+        # Fall back to PostgreSQL DSN only for postgres db type
+        if self.DB_TYPE.lower() == "postgres":
+            logger.info(f"Falling back to PostgreSQL DSN: {self.db_dsn}")    
+            return self.db_dsn
+        
+        # If we get here, we couldn't determine a URI - log an error
+        logger.error(f"No connection URI available for DB_TYPE: {self.DB_TYPE}")
+        return ""
     
     @validator("LLM_API_KEY")
     def validate_api_key_if_url_provided(cls, v, values):

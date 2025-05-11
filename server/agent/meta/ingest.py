@@ -83,6 +83,10 @@ class SchemaEmbedder:
         Returns:
             Tuple containing (FAISS index, metadata list)
         """
+        # Ensure db_type is passed to get_schema_metadata
+        if 'db_type' not in kwargs:
+            kwargs['db_type'] = self.db_type
+            
         # Fetch schema metadata for the specified database
         logger.info(f"Fetching schema metadata for {self.db_type}")
         self.documents = await get_schema_metadata(conn_uri, **kwargs)
@@ -304,23 +308,26 @@ class SchemaSearcher:
 
 async def build_and_save_index_for_db(db_type: str, conn_uri: Optional[str] = None, **kwargs) -> bool:
     """
-    Build and save FAISS index for a specific database type
+    Build and save a FAISS index for a specific database type
     
     Args:
-        db_type: Database type ('postgres', 'mongodb', etc.)
+        db_type: Database type to build index for
         conn_uri: Optional connection URI
-        **kwargs: Additional database connection parameters
+        **kwargs: Additional parameters for the database connection
         
     Returns:
         True if successful, False otherwise
     """
     try:
-        embedder = SchemaEmbedder(db_type=db_type)
-        index, metadata = await embedder.build_index(conn_uri, **kwargs)
+        # Ensure db_type is passed to get_schema_metadata
+        kwargs['db_type'] = db_type.lower()
+        
+        embedder = SchemaEmbedder(db_type=db_type.lower())
+        index, metadata = await embedder.build_index(conn_uri=conn_uri, **kwargs)
         await embedder.save_index(index, metadata)
         return True
     except Exception as e:
-        logger.error(f"Error building index for {db_type}: {str(e)}")
+        logger.error(f"Error building index for {db_type}: {e}")
         return False
 
 async def ensure_index_exists(db_type: Optional[str] = None, conn_uri: Optional[str] = None, **kwargs) -> bool:

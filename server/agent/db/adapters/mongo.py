@@ -8,6 +8,7 @@ import json
 from typing import Any, Dict, List, Optional
 from pymongo import MongoClient
 from bson import json_util
+from urllib.parse import urlparse
 
 from .base import DBAdapter
 
@@ -29,13 +30,32 @@ class MongoAdapter(DBAdapter):
         Args:
             conn_uri: MongoDB connection URI
             **kwargs: Additional parameters
-                - db_name: MongoDB database name (required)
+                - db_name: MongoDB database name (optional, will extract from URI if not provided)
                 - default_collection: Default collection to query (optional)
         """
         super().__init__(conn_uri)
         
-        # Get required parameters
+        # Try to extract database name from URI if not provided
         self.db_name = kwargs.get('db_name')
+        if not self.db_name:
+            # Parse database name from MongoDB URI
+            try:
+                parsed_uri = urlparse(conn_uri)
+                path = parsed_uri.path
+                
+                # Extract database name from path
+                if path and path != '/':
+                    self.db_name = path.lstrip('/')
+                    logger.info(f"Extracted database name from URI: {self.db_name}")
+                
+                # If still no db_name, try to use 'admin' as default
+                if not self.db_name:
+                    self.db_name = "admin"
+                    logger.warning("No database name found in URI, using default 'admin'")
+            except Exception as e:
+                logger.error(f"Failed to extract database name from URI: {e}")
+            
+        # Verify we have a database name
         if not self.db_name:
             raise ValueError("db_name is required for MongoDB adapter")
             

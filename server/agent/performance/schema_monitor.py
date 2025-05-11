@@ -83,7 +83,11 @@ class SchemaMonitor:
         """
         try:
             # Get current schema metadata for this database type
-            schema_metadata = await get_schema_metadata(conn_uri=self.conn_uri, db_type=self.db_type, **self.kwargs)
+            schema_metadata = await get_schema_metadata(
+                conn_uri=self.conn_uri, 
+                db_type=self.db_type, 
+                **self.kwargs
+            )
             
             # Convert to a sorted, normalized string representation
             schema_json = json.dumps(schema_metadata, sort_keys=True)
@@ -196,16 +200,21 @@ async def ensure_schema_index_updated(
     
     # Determine database type if not specified
     if not db_type:
-        if conn_uri:
-            db_type = urlparse(conn_uri).scheme
+        # Get URI from connection_uri or settings
+        uri = conn_uri or settings.connection_uri
+        parsed_uri = urlparse(uri)
+        
+        # For HTTP-based URIs, don't use the scheme as db_type
+        # Instead, use the type from settings
+        if parsed_uri.scheme in ['http', 'https']:
+            db_type = settings.DB_TYPE
         else:
-            # Get from settings
-            uri = settings.connection_uri
-            db_type = urlparse(uri).scheme
+            # Use scheme for other database URIs
+            db_type = parsed_uri.scheme
     
-    # Fall back to PostgreSQL if detection fails
+    # Fall back to configured default if still no type detected
     if not db_type:
-        db_type = "postgres"
+        db_type = settings.DB_TYPE
     
     # Create a schema monitor for this database type
     monitor = SchemaMonitor(db_type=db_type, conn_uri=conn_uri, **kwargs)

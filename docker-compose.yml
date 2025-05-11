@@ -54,10 +54,32 @@ services:
       - connector-network
     command: ["--auth"]
 
+  qdrant:
+    build: ./init-qdrant
+    image: qdrant-custom:latest
+    ports:
+      - "7500:6333"  # HTTP port
+      - "7501:6334"  # gRPC port
+    volumes:
+      - qdrant-data:/qdrant/storage
+      - ./init-qdrant:/qdrant/init
+    environment:
+      - QDRANT_ALLOW_RECOVERY_MODE=true
+    container_name: data-connector-qdrant
+    networks:
+      - connector-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:6333/readiness"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    entrypoint: ["/bin/bash", "-c", "(/qdrant/init/init.sh &) && /qdrant/qdrant"]
+
 networks:
   connector-network:
     driver: bridge
 
 volumes:
   postgres-data:
-  mongodb-data: 
+  mongodb-data:
+  qdrant-data: 

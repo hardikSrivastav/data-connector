@@ -202,13 +202,14 @@ async def create_connection_pool() -> asyncpg.Pool:
         max_size=20
     )
 
-async def get_schema_metadata(conn_uri: Optional[str] = None, **kwargs) -> List[Dict[str, str]]:
+async def get_schema_metadata(conn_uri: Optional[str] = None, db_type: Optional[str] = None, **kwargs) -> List[Dict[str, str]]:
     """
     Main function to get formatted schema metadata ready for embedding.
     Now database-agnostic, supporting all adapter types.
     
     Args:
         conn_uri: Optional connection URI. If None, uses the default from settings.
+        db_type: Optional database type. If provided, overrides detection from URI.
         **kwargs: Additional adapter-specific parameters
         
     Returns:
@@ -219,8 +220,16 @@ async def get_schema_metadata(conn_uri: Optional[str] = None, **kwargs) -> List[
     # Use provided URI or fall back to settings
     uri = conn_uri or settings.connection_uri
     
-    # Get the database type from the URI
-    db_type = urlparse(uri).scheme
+    # Determine database type with special handling for HTTP-based URIs
+    if not db_type:
+        parsed_uri = urlparse(uri)
+        
+        # For HTTP URIs, don't use the scheme as db_type
+        if parsed_uri.scheme in ['http', 'https']:
+            db_type = settings.DB_TYPE
+        else:
+            # Use scheme for other database URIs
+            db_type = parsed_uri.scheme
     
     # Log which database we're introspecting
     logger.info(f"Introspecting schema for database type: {db_type}")
@@ -236,6 +245,9 @@ async def get_schema_metadata(conn_uri: Optional[str] = None, **kwargs) -> List[
     else:
         # For all other database types, use the orchestrator
         from ..db.orchestrator import Orchestrator
+        
+        # Pass db_type explicitly to help with HTTP-based URIs
+        kwargs['db_type'] = db_type
         
         # Create orchestrator with the appropriate adapter
         orchestrator = Orchestrator(uri, **kwargs)

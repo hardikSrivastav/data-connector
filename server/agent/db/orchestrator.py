@@ -13,6 +13,7 @@ from urllib.parse import urlparse
 from .adapters.base import DBAdapter
 from .adapters.postgres import PostgresAdapter
 from .adapters.mongo import MongoAdapter
+from .adapters.qdrant import QdrantAdapter
 
 # Configure logging
 logger = logging.getLogger(__name__)
@@ -22,6 +23,7 @@ ADAPTERS = {
     "postgresql": PostgresAdapter,
     "postgres": PostgresAdapter,
     "mongodb": MongoAdapter,
+    "qdrant": QdrantAdapter,
     # Additional adapters will be registered here
     # "mysql": MySQLAdapter,
     # "sqlserver": SQLServerAdapter,
@@ -43,6 +45,7 @@ class Orchestrator:
         Args:
             conn_uri: Database connection URI
             **kwargs: Additional adapter-specific parameters
+                - db_type: Optional explicit database type override (useful for HTTP-based URIs)
         
         Raises:
             ValueError: If no adapter is available for the URI scheme
@@ -50,6 +53,26 @@ class Orchestrator:
         # Parse the URI to get the scheme
         parsed_uri = urlparse(conn_uri)
         scheme = parsed_uri.scheme
+        
+        # Check if db_type is explicitly provided
+        explicit_db_type = kwargs.pop('db_type', None)
+        
+        # Special handling for HTTP-based URIs (like Qdrant)
+        if scheme in ['http', 'https'] and not explicit_db_type:
+            # Try to determine from settings
+            from ..config.settings import Settings
+            settings = Settings()
+            if settings.DB_TYPE.lower() == 'qdrant':
+                logger.info(f"Detected HTTP URI for Qdrant database")
+                scheme = 'qdrant'
+            else:
+                # Use DB_TYPE from settings as fallback
+                scheme = settings.DB_TYPE.lower()
+        
+        # Use explicit db_type if provided
+        if explicit_db_type:
+            scheme = explicit_db_type.lower()
+            logger.info(f"Using explicitly provided database type: {scheme}")
         
         # Get the appropriate adapter class
         AdapterCls = ADAPTERS.get(scheme)

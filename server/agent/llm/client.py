@@ -73,21 +73,22 @@ class LLMClient:
         """
         raise NotImplementedError("Subclasses must implement generate_mongodb_query")
     
-    async def analyze_results(self, rows: List[Dict[str, Any]]) -> str:
+    async def analyze_results(self, rows: List[Dict[str, Any]], is_vector_search: bool = False) -> str:
         """
-        Analyze SQL query results
+        Analyze query results
         
         This method should be overridden by subclasses
         
         Args:
             rows: Query results as a list of dictionaries
+            is_vector_search: Whether the results are from a vector search
             
         Returns:
             Analysis as a string
         """
         raise NotImplementedError("Subclasses must implement analyze_results")
     
-    async def orchestrate_analysis(self, question: str) -> Dict[str, Any]:
+    async def orchestrate_analysis(self, question: str, db_type: str = "postgres") -> Dict[str, Any]:
         """
         Orchestrate a multi-step analysis process using available tools
         
@@ -95,6 +96,7 @@ class LLMClient:
         
         Args:
             question: Natural language question from the user
+            db_type: Database type being queried
             
         Returns:
             Final analysis result
@@ -310,60 +312,77 @@ class OpenAIClient(LLMClient):
             logger.error(f"Error generating MongoDB query with OpenAI: {str(e)}")
             raise
     
-    async def analyze_results(self, rows: List[Dict[str, Any]]) -> str:
+    async def analyze_results(self, rows: List[Dict[str, Any]], is_vector_search: bool = False) -> str:
         """
-        Analyze SQL query results using OpenAI API
+        Analyze query results using OpenAI API
         
         Args:
             rows: Query results as a list of dictionaries
+            is_vector_search: Whether the results are from a vector search
             
         Returns:
             Analysis as a string
         """
-        logger.info("Analyzing results using OpenAI API")
+        logger.info(f"Analyzing {'vector search' if is_vector_search else 'query'} results using OpenAI API")
         
-        # Convert rows to a string representation
-        # Limit to first 20 rows for brevity and to avoid token limits
-        results_sample = rows[:20]
-        results_str = json.dumps(results_sample, indent=2)
-        total_rows = len(rows)
+        # Prepare the data for the prompt
+        # Convert rows to string to avoid sending too much data
+        data_str = json.dumps(rows[:100], indent=2)  # Limit to 100 rows
         
-        # Create a prompt for the analysis
-        prompt = f"""
-        Analyze the following SQL query results and provide a brief summary:
-        
-        Total rows returned: {total_rows}
-        Sample data ({min(20, total_rows)} rows):
-        {results_str}
-        
-        Please describe any patterns, insights, or notable points about this data.
-        Keep your analysis concise and focused on the most important observations.
-        """
+        # Choose appropriate prompt based on result type
+        if is_vector_search:
+            prompt = f"""
+            Analyze these vector search results and provide key insights:
+            
+            {data_str}
+            
+            Consider:
+            1. Similarity patterns in the results
+            2. Key information or themes present in the top results
+            3. How well the results match the semantic meaning of the query
+            4. Any patterns in the metadata of the results
+            
+            Format your analysis in markdown with clean sections and bullet points.
+            """
+        else:
+            prompt = f"""
+            Analyze these SQL query results and provide key insights:
+            
+            {data_str}
+            
+            Consider:
+            1. Key patterns and trends
+            2. Notable outliers
+            3. Statistical observations
+            4. Business implications
+            
+            Format your analysis in markdown with clean sections and bullet points.
+            """
         
         try:
             response = self.client.chat.completions.create(
                 model=self.model_name,
                 messages=[
-                    {"role": "system", "content": "You are a data analyst expert. Provide clear, concise analysis."},
+                    {"role": "system", "content": "You are a data analyst providing clear, concise insights."},
                     {"role": "user", "content": prompt}
                 ],
-                temperature=0.3
+                temperature=0.1
             )
             
-            analysis = response.choices[0].message.content.strip()
-            logger.info("Successfully generated analysis")
-            return analysis
+            # Extract and return the analysis text
+            return response.choices[0].message.content
             
         except Exception as e:
-            logger.error(f"Error analyzing results with OpenAI: {str(e)}")
-            raise
+            logger.error(f"Error analyzing results: {str(e)}")
+            return f"Error analyzing results: {str(e)}"
     
-    async def orchestrate_analysis(self, question: str) -> Dict[str, Any]:
+    async def orchestrate_analysis(self, question: str, db_type: str = "postgres") -> Dict[str, Any]:
         """
         Orchestrate a multi-step analysis process using available tools
         
         Args:
             question: Natural language question from the user
+            db_type: Database type being queried
             
         Returns:
             Final analysis result with supporting data
@@ -838,17 +857,18 @@ class AnthropicClient(LLMClient):
             logger.error(f"Error generating MongoDB query with Anthropic: {str(e)}")
             raise
     
-    async def analyze_results(self, rows: List[Dict[str, Any]]) -> str:
+    async def analyze_results(self, rows: List[Dict[str, Any]], is_vector_search: bool = False) -> str:
         """
-        Analyze SQL query results using Anthropic API
+        Analyze query results using Anthropic API
         
         Args:
             rows: Query results as a list of dictionaries
+            is_vector_search: Whether the results are from a vector search
             
         Returns:
             Analysis as a string
         """
-        logger.info("Analyzing results using Anthropic API")
+        logger.info(f"Analyzing {'vector search' if is_vector_search else 'query'} results using Anthropic API")
         
         # Convert rows to a string representation
         # Limit to first 20 rows for brevity and to avoid token limits
@@ -897,12 +917,13 @@ class AnthropicClient(LLMClient):
             logger.error(f"Error analyzing results with Anthropic: {str(e)}")
             raise
     
-    async def orchestrate_analysis(self, question: str) -> Dict[str, Any]:
+    async def orchestrate_analysis(self, question: str, db_type: str = "postgres") -> Dict[str, Any]:
         """
         Orchestrate a multi-step analysis process using available tools
         
         Args:
             question: Natural language question from the user
+            db_type: Database type being queried
             
         Returns:
             Final analysis result with supporting data
@@ -1288,17 +1309,18 @@ class LocalLLMClient(LLMClient):
           ]
         }'''
     
-    async def analyze_results(self, rows: List[Dict[str, Any]]) -> str:
+    async def analyze_results(self, rows: List[Dict[str, Any]], is_vector_search: bool = False) -> str:
         """
-        Analyze SQL query results using local LLM
+        Analyze query results using local LLM
         
         Args:
             rows: Query results as a list of dictionaries
+            is_vector_search: Whether the results are from a vector search
             
         Returns:
             Analysis as a string
         """
-        logger.info("Analyzing results using local LLM")
+        logger.info(f"Analyzing {'vector search' if is_vector_search else 'query'} results using local LLM")
         
         # Convert rows to a string representation
         results_str = str(rows[:10])  # Limit to first 10 rows for brevity
@@ -1320,12 +1342,13 @@ class LocalLLMClient(LLMClient):
         # For demonstration purposes, return a placeholder analysis
         return "Analysis would be provided by the local LLM in a real implementation."
     
-    async def orchestrate_analysis(self, question: str) -> Dict[str, Any]:
+    async def orchestrate_analysis(self, question: str, db_type: str = "postgres") -> Dict[str, Any]:
         """
         Orchestrate a multi-step analysis process using available tools
         
         Args:
             question: Natural language question from the user
+            db_type: Database type being queried
             
         Returns:
             Final analysis result
