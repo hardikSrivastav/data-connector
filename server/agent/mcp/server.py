@@ -11,18 +11,29 @@ import sys
 current_dir = os.path.dirname(os.path.abspath(__file__))
 if current_dir not in sys.path:
     sys.path.append(current_dir)
+    
+# Add parent directory to path to allow absolute imports
+parent_dir = os.path.dirname(os.path.dirname(current_dir))
+if parent_dir not in sys.path:
+    sys.path.append(parent_dir)
 
-# Try different import styles based on context
+# Robust import handling
 try:
-    # Direct imports when running as a module
+    # First try direct imports
     from config import settings
     from db.database import init_db, get_db
     from api import auth, tools
 except ImportError:
-    # Package imports when imported from another module
-    from .config import settings
-    from .db.database import init_db, get_db
-    from .api import auth, tools
+    try:
+        # Then try package-style imports
+        from .config import settings
+        from .db.database import init_db, get_db
+        from .api import auth, tools
+    except ImportError:
+        # Finally try absolute imports
+        from agent.mcp.config import settings
+        from agent.mcp.db.database import init_db, get_db
+        from agent.mcp.api import auth, tools
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
@@ -54,6 +65,25 @@ async def startup():
     logger.info("Starting MCP server")
     init_db()
     logger.info("Database initialized")
+    
+    # Also run migrations to ensure all columns exist
+    try:
+        # Try with both import styles
+        try:
+            from db.migrate import run_migration
+        except ImportError:
+            try:
+                from .db.migrate import run_migration
+            except ImportError:
+                from agent.mcp.db.migrate import run_migration
+                
+        logger.info("Running database migrations to ensure schema is up to date...")
+        run_migration()
+        logger.info("Database migrations applied successfully")
+    except Exception as e:
+        logger.error(f"Error applying migrations: {str(e)}")
+        logger.error("Server might not function correctly without required database columns!")
+        # Don't crash the server, but warn loudly about the issue
 
 @app.get("/health")
 async def health_check():
@@ -76,7 +106,7 @@ def start():
     
     logger.info(f"Starting MCP server on {host}:{port}")
     uvicorn.run(
-        "agent.mcp.server:app",
+        "agent.mcp.server:app",  # Use proper module reference
         host=host,
         port=port,
         reload=settings.DEV_MODE,

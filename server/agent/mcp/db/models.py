@@ -21,6 +21,9 @@ class User(Base):
     sso_provider = Column(String(50), nullable=True)
     sso_id = Column(String(255), nullable=True)
     
+    # Flag for temporary users (used in session-based authentication)
+    is_temporary = Column(Boolean, default=False)
+    
     # Relationships
     workspaces = relationship("SlackWorkspace", secondary="user_workspaces", back_populates="users")
 
@@ -37,9 +40,17 @@ class SlackWorkspace(Base):
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
     last_used = Column(DateTime, nullable=True)
     
+    # User token - may be null if not requested or granted
+    user_token = Column(Text, nullable=True)  # Encrypted xoxp token
+    user_token_scope = Column(Text, nullable=True)  # List of scopes granted to user token
+    
     # For token rotation
     access_token_expires_at = Column(DateTime, nullable=True)
     refresh_token = Column(Text, nullable=True)
+    
+    # User token expiration (may be different than bot token)
+    user_token_expires_at = Column(DateTime, nullable=True)
+    user_refresh_token = Column(Text, nullable=True)
     
     # Relationships
     users = relationship("User", secondary="user_workspaces", back_populates="workspaces")
@@ -74,3 +85,19 @@ class OAuthStateRecord(Base):
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
     expires_at = Column(DateTime, nullable=False)
     used = Column(Boolean, default=False)
+
+
+class SessionRecord(Base):
+    """Database storage for CLI sessions"""
+    __tablename__ = "sessions"
+    
+    id = Column(Integer, primary_key=True)
+    session_id = Column(String(255), unique=True, nullable=False)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+    expires_at = Column(DateTime, nullable=False)
+    state = Column(String(255), nullable=True)  # Associated OAuth state
+    completed = Column(Boolean, default=False)
+    
+    # JSON-serialized result data
+    result_data = Column(Text, nullable=True)

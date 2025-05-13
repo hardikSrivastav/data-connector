@@ -6,12 +6,26 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 import logging
 
-from ..db.database import get_db
-from ..db import crud
-from ..security import verify_jwt_token, JWTData, create_jwt_token
-from ..models.oauth import TokenRequest, TokenResponse
-from ..models.workspace import SlackToolRequest, SlackToolResponse
-from ..config import settings
+# Handle imports with fallbacks to accommodate both package and direct module execution
+try:
+    # Package-style import (when running as part of the agent package)
+    from ..db.database import get_db
+    from ..db import crud
+    from ..security import verify_jwt_token, JWTData, create_jwt_token
+    from ..models.oauth import TokenRequest, TokenResponse
+    from ..models.workspace import SlackToolRequest, SlackToolResponse
+    from ..config import settings
+except (ImportError, ValueError):
+    # Direct module import (when running the module directly)
+    import sys
+    import os
+    sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+    from agent.mcp.db.database import get_db
+    from agent.mcp.db import crud
+    from agent.mcp.security import verify_jwt_token, JWTData, create_jwt_token
+    from agent.mcp.models.oauth import TokenRequest, TokenResponse
+    from agent.mcp.models.workspace import SlackToolRequest, SlackToolResponse
+    from agent.mcp.config import settings
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
@@ -35,8 +49,26 @@ async def invoke(
             detail="Workspace not found or token is invalid"
         )
     
-    # Create Slack client with the token
-    slack = WebClient(token=workspace_token)
+    # Check if user token is available - use it for read operations when possible
+    user_token = None
+    has_user_token = crud.has_user_token(db, token_data.workspace_id)
+    if has_user_token:
+        user_token = crud.get_workspace_user_token(db, token_data.workspace_id)
+        logger.info("User token available for workspace - will use for read operations")
+    
+    # Determine which tools require read access to content (where user token helps)
+    read_content_tools = [
+        "slack_get_channel_history", 
+        "slack_get_thread_replies"
+    ]
+    
+    # Use user token for read operations if available, otherwise use bot token
+    if user_token and request.tool in read_content_tools:
+        logger.info(f"Using user token for {request.tool}")
+        slack = WebClient(token=user_token)
+    else:
+        logger.info(f"Using bot token for {request.tool}")
+        slack = WebClient(token=workspace_token)
     
     try:
         if request.tool == "slack_list_channels":
@@ -56,9 +88,21 @@ async def invoke(
                 )
                 
             limit = request.parameters.get("limit", 50)
-            res = slack.conversations_history(channel=channel_id, limit=limit)
-            logger.info(f"Retrieved {len(res['messages'])} messages from channel {channel_id}")
-            return SlackToolResponse(result={"messages": res["messages"]})
+            try:
+                res = slack.conversations_history(channel=channel_id, limit=limit)
+                logger.info(f"Retrieved {len(res['messages'])} messages from channel {channel_id}")
+                return SlackToolResponse(result={"messages": res["messages"]})
+            except SlackApiError as e:
+                if e.response["error"] == "not_in_channel" and user_token:
+                    # If bot isn't in channel but we have user token, we can still try to use it
+                    logger.warning(f"Bot not in channel {channel_id}, falling back to user token")
+                    user_slack = WebClient(token=user_token)
+                    res = user_slack.conversations_history(channel=channel_id, limit=limit)
+                    logger.info(f"Retrieved {len(res['messages'])} messages using user token")
+                    return SlackToolResponse(result={"messages": res["messages"]})
+                else:
+                    # Re-raise the error if we can't handle it
+                    raise
 
         elif request.tool == "slack_get_thread_replies":
             # Get all replies in a thread
@@ -71,12 +115,24 @@ async def invoke(
                     detail="Missing required parameters: channel_id and thread_ts"
                 )
                 
-            res = slack.conversations_replies(channel=channel_id, ts=thread_ts)
-            logger.info(f"Retrieved {len(res['messages'])} replies in thread {thread_ts}")
-            return SlackToolResponse(result={"replies": res["messages"]})
+            try:
+                res = slack.conversations_replies(channel=channel_id, ts=thread_ts)
+                logger.info(f"Retrieved {len(res['messages'])} replies in thread {thread_ts}")
+                return SlackToolResponse(result={"replies": res["messages"]})
+            except SlackApiError as e:
+                if e.response["error"] == "not_in_channel" and user_token:
+                    # If bot isn't in channel but we have user token, we can still try to use it
+                    logger.warning(f"Bot not in channel {channel_id}, falling back to user token")
+                    user_slack = WebClient(token=user_token)
+                    res = user_slack.conversations_replies(channel=channel_id, ts=thread_ts)
+                    logger.info(f"Retrieved {len(res['messages'])} replies using user token")
+                    return SlackToolResponse(result={"replies": res["messages"]})
+                else:
+                    # Re-raise the error if we can't handle it
+                    raise
             
         elif request.tool == "slack_post_message":
-            # Post a message to a channel
+            # Post a message to a channel - always use bot token
             channel_id = request.parameters.get("channel_id")
             text = request.parameters.get("text")
             
@@ -112,6 +168,42 @@ async def invoke(
                 
             res = slack.users_info(user=user_id)
             return SlackToolResponse(result={"user": res["user"]})
+
+        elif request.tool == "slack_bot_info":
+            # Get information about the bot/app without using auth_test or team_info
+            # Just return basic info we can get from the token and available methods
+            try:
+                # Try to get bot's user ID from auth.test if available
+                # This might fail if we don't have the right scope
+                auth_info = {"bot_user_id": None, "bot_name": "Bot"}
+                try:
+                    auth_test_result = slack.auth_test()
+                    auth_info = {
+                        "bot_user_id": auth_test_result.get("user_id"),
+                        "bot_name": auth_test_result.get("user")
+                    }
+                except SlackApiError:
+                    # If auth.test fails, we'll just use placeholder values
+                    logger.warning("Could not get bot info via auth.test - missing scope")
+                
+                # Return available info
+                return SlackToolResponse(result={
+                    "bot_info": {
+                        "bot_user_id": auth_info["bot_user_id"],
+                        "bot_name": auth_info["bot_name"],
+                        # Skip team info since we don't have the scope
+                        "note": "Limited information available due to scope restrictions"
+                    }
+                })
+            except Exception as e:
+                logger.error(f"Error getting bot info: {str(e)}")
+                # Return minimal info
+                return SlackToolResponse(result={
+                    "bot_info": {
+                        "note": "Could not retrieve bot info - please check scopes",
+                        "error": str(e)
+                    }
+                })
 
         else:
             raise HTTPException(
@@ -161,3 +253,77 @@ async def generate_token(
     )
     
     return TokenResponse(token=token, expires_at=expires_at)
+
+
+@router.get("/channels/help_invite", response_model=Dict[str, Any])
+async def help_invite_to_channels(
+    workspace_id: int,
+    db: Session = Depends(get_db)
+):
+    """Get a list of channels and invite commands to help users add the bot to their channels"""
+    # Get the workspace
+    workspace = crud.get_workspace(db, workspace_id)
+    if not workspace:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Workspace not found"
+        )
+    
+    # Get user token if available
+    user_token = None
+    if workspace.user_token:
+        user_token = crud.get_workspace_user_token(db, workspace_id)
+    
+    # If no user token, we can't list all channels
+    if not user_token:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="User token not available - can't list all channels"
+        )
+    
+    # Use user token to list all channels
+    slack = WebClient(token=user_token)
+    
+    try:
+        res = slack.conversations_list(limit=1000)
+        channels = res["channels"]
+        
+        # Get bot info to show proper name in invite command
+        bot_info = {"name": "your_bot"}
+        try:
+            bot_token = crud.get_workspace_token(db, workspace_id)
+            bot_client = WebClient(token=bot_token)
+            auth_test = bot_client.auth_test()
+            bot_info["name"] = auth_test.get("user", "your_bot")
+        except Exception as e:
+            logger.warning(f"Could not get bot name: {str(e)}")
+        
+        # Format response with invite commands
+        result = {
+            "channels": [
+                {
+                    "id": channel["id"],
+                    "name": channel["name"],
+                    "invite_command": f"/invite @{bot_info['name']}"
+                }
+                for channel in channels
+            ],
+            "bot_name": bot_info["name"],
+            "bulk_invite_instructions": "To invite the bot to a channel, use the /invite command in each channel.",
+            "easy_setup": f"Just run /invite @{bot_info['name']} in the channels you want to analyze."
+        }
+        
+        return result
+        
+    except SlackApiError as e:
+        logger.error(f"Slack API error: {e.response['error']}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Slack API error: {e.response['error']}"
+        )
+    except Exception as e:
+        logger.error(f"Error listing channels: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=str(e)
+        )

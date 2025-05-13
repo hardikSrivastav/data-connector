@@ -94,3 +94,13 @@ class TokenEncryption:
 
 # Create a global token encryption instance
 token_encryption = TokenEncryption()
+
+# Provide encrypt and decrypt as aliases to token_encryption methods
+# This helps maintain backwards compatibility with existing code
+def encrypt(token: str) -> str:
+    """Encrypt a token using the global token_encryption instance"""
+    return token_encryption.encrypt_token(token)
+
+def decrypt(encrypted_token: str) -> str:
+    """Decrypt a token using the global token_encryption instance"""
+    return token_encryption.decrypt_token(encrypted_token)
