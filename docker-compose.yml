@@ -23,6 +23,39 @@ services:
 #    depends_on:
 #      - postgres
 
+  # MCP Slack Server
+  mcp-server:
+    build:
+      context: ./server
+      dockerfile: Dockerfile.mcp
+    volumes:
+      - ./server:/app
+    ports:
+      - "8500:8500"
+    environment:
+      - MCP_HOST=0.0.0.0
+      - MCP_PORT=8500
+      - MCP_DB_HOST=postgres-mcp
+      - MCP_DB_PORT=5432
+      - MCP_DB_NAME=slackoauth
+      - MCP_DB_USER=slackoauth
+      - MCP_DB_PASSWORD=slackoauth
+      - MCP_SLACK_CLIENT_ID=${MCP_SLACK_CLIENT_ID}
+      - MCP_SLACK_CLIENT_SECRET=${MCP_SLACK_CLIENT_SECRET}
+      - MCP_SLACK_SIGNING_SECRET=${MCP_SLACK_SIGNING_SECRET}
+      - MCP_API_BASE_URL=https://6aec-2405-201-4011-b202-3089-406f-2549-df4f.ngrok-free.app
+      - MCP_SECRET_KEY=this_is_a_random_secret_key
+      - MCP_WEB_APP_URL=http://localhost:3000
+      - MCP_CORS_ORIGINS=["*"]
+      - MCP_DEV_MODE=true
+      - MCP_DEBUG=true
+    container_name: slack-mcp-server
+    restart: unless-stopped
+    networks:
+      - connector-network
+    depends_on:
+      - postgres-mcp
+
   postgres:
     image: postgres:16
     ports:
@@ -35,6 +68,21 @@ services:
       - postgres-data:/var/lib/postgresql/data
       - ./init-db:/docker-entrypoint-initdb.d
     container_name: data-connector-postgres
+    networks:
+      - connector-network
+
+  # PostgreSQL for Slack MCP
+  postgres-mcp:
+    image: postgres:16
+    ports:
+      - "6500:5432"
+    environment:
+      - POSTGRES_USER=slackoauth
+      - POSTGRES_PASSWORD=slackoauth
+      - POSTGRES_DB=slackoauth
+    volumes:
+      - postgres-mcp-data:/var/lib/postgresql/data
+    container_name: slack-mcp-postgres
     networks:
       - connector-network
 
@@ -81,5 +129,6 @@ networks:
 
 volumes:
   postgres-data:
+  postgres-mcp-data:
   mongodb-data:
   qdrant-data: 

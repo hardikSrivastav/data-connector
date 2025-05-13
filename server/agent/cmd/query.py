@@ -395,7 +395,7 @@ async def run_postgres_query(llm, question: str, analyze: bool, orchestrator: Or
     
     # Search schema metadata specific to this database type
     searcher = SchemaSearcher(db_type=db_type)
-    schema_chunks = await searcher.search(question, top_k=5, db_type=db_type)
+    schema_chunks = await searcher.search(question, top_k=10, db_type=db_type)
     
     # Render prompt template for PostgreSQL
     prompt = llm.render_template("nl2sql.tpl", schema_chunks=schema_chunks, user_question=question)
@@ -599,7 +599,7 @@ def display_query_results(rows):
 def search_schema(
     query: str = typer.Argument(..., help="Search query for schema metadata"),
     db_type: Optional[str] = typer.Option(None, "--type", "-t", help="Database type ('postgres', 'mongodb', etc.)"),
-    top_k: int = typer.Option(5, "--limit", "-l", help="Maximum number of results to return")
+    top_k: int = typer.Option(10, "--limit", "-l", help="Maximum number of results to return")
 ):
     """
     Search schema metadata
