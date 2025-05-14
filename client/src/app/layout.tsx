@@ -10,6 +10,9 @@ import "@fontsource/libre-baskerville/700.css";
 export const metadata: Metadata = {
   title: siteConfig.name,
   description: siteConfig.description,
+  icons: {
+    icon: '/ceneca-light.png',
+  },
 };
 
 export default function RootLayout({
@@ -20,7 +23,7 @@ export default function RootLayout({
   return (
     <html lang="en" className="dark">
       <head>
-        <link rel="icon" href="/favicon.ico" />
+        {/* Favicon is now defined in metadata */}
       </head>
       <body className="text-base md:text-lg">
         <Navbar />

@@ -70,6 +70,12 @@ class Settings(BaseSettings):
     if not QDRANT_URI:
         QDRANT_URI = f"http://{QDRANT_HOST}:{QDRANT_PORT}"
     
+    # Slack Integration Settings
+    SLACK_MCP_URL: Optional[str] = yaml_config.get('slack', {}).get('mcp_url', os.getenv('SLACK_MCP_URL', 'http://localhost:8500'))
+    SLACK_HISTORY_DAYS: int = yaml_config.get('slack', {}).get('history_days', int(os.getenv('SLACK_HISTORY_DAYS', 30)))
+    SLACK_UPDATE_FREQUENCY: int = yaml_config.get('slack', {}).get('update_frequency', int(os.getenv('SLACK_UPDATE_FREQUENCY', 6)))
+    SLACK_URI: Optional[str] = yaml_config.get('slack', {}).get('uri', os.getenv('SLACK_URI', SLACK_MCP_URL))
+    
     # Vector Embedding Settings
     VECTOR_EMBEDDING_PROVIDER: str = yaml_config.get('vector_db', {}).get('embedding', {}).get('provider', os.getenv('VECTOR_EMBEDDING_PROVIDER', 'openai'))
     VECTOR_EMBEDDING_MODEL: Optional[str] = yaml_config.get('vector_db', {}).get('embedding', {}).get('model', os.getenv('VECTOR_EMBEDDING_MODEL', 'text-embedding-ada-002'))
@@ -198,6 +204,9 @@ class Settings(BaseSettings):
         elif self.DB_TYPE.lower() == "qdrant" and self.QDRANT_URI:
             logger.info(f"Using QDRANT_URI: {self.QDRANT_URI}")
             return self.QDRANT_URI
+        elif self.DB_TYPE.lower() == "slack" and self.SLACK_URI:
+            logger.info(f"Using SLACK_URI: {self.SLACK_URI}")
+            return self.SLACK_URI
             
         # Check for DB_DSN_OVERRIDE only if db_type is 'postgres' to avoid overriding other db types
         if self.DB_TYPE.lower() == "postgres" and self.DB_DSN_OVERRIDE:

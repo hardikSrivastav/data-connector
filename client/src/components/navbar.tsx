@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from "react";
 import Link from "next/link";
+import Image from "next/image";
 import { motion, AnimatePresence } from "framer-motion";
 import { Button } from "@/components/ui/button";
 import { siteConfig } from "@/lib/constants";
@@ -39,6 +40,13 @@ export function Navbar() {
           >
             <div className="w-1/4">
               <Link href="/" className="flex items-center">
+                <Image 
+                  src="/ceneca-light.png"
+                  alt={siteConfig.name}
+                  width={80}
+                  height={80}
+                  className="mr-2"
+                />
                 <span className="text-3xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-[#9d4edd] to-[#ff006e] font-baskerville">
                   {siteConfig.name}
                 </span>

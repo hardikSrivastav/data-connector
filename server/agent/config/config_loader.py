@@ -6,8 +6,13 @@ This module handles loading configuration from YAML files.
 
 import os
 import yaml
+import logging
 from pathlib import Path
 from typing import Dict, Any, Optional
+import json
+
+# Configure logging
+logger = logging.getLogger(__name__)
 
 # Default locations to look for config file
 DEFAULT_CONFIG_LOCATIONS = [
@@ -19,45 +24,95 @@ DEFAULT_CONFIG_LOCATIONS = [
     "./config/config.yaml",
 ]
 
-def load_config(config_path: Optional[str] = None) -> Dict[str, Any]:
-    """
-    Load configuration from YAML file.
-    
-    Args:
-        config_path: Optional path to config file. If None, searches default locations.
-        
-    Returns:
-        Dict containing configuration
-    """
-    # If config path specified, use it
-    if config_path:
-        return _load_from_path(config_path)
-    
-    # Otherwise try default locations
-    for location in DEFAULT_CONFIG_LOCATIONS:
-        if os.path.exists(location):
-            return _load_from_path(location)
-    
-    # If no config file found, return empty dict
-    return {}
+# Default configuration
+DEFAULT_CONFIG = {
+    "db": {
+        "type": "postgres",
+        "uri": "postgresql://postgres:postgres@localhost:5432/postgres",
+        "cache_dir": None
+    },
+    "llm": {
+        "provider": "openai",
+        "model": "gpt-4-turbo",
+        "temperature": 0.1,
+        "max_tokens": 2000,
+        "api_key": None,
+        "api_base": None
+    },
+    "logging": {
+        "level": "info",
+        "file": None
+    },
+    "output": {
+        "format": "markdown",
+        "max_rows": 50
+    },
+    "slack": {
+        "mcp_url": "http://localhost:8500",
+        "history_days": 30,
+        "update_frequency": 6
+    }
+}
 
-def _load_from_path(path: str) -> Dict[str, Any]:
-    """
-    Load YAML config from specified path.
+def get_config_path() -> str:
+    """Get the path to the configuration file"""
+    # First check for environment variable
+    if os.environ.get("DATA_CONNECTOR_CONFIG"):
+        return os.environ["DATA_CONNECTOR_CONFIG"]
     
-    Args:
-        path: Path to YAML config file
-        
-    Returns:
-        Dict containing configuration
-    """
-    try:
-        with open(path, 'r') as f:
-            config = yaml.safe_load(f)
-            return config if config else {}
-    except Exception as e:
-        print(f"Error loading config from {path}: {e}")
+    # Next check in current directory
+    if os.path.exists("config.yaml"):
+        return "config.yaml"
+    
+    # Finally check in user home directory
+    home_config = os.path.join(str(Path.home()), ".data-connector", "config.yaml")
+    if os.path.exists(home_config):
+        return home_config
+    
+    # Return the default path for writing the config
+    config_dir = os.path.join(str(Path.home()), ".data-connector")
+    os.makedirs(config_dir, exist_ok=True)
+    return os.path.join(config_dir, "config.yaml")
+
+def load_config() -> Dict[str, Any]:
+    """Load configuration from file"""
+    config_path = get_config_path()
+    
+    if not os.path.exists(config_path):
+        logger.warning(f"Config file not found at {config_path}, using defaults")
         return {}
+    
+    try:
+        with open(config_path, 'r') as f:
+            if config_path.endswith('.yaml'):
+                config = yaml.safe_load(f) or {}
+            elif config_path.endswith('.json'):
+                config = json.load(f)
+            else:
+                logger.warning(f"Unknown config file format: {config_path}")
+                config = {}
+                
+        return config
+    except Exception as e:
+        logger.error(f"Error loading config: {str(e)}")
+        return {}
+
+async def load_config_with_defaults() -> Dict[str, Any]:
+    """Load configuration with default values"""
+    user_config = load_config()
+    
+    # Deep merge with defaults
+    merged_config = DEFAULT_CONFIG.copy()
+    
+    for key, value in user_config.items():
+        if key in merged_config and isinstance(merged_config[key], dict) and isinstance(value, dict):
+            # Merge this section
+            merged_config[key].update(value)
+        else:
+            # Override this key
+            merged_config[key] = value
+    
+    return merged_config
 
 def get_database_uri(db_type: str) -> Optional[str]:
     """
@@ -84,30 +139,25 @@ def get_default_database_type() -> str:
     config = load_config()
     return config.get('default_database', 'postgres')
 
-def save_config(config: Dict[str, Any], config_path: Optional[str] = None) -> bool:
-    """
-    Save configuration to YAML file.
-    
-    Args:
-        config: Configuration dict to save
-        config_path: Optional path to save to. If None, uses first default location.
-        
-    Returns:
-        True if successful, False otherwise
-    """
-    # Determine where to save
-    path = config_path or DEFAULT_CONFIG_LOCATIONS[0]
-    
-    # Ensure directory exists
-    os.makedirs(os.path.dirname(path), exist_ok=True)
+def save_config(config: Dict[str, Any]) -> bool:
+    """Save configuration to file"""
+    config_path = get_config_path()
     
     try:
-        with open(path, 'w') as f:
-            yaml.dump(config, f, default_flow_style=False)
+        # Create directory if it doesn't exist
+        os.makedirs(os.path.dirname(config_path), exist_ok=True)
         
-        # Set appropriate permissions (owner read/write only)
-        os.chmod(path, 0o600)
+        with open(config_path, 'w') as f:
+            if config_path.endswith('.yaml'):
+                yaml.dump(config, f, default_flow_style=False)
+            elif config_path.endswith('.json'):
+                json.dump(config, f, indent=2)
+            else:
+                # Default to YAML
+                yaml.dump(config, f, default_flow_style=False)
+                
+        logger.info(f"Config saved to {config_path}")
         return True
     except Exception as e:
-        print(f"Error saving config to {path}: {e}")
+        logger.error(f"Error saving config: {str(e)}")
         return False 

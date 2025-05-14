@@ -14,6 +14,7 @@ from .adapters.base import DBAdapter
 from .adapters.postgres import PostgresAdapter
 from .adapters.mongo import MongoAdapter
 from .adapters.qdrant import QdrantAdapter
+from .adapters import ADAPTER_REGISTRY
 
 # Configure logging
 logger = logging.getLogger(__name__)
@@ -38,51 +39,54 @@ class Orchestrator:
     by routing queries to the appropriate adapter based on the connection URI.
     """
     
-    def __init__(self, conn_uri: str, **kwargs):
+    def __init__(self, uri: str, **kwargs):
         """
-        Initialize the orchestrator with a connection URI.
+        Initialize the orchestrator with a URI and create the appropriate adapter
         
         Args:
-            conn_uri: Database connection URI
-            **kwargs: Additional adapter-specific parameters
-                - db_type: Optional explicit database type override (useful for HTTP-based URIs)
-        
-        Raises:
-            ValueError: If no adapter is available for the URI scheme
+            uri: Connection URI for the database
+            **kwargs: Additional arguments to pass to the adapter
         """
-        # Parse the URI to get the scheme
-        parsed_uri = urlparse(conn_uri)
-        scheme = parsed_uri.scheme
+        # Parse the URI to determine the database type
+        parsed_uri = urlparse(uri)
         
-        # Check if db_type is explicitly provided
-        explicit_db_type = kwargs.pop('db_type', None)
+        # Get explicit db_type if provided, otherwise infer from URI
+        db_type = kwargs.pop('db_type', None)
         
-        # Special handling for HTTP-based URIs (like Qdrant)
-        if scheme in ['http', 'https'] and not explicit_db_type:
-            # Try to determine from settings
-            from ..config.settings import Settings
-            settings = Settings()
-            if settings.DB_TYPE.lower() == 'qdrant':
-                logger.info(f"Detected HTTP URI for Qdrant database")
-                scheme = 'qdrant'
+        # Use explicit db_type if provided, otherwise infer from URI
+        if not db_type:
+            # For HTTP and HTTPS URLs, we can't infer the DB type
+            if parsed_uri.scheme in ['http', 'https']:
+                # Try to get from kwargs or fall back to default
+                db_type = kwargs.get('db_type', 'postgres')
+                logger.warning(f"HTTP(S) URI provided without explicit db_type, assuming {db_type}")
             else:
-                # Use DB_TYPE from settings as fallback
-                scheme = settings.DB_TYPE.lower()
+                # Use the scheme as the database type
+                db_type = parsed_uri.scheme
         
-        # Use explicit db_type if provided
-        if explicit_db_type:
-            scheme = explicit_db_type.lower()
-            logger.info(f"Using explicitly provided database type: {scheme}")
+        # Normalize the database type
+        db_type = db_type.lower()
         
-        # Get the appropriate adapter class
-        AdapterCls = ADAPTERS.get(scheme)
-        if not AdapterCls:
-            raise ValueError(f"No adapter available for database scheme: '{scheme}'")
+        # Log the database type and URI (with password redacted for security)
+        redacted_uri = self._redact_password(uri)
+        logger.info(f"Initializing orchestrator for {db_type} with URI: {redacted_uri}")
         
-        logger.info(f"Using {AdapterCls.__name__} for connection URI scheme: {scheme}")
+        # Create the appropriate adapter based on the database type
+        if db_type in ADAPTER_REGISTRY:
+            adapter_class = ADAPTER_REGISTRY[db_type]
+            self.adapter = adapter_class(uri, **kwargs)
+        else:
+            # Fall back to legacy handling for backward compatibility
+            if db_type in ['postgres', 'postgresql']:
+                self.adapter = PostgresAdapter(uri, **kwargs)
+            elif db_type in ['mongodb', 'mongo']:
+                self.adapter = MongoAdapter(uri, **kwargs)
+            elif db_type == 'qdrant':
+                self.adapter = QdrantAdapter(uri, **kwargs)
+            else:
+                raise ValueError(f"Unsupported database type: {db_type}")
         
-        # Initialize the adapter
-        self.adapter = AdapterCls(conn_uri, **kwargs)
+        self.db_type = db_type
     
     async def llm_to_query(self, nl_prompt: str, **kwargs) -> Any:
         """
@@ -139,4 +143,46 @@ class Orchestrator:
         Returns:
             True if connection successful, False otherwise
         """
-        return await self.adapter.test_connection() 
+        return await self.adapter.test_connection()
+
+    def _redact_password(self, uri: str) -> str:
+        """
+        Redact the password from a URI for safer logging
+        
+        Args:
+            uri: Database connection URI
+            
+        Returns:
+            URI with password replaced by '***'
+        """
+        try:
+            parsed = urlparse(uri)
+            
+            # If there's no netloc, just return the URI
+            if not parsed.netloc:
+                return uri
+                
+            # Check if there's a username:password format
+            netloc_parts = parsed.netloc.split('@')
+            if len(netloc_parts) == 1:
+                # No username:password
+                return uri
+                
+            auth_parts = netloc_parts[0].split(':')
+            if len(auth_parts) < 2:
+                # No password
+                return uri
+                
+            # Replace password with ***
+            auth_parts[1] = '***'
+            netloc_parts[0] = ':'.join(auth_parts)
+            
+            # Reconstruct netloc
+            new_netloc = '@'.join(netloc_parts)
+            
+            # Reconstruct URI
+            redacted = parsed._replace(netloc=new_netloc)
+            return redacted.geturl()
+        except:
+            # If anything goes wrong, return the original URI
+            return uri 

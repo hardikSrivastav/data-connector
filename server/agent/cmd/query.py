@@ -14,6 +14,10 @@ from rich.panel import Panel
 from rich.markdown import Markdown
 from rich.progress import Progress, SpinnerColumn, TextColumn
 from urllib.parse import urlparse
+import requests
+import webbrowser
+import secrets
+import argparse
 
 print("Starting Data Connector CLI...")
 
@@ -22,12 +26,12 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../.
 
 from agent.db.execute import test_conn
 from agent.llm.client import get_llm_client
-from agent.meta.ingest import SchemaSearcher, ensure_index_exists
+from agent.meta.ingest import SchemaSearcher, ensure_index_exists, build_and_save_index_for_db
 from agent.api.endpoints import sanitize_sql
 from agent.tools.tools import DataTools
 from agent.tools.state_manager import StateManager
 from agent.config.settings import Settings
-from agent.config.config_loader import load_config
+from agent.config.config_loader import load_config, load_config_with_defaults
 from agent.performance import ensure_schema_index_updated
 from agent.db.orchestrator import Orchestrator
 
@@ -335,6 +339,8 @@ def query(
                     await run_mongodb_query(llm, question, analyze, orchestrator, detected_db_type)
                 elif detected_db_type.lower() == "qdrant":
                     await run_qdrant_query(llm, question, analyze, orchestrator, detected_db_type)
+                elif detected_db_type.lower() == "slack":
+                    await run_slack_query(llm, question, analyze, orchestrator, detected_db_type)
                 else:
                     console.print(f"[red]Unsupported database type: {detected_db_type}[/red]")
         
@@ -569,6 +575,65 @@ async def run_qdrant_query(llm, question: str, analyze: bool, orchestrator: Orch
     except Exception as e:
         console.print(f"[red]Error executing vector search: {str(e)}[/red]")
 
+async def run_slack_query(llm, question: str, analyze: bool, orchestrator: Orchestrator, db_type: str):
+    """Run a Slack query"""
+    
+    # Search schema metadata specific to this database type
+    searcher = SchemaSearcher(db_type=db_type)
+    schema_chunks = await searcher.search(question, top_k=5, db_type=db_type)
+    
+    # Create context from schema chunks
+    schema_context = "\n\n".join([chunk.get("content", "") for chunk in schema_chunks])
+    
+    # Render prompt template for Slack
+    prompt = llm.render_template("slack_query.tpl", 
+                             schema_context=schema_context, 
+                             query=question)
+    
+    # Generate Slack query
+    console.print("Generating Slack query...")
+    
+    try:
+        # Generate query
+        response = await llm.generate_mongodb_query(prompt)
+        
+        # Parse response as JSON
+        query_json = None
+        
+        # Try to extract JSON if embedded in markdown
+        if "```json" in response:
+            json_text = response.split("```json")[1].split("```")[0].strip()
+            query_json = json.loads(json_text)
+        else:
+            # Otherwise try to parse the whole response
+            query_json = json.loads(response)
+        
+        # Print the query
+        console.print(f"\n[bold cyan]Slack Query:[/bold cyan]")
+        formatted_query = json.dumps(query_json, indent=2)
+        console.print(f"[cyan]{formatted_query}[/cyan]\n")
+        
+        # Execute query
+        console.print("Executing query...")
+        results = await orchestrator.execute(query_json)
+        
+        # Display results
+        if results:
+            display_query_results(results)
+            
+            # Analyze results if requested
+            if analyze:
+                console.print("\n[bold]Analyzing results...[/bold]")
+                analysis = await llm.analyze_results(results)
+                console.print(f"\n[bold green]Analysis:[/bold green]")
+                console.print(analysis)
+        else:
+            console.print("[yellow]No results found[/yellow]")
+    except Exception as e:
+        console.print(f"[red]Error executing Slack query: {str(e)}[/red]")
+        import traceback
+        console.print(traceback.format_exc())
+
 def display_query_results(rows):
     """Display query results in a table"""
     
@@ -759,6 +824,269 @@ def cleanup(
         console.print(f"[green]Cleaned up {cleaned} old sessions[/green]")
     
     asyncio.run(run())
+
+# Add a new function for managing Slack authentication
+async def slack_auth(args):
+    """
+    Authenticate with Slack using session-based OAuth flow
+    """
+    # Get MCP URL from config
+    config = await load_config_with_defaults()
+    mcp_url = config.get("slack", {}).get("mcp_url", "http://localhost:8500")
+    print(f"Using MCP server at {mcp_url}")
+    
+    # Generate a session ID
+    session_id = secrets.token_urlsafe(16)
+    print(f"Generated session ID: {session_id}")
+    
+    # Create authorization URL
+    auth_url = f"{mcp_url}/api/auth/slack/authorize?session={session_id}"
+    
+    # Open browser
+    print("\n" + "="*60)
+    print(f"Opening browser for Slack authentication...")
+    print(f"If your browser doesn't open automatically, please visit:")
+    print(f"\n{auth_url}\n")
+    print("="*60 + "\n")
+    
+    try:
+        webbrowser.open(auth_url)
+    except Exception as e:
+        print(f"Failed to open browser: {e}")
+        print(f"Please manually visit the URL above to complete authentication")
+    
+    # Poll for completion
+    print("Waiting for authentication to complete in browser...")
+    
+    max_attempts = 60  # 5 minutes
+    for attempt in range(max_attempts):
+        time.sleep(5)  # Poll every 5 seconds
+        
+        try:
+            response = requests.get(f"{mcp_url}/api/auth/slack/check_session/{session_id}")
+            
+            if response.status_code == 200:
+                data = response.json()
+                
+                # Check if auth is complete
+                if data.get('status') == 'complete':
+                    if data.get('success'):
+                        print("\nAuthentication successful!")
+                        
+                        # Save the credentials file
+                        user_id = data.get('user_id')
+                        workspace_id = data.get('workspace_id')
+                        team_name = data.get('team_name', 'Slack Workspace')
+                        
+                        # Create credentials directory if needed
+                        from pathlib import Path
+                        
+                        credentials_dir = os.path.join(str(Path.home()), ".data-connector")
+                        os.makedirs(credentials_dir, exist_ok=True)
+                        
+                        # Create credentials file
+                        credentials = {
+                            "user_id": user_id,
+                            "workspaces": [
+                                {
+                                    "id": workspace_id,
+                                    "name": team_name,
+                                    "is_default": True
+                                }
+                            ]
+                        }
+                        
+                        credentials_path = os.path.join(credentials_dir, "slack_credentials.json")
+                        with open(credentials_path, 'w') as f:
+                            json.dump(credentials, f, indent=2)
+                            
+                        print(f"Credentials saved to {credentials_path}")
+                        print(f"\nYou're now authenticated with Slack workspace: {team_name}")
+                        print("You can now run slack queries using the data-connector CLI")
+                        return True
+                    else:
+                        print(f"\nAuthentication failed: {data.get('error', 'Unknown error')}")
+                        return False
+        
+        except Exception as e:
+            if attempt > 5:
+                print(f"Error polling for auth completion: {e}")
+    
+    print("\nAuthentication timed out after 5 minutes")
+    return False
+
+async def slack_list_workspaces(args):
+    """
+    List all Slack workspaces available to the user
+    """
+    # Load credentials
+    import os
+    import json
+    from pathlib import Path
+    
+    credentials_path = os.path.join(str(Path.home()), ".data-connector", "slack_credentials.json")
+    
+    if not os.path.exists(credentials_path):
+        print("No Slack credentials found. Please run 'data-connector slack auth' first.")
+        return False
+        
+    try:
+        with open(credentials_path, 'r') as f:
+            credentials = json.load(f)
+            
+        user_id = credentials.get('user_id')
+        workspaces = credentials.get('workspaces', [])
+        
+        if not workspaces:
+            print("No workspaces found in credentials file.")
+            return False
+            
+        print("\nAvailable Slack Workspaces:")
+        print("="*40)
+        
+        for i, ws in enumerate(workspaces):
+            print(f"{i+1}. {ws.get('name', 'Unknown')} (ID: {ws.get('id')})")
+            if ws.get('is_default'):
+                print("   DEFAULT")
+                
+        print("\nTo change the default workspace, edit the credentials file at:")
+        print(credentials_path)
+            
+        return True
+    except Exception as e:
+        print(f"Error loading workspaces: {e}")
+        return False
+
+async def slack_refresh(args):
+    """
+    Force refresh of Slack schema metadata
+    """
+    # Get MCP URL from config
+    config = await load_config_with_defaults()
+    mcp_url = config.get("slack", {}).get("mcp_url", "http://localhost:8500")
+    
+    # Create orchestrator with Slack adapter
+    from ..db.orchestrator import Orchestrator
+    
+    print("Refreshing Slack schema...")
+    
+    try:
+        # Initialize orchestrator with Slack adapter
+        orchestrator = Orchestrator(mcp_url, db_type="slack")
+        
+        # Ensure adapter is connected
+        if not await orchestrator.adapter.is_connected():
+            print("Failed to connect to Slack. Please check your credentials.")
+            return False
+            
+        # Generate schema documents
+        schema_docs = await orchestrator.introspect_schema()
+        print(f"Generated {len(schema_docs)} schema documents")
+        
+        # Build and save index
+        success = await build_and_save_index_for_db("slack", mcp_url)
+        
+        if success:
+            print("Successfully refreshed Slack schema")
+            return True
+        else:
+            print("Failed to save Slack schema index")
+            return False
+    except Exception as e:
+        print(f"Error refreshing Slack schema: {e}")
+        return False
+
+async def main():
+    parser = argparse.ArgumentParser(description='Data Connector CLI')
+    subparsers = parser.add_subparsers(dest='command', help='Command')
+    
+    # Create query parser
+    query_parser = subparsers.add_parser('query', help='Query a database')
+    query_parser.add_argument(
+        'query', 
+        help='Natural language query to run', 
+        nargs='?',
+        default=None
+    )
+    query_parser.add_argument(
+        '--type', '-t', 
+        choices=['postgres', 'mongodb', 'mongo', 'qdrant', 'slack'], 
+        default=None,
+        help='Specify database type to query'
+    )
+    query_parser.add_argument(
+        '--complete', '-C', 
+        action='store_true', 
+        help='Generate complete output'
+    )
+    query_parser.add_argument(
+        '--interactive', '-i', 
+        action='store_true', 
+        help='Run in interactive mode'
+    )
+    query_parser.add_argument(
+        '--file', '-f', 
+        help='File containing the query'
+    )
+    query_parser.add_argument(
+        '--output', '-o', 
+        help='Output file to save results'
+    )
+    
+    # Create parser for config commands
+    config_parser = subparsers.add_parser('config', help='Configure the Data Connector')
+    config_parser.add_argument(
+        'config_command', 
+        choices=['show', 'set'], 
+        help='Config sub-command to run'
+    )
+    
+    # Create parser for db commands 
+    db_parser = subparsers.add_parser('db', help='Database operations')
+    db_parser.add_argument(
+        'db_command', 
+        choices=['list', 'connect', 'test', 'introspect'], 
+        help='Database sub-command to run'
+    )
+    
+    # Create parser for slack commands
+    slack_parser = subparsers.add_parser('slack', help='Commands for Slack integration')
+    slack_subparsers = slack_parser.add_subparsers(dest='slack_command', help='Slack command')
+    
+    # slack auth
+    slack_auth_parser = slack_subparsers.add_parser('auth', help='Authenticate with Slack')
+    
+    # slack list-workspaces
+    slack_list_workspaces_parser = slack_subparsers.add_parser('list-workspaces', help='List available Slack workspaces')
+    
+    # slack refresh
+    slack_refresh_parser = slack_subparsers.add_parser('refresh', help='Force refresh of Slack schema')
+
+    args = parser.parse_args()
+    
+    if args.command is None:
+        parser.print_help()
+        return
+    
+    # Handle different commands
+    if args.command == 'query':
+        await run_query(args)
+    elif args.command == 'config':
+        await run_config(args)
+    elif args.command == 'db':
+        await run_db(args)
+    # Add support for slack subcommands
+    elif args.command == "slack":
+        if args.slack_command == "auth":
+            await slack_auth(args)
+        elif args.slack_command == "list-workspaces":
+            await slack_list_workspaces(args)
+        elif args.slack_command == "refresh":
+            await slack_refresh(args)
+        else:
+            slack_parser.print_help()
+    else:
+        parser.print_help()
 
 if __name__ == "__main__":
     # Add command to create __init__.py to make the agent package importable
