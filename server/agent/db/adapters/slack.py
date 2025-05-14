@@ -30,6 +30,8 @@ class SlackAdapter(DBAdapter):
             connection_uri: URL of the MCP server
             **kwargs: Additional arguments
                 cache_dir: Optional directory to cache schema data
+                user_id: User ID for authentication
+                workspace_id: Workspace ID for authentication
         """
         # Use a default value if connection_uri is empty
         if not connection_uri:
@@ -40,8 +42,8 @@ class SlackAdapter(DBAdapter):
                                           ".data-connector", 
                                           "slack_credentials.json")
         self.history_days = kwargs.get("history_days", 30)  # Default to 30 days
-        self.user_id = None
-        self.workspace_id = None
+        self.user_id = kwargs.get("user_id")
+        self.workspace_id = kwargs.get("workspace_id")
         self.token = None
         self.token_expires_at = None
         self.cache_dir = kwargs.get("cache_dir")
@@ -161,6 +163,65 @@ class SlackAdapter(DBAdapter):
             logger.error(f"Tool invocation error: {str(e)}")
             raise
     
+    async def _semantic_search(self, query: str, **kwargs) -> List[Dict[str, Any]]:
+        """
+        Perform semantic search on Slack messages
+        
+        Args:
+            query: Natural language query
+            **kwargs: Additional parameters
+                channels: List of channel IDs to search in
+                date_from: Start date (ISO format)
+                date_to: End date (ISO format)
+                users: List of user IDs
+                limit: Maximum number of results (default 20)
+                
+        Returns:
+            List of message results
+        """
+        if not await self._ensure_token():
+            raise Exception("Authentication failed. Please run 'data-connector slack auth'")
+        
+        # Prepare search parameters
+        search_params = {
+            "workspace_id": int(self.workspace_id),
+            "query": query,
+            "limit": kwargs.get("limit", 20)
+        }
+        
+        # Add optional filters
+        if "channels" in kwargs:
+            search_params["channels"] = kwargs["channels"]
+            
+        if "date_from" in kwargs:
+            search_params["date_from"] = kwargs["date_from"]
+            
+        if "date_to" in kwargs:
+            search_params["date_to"] = kwargs["date_to"]
+            
+        if "users" in kwargs:
+            search_params["users"] = kwargs["users"]
+        
+        # Make the request
+        try:
+            response = requests.post(
+                f"{self.mcp_url}/api/indexing/search",
+                json=search_params,
+                headers={"Authorization": f"Bearer {self.token}"}
+            )
+            
+            if response.status_code == 200:
+                result = response.json()
+                return result.get("messages", [])
+            else:
+                error_msg = f"Semantic search failed: {response.status_code} - {response.text}"
+                logger.error(error_msg)
+                raise Exception(error_msg)
+                
+        except Exception as e:
+            logger.error(f"Semantic search error: {str(e)}")
+            raise
+    
     async def is_connected(self) -> bool:
         """
         Check if the connection to Slack is working
@@ -219,10 +280,29 @@ class SlackAdapter(DBAdapter):
         # Create context from schema chunks
         schema_context = "\n\n".join([chunk.get("content", "") for chunk in schema_chunks])
         
-        # Render prompt template for Slack
-        prompt = llm.render_template("slack_query.tpl", 
-                                 schema_context=schema_context, 
-                                 query=nl_prompt)
+        # Check if this is likely a semantic search query
+        is_semantic_search = False
+        semantic_search_keywords = [
+            "find messages about", "search for", "messages containing", 
+            "find conversations", "look for messages", "search messages",
+            "find discussions", "relevant messages", "where people talked about"
+        ]
+        
+        for keyword in semantic_search_keywords:
+            if keyword.lower() in nl_prompt.lower():
+                is_semantic_search = True
+                break
+        
+        if is_semantic_search:
+            # Use special template for semantic search
+            prompt = llm.render_template("slack_semantic_query.tpl", 
+                                      schema_context=schema_context, 
+                                      query=nl_prompt)
+        else:
+            # Use standard template for API-based queries
+            prompt = llm.render_template("slack_query.tpl", 
+                                      schema_context=schema_context, 
+                                      query=nl_prompt)
         
         # Generate query
         response = await llm.generate_text(prompt)
@@ -257,13 +337,41 @@ class SlackAdapter(DBAdapter):
         try:
             # Parse the query
             if isinstance(query, str):
-                query_spec = json.loads(query)
+                # Try to parse as JSON
+                try:
+                    query_spec = json.loads(query)
+                except json.JSONDecodeError:
+                    # It's not JSON, treat as a semantic search query
+                    return await self._semantic_search(query, **(params or {}))
             else:
                 query_spec = query
-                
+            
+            # Check for semantic search type
             query_type = query_spec.get("type", "channels")
             
-            if query_type == "channels":
+            if query_type == "semantic_search":
+                # Handle semantic search
+                search_params = {
+                    "query": query_spec.get("query", ""),
+                    "limit": query_spec.get("limit", 20)
+                }
+                
+                # Add filters if present
+                if "channels" in query_spec:
+                    search_params["channels"] = query_spec["channels"]
+                
+                if "date_from" in query_spec:
+                    search_params["date_from"] = query_spec["date_from"]
+                
+                if "date_to" in query_spec:
+                    search_params["date_to"] = query_spec["date_to"]
+                
+                if "users" in query_spec:
+                    search_params["users"] = query_spec["users"]
+                
+                return await self._semantic_search(**search_params)
+                
+            elif query_type == "channels":
                 # List channels
                 result = await self._invoke_tool("slack_list_channels")
                 return result.get("channels", [])
@@ -413,11 +521,38 @@ class SlackAdapter(DBAdapter):
                 3. Get thread replies (using channel ID and thread timestamp)
                 4. Get user information (using user ID)
                 5. Get bot/workspace information
+                6. Perform semantic search across messages (e.g. "search for messages about X")
                 
                 The data is from the last {self.history_days} days of conversation history.
+                Semantic search allows finding relevant messages by topic or content.
                 """
             }
             documents.append(query_doc)
+            
+            # 5. Add semantic search capabilities
+            search_doc = {
+                "id": "slack:semantic_search",
+                "content": f"""
+                SEMANTIC SEARCH:
+                
+                You can search for messages semantically by using the semantic_search query type.
+                This allows finding messages based on their meaning, not just exact keywords.
+                
+                Example query:
+                {{
+                  "type": "semantic_search",
+                  "query": "discussion about annual budget planning",
+                  "limit": 20,
+                  "channels": ["C0123456789"],  # Optional channel filter
+                  "date_from": "2023-01-01",    # Optional date filter
+                  "date_to": "2023-12-31",      # Optional date filter
+                  "users": ["U0123456789"]      # Optional user filter
+                }}
+                
+                Or you can simply pass the natural language query directly to the execute_query method.
+                """
+            }
+            documents.append(search_doc)
             
             return documents
                 

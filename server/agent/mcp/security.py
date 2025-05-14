@@ -11,6 +11,7 @@ import base64
 import hashlib
 
 from .config import settings
+from .models.oauth import TokenResponse
 
 # JWT token handling
 security = HTTPBearer()
@@ -40,6 +41,32 @@ def create_jwt_token(user_id: int, workspace_id: int, expiry: datetime) -> Tuple
     )
     
     return token, expires_at
+
+
+def decode_jwt_token(token: str) -> JWTData:
+    """Decode a JWT token without raising exceptions"""
+    try:
+        payload = jwt.decode(
+            token,
+            settings.SECRET_KEY,
+            algorithms=["HS256"]
+        )
+        
+        # Convert to JWTData model
+        return JWTData(**payload)
+    except Exception as e:
+        raise ValueError(f"Invalid token: {str(e)}")
+
+
+def get_token(user_id: int, workspace_id: int) -> TokenResponse:
+    """Generate a token for the user and workspace"""
+    expiry = datetime.utcnow() + timedelta(hours=settings.TOKEN_EXPIRY_HOURS)
+    token, expires_at_timestamp = create_jwt_token(user_id, workspace_id, expiry)
+    
+    return TokenResponse(
+        token=token,
+        expires_at=expires_at_timestamp
+    )
 
 
 def verify_jwt_token(credentials: HTTPAuthorizationCredentials = Security(security)) -> JWTData:

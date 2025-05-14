@@ -12,9 +12,14 @@ class SlackWorkspaceInfo(BaseModel):
 
 
 class SlackToolRequest(BaseModel):
-    """Request model for Slack tool invocation"""
+    """
+    Request for invoking a Slack tool
+    """
     tool: str
-    parameters: Optional[Dict[str, Any]] = {}
+    parameters: Dict[str, Any] = {}
+    # Optional fields for direct credential authentication
+    user_id: Optional[int] = None
+    workspace_id: Optional[int] = None
 
 
 class SlackChannel(BaseModel):

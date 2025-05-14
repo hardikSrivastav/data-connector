@@ -4,6 +4,7 @@ from typing import Dict, List, Any, Optional
 import json
 from datetime import datetime, timedelta
 from pydantic import BaseModel
+import time
 
 from .models.workspace import SlackToolRequest, SlackToolResponse
 from .models.oauth import TokenRequest, TokenResponse
@@ -14,16 +15,32 @@ logger = logging.getLogger(__name__)
 
 
 class MCPClient:
-    """Client for interacting with the Slack MCP Server"""
+    """
+    Client for the MCP API
     
-    def __init__(self, server_url: str):
-        """Initialize the MCP client
+    This client provides functionality to authenticate and invoke Slack tools
+    through the MCP API.
+    """
+    
+    def __init__(self, base_url: str):
+        """
+        Initialize the client
         
         Args:
-            server_url: URL of the MCP server (e.g., http://localhost:8000)
+            base_url: Base URL of the MCP API
         """
-        self.server_url = server_url.rstrip("/")
-        self.token: Optional[str] = None
+        self.base_url = base_url.rstrip("/")
+        
+        # Validate the URL format
+        if not self.base_url.startswith(("http://", "https://")):
+            logger.warning(f"Base URL '{self.base_url}' doesn't have http:// or https:// prefix")
+            # Try to add https by default
+            self.base_url = f"https://{self.base_url}"
+            logger.info(f"Using modified base URL: {self.base_url}")
+            
+        logger.info(f"Initialized MCP client with base URL: {self.base_url}")
+        
+        self.token = None
         self.token_expires_at: Optional[datetime] = None
         self.user_id: Optional[str] = None
         self.workspace_id: Optional[str] = None
@@ -38,89 +55,126 @@ class MCPClient:
         return datetime.utcnow() + timedelta(minutes=buffer_minutes) < self.token_expires_at
     
     def authenticate(self, user_id: str, workspace_id: str) -> bool:
-        """Authenticate with the MCP server and get a token
+        """
+        Authenticate with the MCP API
         
         Args:
-            user_id: User ID to authenticate with
-            workspace_id: Workspace ID to authenticate for
+            user_id: User ID
+            workspace_id: Workspace ID
             
         Returns:
             True if authentication was successful, False otherwise
         """
-        self.user_id = user_id
-        self.workspace_id = workspace_id
-        
-        if self._is_token_valid():
-            logger.info("Using existing valid token")
-            return True
-        
         try:
-            # Request a new token
-            response = requests.post(
-                f"{self.server_url}/api/tools/token",
-                json={"user_id": user_id, "workspace_id": workspace_id}
-            )
+            logger.info(f"Authenticating with user_id={user_id}, workspace_id={workspace_id}")
+            url = f"{self.base_url}/api/tools/token"
             
-            if response.status_code == 200:
-                token_data = response.json()
-                self.token = token_data["token"]
-                # Parse the expiry date
-                if "expires_at" in token_data:
-                    self.token_expires_at = datetime.fromisoformat(token_data["expires_at"].replace("Z", "+00:00"))
-                logger.info(f"Successfully authenticated for user {user_id} and workspace {workspace_id}")
-                return True
-            else:
-                logger.error(f"Authentication failed: {response.status_code} - {response.text}")
-                return False
+            data = {
+                "user_id": int(user_id),
+                "workspace_id": int(workspace_id)
+            }
+            
+            # Add retry logic with increased timeout
+            max_retries = 3
+            timeout_seconds = 30  # Increase timeout from 10 to 30 seconds
+            
+            for attempt in range(max_retries):
+                try:
+                    logger.info(f"Authentication attempt {attempt+1}/{max_retries} to {url}")
+                    response = requests.post(url, json=data, timeout=timeout_seconds)
+                    
+                    if response.status_code == 200:
+                        result = response.json()
+                        self.token = result.get("token")
+                        # Parse the expiry date
+                        if "expires_at" in result:
+                            self.token_expires_at = datetime.fromisoformat(result["expires_at"].replace("Z", "+00:00"))
+                        logger.info("Authentication successful")
+                        self.user_id = user_id
+                        self.workspace_id = workspace_id
+                        return True
+                    else:
+                        logger.error(f"Authentication failed: {response.status_code} - {response.text}")
+                        # If got a response but failed, no need to retry
+                        return False
+                except requests.Timeout:
+                    logger.warning(f"Authentication timeout on attempt {attempt+1}/{max_retries}")
+                    if attempt == max_retries - 1:
+                        logger.error(f"Authentication timed out after {max_retries} attempts")
+                        return False
+                except requests.ConnectionError as ce:
+                    logger.warning(f"Connection error on attempt {attempt+1}/{max_retries}: {str(ce)}")
+                    if attempt == max_retries - 1:
+                        logger.error(f"Failed to connect after {max_retries} attempts")
+                        return False
+                
+                # Wait before retrying (exponential backoff)
+                if attempt < max_retries - 1:
+                    wait_time = 2 ** attempt  # 1, 2, 4 seconds
+                    logger.info(f"Waiting {wait_time} seconds before retry")
+                    time.sleep(wait_time)
                 
         except Exception as e:
             logger.error(f"Authentication error: {str(e)}")
             return False
     
     def invoke_tool(self, tool: str, parameters: Dict[str, Any] = None) -> Dict[str, Any]:
-        """Invoke a Slack tool through the MCP server
+        """
+        Invoke a tool through the MCP API
         
         Args:
-            tool: Name of the tool to invoke (e.g., slack_list_channels)
+            tool: Name of the tool to invoke
             parameters: Parameters for the tool
             
         Returns:
-            The tool response data
+            Response from the tool
             
         Raises:
-            Exception: If authentication fails or tool invocation fails
+            ValueError: If not authenticated or tool invocation fails
         """
-        if not self._is_token_valid():
-            if not self.user_id or not self.workspace_id:
-                raise Exception("Not authenticated. Call authenticate() first.")
+        # Allow credential-based auth without token
+        if not self.token and not (self.user_id and self.workspace_id):
+            raise ValueError("Not authenticated. Call authenticate() first or set user_id and workspace_id directly")
             
-            if not self.authenticate(self.user_id, self.workspace_id):
-                raise Exception("Authentication failed")
-        
-        # Create the tool request
-        request_data = SlackToolRequest(
-            tool=tool,
-            parameters=parameters or {}
-        ).dict()
-        
-        # Make the request
         try:
-            response = requests.post(
-                f"{self.server_url}/api/tools/invoke",
-                json=request_data,
-                headers={"Authorization": f"Bearer {self.token}"}
-            )
+            url = f"{self.base_url}/api/tools/invoke"
+            
+            data = {
+                "tool": tool,
+                "parameters": parameters or {}
+            }
+            
+            headers = {}
+            
+            # If we have a token, use it
+            if self.token:
+                headers["Authorization"] = f"Bearer {self.token}"
+            # Otherwise use direct credential auth
+            elif self.user_id and self.workspace_id:
+                # Add credentials directly to the request
+                data["user_id"] = int(self.user_id)
+                data["workspace_id"] = int(self.workspace_id)
+                logger.info(f"Using direct credential auth with user_id={self.user_id}, workspace_id={self.workspace_id}")
+            
+            logger.info(f"Invoking tool {tool}")
+            response = requests.post(url, json=data, headers=headers, timeout=30)
             
             if response.status_code == 200:
-                return response.json()["result"]
+                result = response.json()
+                return result.get("result", {})
             else:
                 error_msg = f"Tool invocation failed: {response.status_code} - {response.text}"
                 logger.error(error_msg)
-                raise Exception(error_msg)
+                raise ValueError(error_msg)
                 
+        except requests.RequestException as e:
+            error_msg = f"Request error: {str(e)}"
+            logger.error(error_msg)
+            raise ValueError(error_msg)
         except Exception as e:
-            logger.error(f"Tool invocation error: {str(e)}")
-            raise
+            error_msg = f"Tool invocation error: {str(e)}"
+            logger.error(error_msg)
+            raise ValueError(error_msg)
     
     def list_channels(self) -> List[Dict[str, str]]:
         """List all channels in the Slack workspace

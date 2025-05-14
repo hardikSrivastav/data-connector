@@ -1,5 +1,5 @@
 from sqlalchemy.orm import Session
-from sqlalchemy import update
+from sqlalchemy import update, func, desc, and_, or_
 from datetime import datetime, timedelta
 import uuid
 import json
@@ -37,13 +37,27 @@ def get_user_by_email(db: Session, email: str) -> Optional[models.User]:
     return db.query(models.User).filter(models.User.email == email).first()
 
 
-def create_user(db: Session, email: str, name: Optional[str] = None) -> models.User:
+def get_user_by_session(db: Session, session_id: str) -> Optional[models.User]:
+    """Get a user by session ID"""
+    return db.query(models.User).filter(models.User.session_id == session_id).first()
+
+
+def create_user(db: Session, email: str, name: Optional[str] = None, is_temporary: bool = False) -> models.User:
     """Create a new user"""
-    user = models.User(email=email, name=name)
+    user = models.User(email=email, name=name, is_temporary=is_temporary)
     db.add(user)
     db.commit()
     db.refresh(user)
     return user
+
+
+def update_user_session(db: Session, user_id: int, session_id: str) -> bool:
+    """Update a user's session ID"""
+    db.query(models.User).filter(models.User.id == user_id).update(
+        {"session_id": session_id, "last_login": datetime.utcnow()}
+    )
+    db.commit()
+    return True
 
 
 def create_temporary_user(db: Session):
@@ -117,6 +131,30 @@ def create_workspace(db: Session, workspace: models.SlackWorkspace) -> models.Sl
     return workspace
 
 
+def update_workspace_tokens(db: Session, workspace_id: int, user_token: str = None, 
+                          user_refresh_token: str = None, 
+                          expires_at: datetime = None,
+                          scope: str = None) -> bool:
+    """Update a workspace's user token information"""
+    update_data = {"last_used": datetime.utcnow()}
+    
+    if user_token:
+        update_data["user_token"] = token_encryption.encrypt_token(user_token)
+    
+    if user_refresh_token:
+        update_data["user_refresh_token"] = token_encryption.encrypt_token(user_refresh_token)
+    
+    if expires_at:
+        update_data["user_token_expires_at"] = expires_at
+    
+    if scope:
+        update_data["user_token_scope"] = scope
+    
+    db.query(models.SlackWorkspace).filter(models.SlackWorkspace.id == workspace_id).update(update_data)
+    db.commit()
+    return True
+
+
 def get_user_workspaces(db: Session, user_id: int) -> List[models.SlackWorkspace]:
     """Get all workspaces for a user"""
     user = get_user(db, user_id)
@@ -134,12 +172,18 @@ def get_user_workspace(db: Session, user_id: int, workspace_id: int) -> Optional
     ).first()
 
 
-def create_user_workspace(db: Session, user_id: int, workspace_id: int, scopes: List[str]) -> models.UserWorkspace:
+def create_user_workspace(db: Session, user_id: int, workspace_id: int, scopes: List[str] = None, is_admin: bool = False) -> models.UserWorkspace:
     """Create a user-workspace relationship"""
+    if scopes:
+        scopes_json = json.dumps(scopes)
+    else:
+        scopes_json = None
+        
     user_workspace = models.UserWorkspace(
         user_id=user_id,
         workspace_id=workspace_id,
-        authorized_scopes=json.dumps(scopes)
+        authorized_scopes=scopes_json,
+        is_admin=is_admin
     )
     db.add(user_workspace)
     db.commit()
@@ -168,7 +212,7 @@ def create_oauth_state(db: Session, state_data: OAuthState) -> models.OAuthState
 
 
 def get_oauth_state(db: Session, state: str) -> Optional[models.OAuthStateRecord]:
-    """Get an OAuth state record"""
+    """Get OAuth state by state value"""
     return db.query(models.OAuthStateRecord).filter(
         models.OAuthStateRecord.state == state,
         models.OAuthStateRecord.used == False,  # Only get unused states
@@ -240,3 +284,116 @@ def cleanup_temporary_users(db: Session, days: int = 1):
     
     db.commit()
     return len(temp_users)
+
+# Message Indexing operations
+def get_indexing_status(db: Session, workspace_id: int) -> Optional[models.SlackMessageIndex]:
+    """Get indexing status for a workspace"""
+    return db.query(models.SlackMessageIndex).filter(models.SlackMessageIndex.workspace_id == workspace_id).first()
+
+def create_indexing_status(db: Session, workspace_id: int, collection_name: str,
+                         history_days: int = 30, update_frequency_hours: int = 6) -> models.SlackMessageIndex:
+    """Create indexing status for a workspace"""
+    status = models.SlackMessageIndex(
+        workspace_id=workspace_id,
+        collection_name=collection_name,
+        history_days=history_days,
+        update_frequency_hours=update_frequency_hours
+    )
+    db.add(status)
+    db.commit()
+    db.refresh(status)
+    return status
+
+def update_indexing_status(db: Session, index_id: int, **kwargs) -> bool:
+    """Update indexing status"""
+    # Add updated_at time
+    kwargs["updated_at"] = datetime.utcnow()
+    
+    db.query(models.SlackMessageIndex).filter(models.SlackMessageIndex.id == index_id).update(kwargs)
+    db.commit()
+    return True
+
+def update_indexing_completed(db: Session, index_id: int, 
+                            total_messages: int, indexed_messages: int,
+                            oldest_ts: str = None, newest_ts: str = None) -> bool:
+    """Update indexing status on completion"""
+    now = datetime.utcnow()
+    db.query(models.SlackMessageIndex).filter(models.SlackMessageIndex.id == index_id).update({
+        "is_indexing": False,
+        "last_completed_at": now,
+        "last_indexed_at": now,
+        "total_messages": total_messages,
+        "indexed_messages": indexed_messages,
+        "oldest_message_ts": oldest_ts,
+        "newest_message_ts": newest_ts,
+        "updated_at": now
+    })
+    db.commit()
+    return True
+
+def get_pending_indexing_workspaces(db: Session, max_results: int = 10) -> List[models.SlackMessageIndex]:
+    """Get workspaces that need indexing"""
+    now = datetime.utcnow()
+    cutoff_time = now - timedelta(hours=1)
+    
+    return db.query(models.SlackMessageIndex).filter(
+        # Not currently indexing or indexing for over an hour (stuck)
+        or_(
+            models.SlackMessageIndex.is_indexing == False,
+            models.SlackMessageIndex.updated_at < cutoff_time
+        ),
+        # Either never indexed or last indexed more than update_frequency hours ago
+        or_(
+            models.SlackMessageIndex.last_indexed_at == None,
+            and_(
+                models.SlackMessageIndex.last_indexed_at < now - func.make_interval(0, 0, 0, 0, models.SlackMessageIndex.update_frequency_hours),
+                # Don't retry too often on failures
+                models.SlackMessageIndex.updated_at < now - timedelta(minutes=30)
+            )
+        )
+    ).order_by(models.SlackMessageIndex.last_indexed_at.asc().nullsfirst()).limit(max_results).all()
+
+# Channel Indexing operations
+def get_indexed_channel(db: Session, index_id: int, channel_id: str) -> Optional[models.IndexedChannel]:
+    """Get indexed channel info"""
+    return db.query(models.IndexedChannel).filter(
+        models.IndexedChannel.index_id == index_id,
+        models.IndexedChannel.channel_id == channel_id
+    ).first()
+
+def get_indexed_channels(db: Session, index_id: int) -> List[models.IndexedChannel]:
+    """Get all indexed channels for an index"""
+    return db.query(models.IndexedChannel).filter(models.IndexedChannel.index_id == index_id).all()
+
+def create_indexed_channel(db: Session, index_id: int, channel_id: str, 
+                         channel_name: str) -> models.IndexedChannel:
+    """Create or update indexed channel"""
+    channel = get_indexed_channel(db, index_id, channel_id)
+    if channel:
+        channel.channel_name = channel_name
+        channel.updated_at = datetime.utcnow()
+    else:
+        channel = models.IndexedChannel(
+            index_id=index_id,
+            channel_id=channel_id,
+            channel_name=channel_name
+        )
+        db.add(channel)
+    
+    db.commit()
+    db.refresh(channel)
+    return channel
+
+def update_indexed_channel(db: Session, index_id: int, channel_id: str, 
+                         last_indexed_ts: str, message_count: int) -> bool:
+    """Update indexed channel status"""
+    db.query(models.IndexedChannel).filter(
+        models.IndexedChannel.index_id == index_id,
+        models.IndexedChannel.channel_id == channel_id
+    ).update({
+        "last_indexed_ts": last_indexed_ts,
+        "message_count": message_count,
+        "updated_at": datetime.utcnow()
+    })
+    db.commit()
+    return True

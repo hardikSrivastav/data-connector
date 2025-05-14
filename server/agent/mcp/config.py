@@ -1,6 +1,8 @@
 from pydantic import BaseSettings, Field, validator
 import os
-from typing import List, Optional
+from typing import List, Optional, Dict, Any, Union
+import json
+import secrets
 
 
 class Settings(BaseSettings):
@@ -20,7 +22,7 @@ class Settings(BaseSettings):
     DB_PASSWORD: str = Field("slackoauth", description="Database password")
     
     # URL settings
-    API_BASE_URL: str = Field("https://4f5a-49-36-187-13.ngrok-free.app", description="Base URL for API endpoints")
+    API_BASE_URL: str = Field("https://7454-2405-201-4011-b202-e1cf-31d2-65e2-f4e5.ngrok-free.app", description="Base URL for API endpoints")
     WEB_APP_URL: str = Field("http://localhost:3000", description="URL of the web application")
     CORS_ORIGINS: List[str] = Field(["*"], description="CORS allowed origins")
     
@@ -61,15 +63,50 @@ class Settings(BaseSettings):
         return self.SLACK_BOT_SCOPES
     
     # Security settings
+    TOKEN_EXPIRY_HOURS: int = 1
     SECRET_KEY: str = Field("", description="Secret key for JWT token generation")
-    TOKEN_EXPIRY_HOURS: int = Field(1, description="JWT token expiry in hours")
+    
+    # Token encryption
+    ENCRYPTION_KEY: Optional[str] = None
+    
+    # Qdrant settings
+    QDRANT_HOST: str = "localhost"
+    QDRANT_PORT: int = 7750  # Special port for our Slack-dedicated Qdrant
+    QDRANT_GRPC_PORT: int = 7751  # gRPC port
+    QDRANT_PREFER_GRPC: bool = False
+    QDRANT_TIMEOUT: float = 5.0  # Timeout in seconds
+    
+    # Indexing settings
+    DEFAULT_HISTORY_DAYS: int = 30
+    DEFAULT_UPDATE_FREQUENCY: int = 6  # Hours
+    DEFAULT_EMBEDDING_MODEL: str = "all-MiniLM-L6-v2"  # Sentence transformers model
+    EMBEDDING_BATCH_SIZE: int = 50
     
     @validator("SECRET_KEY", pre=True)
     def validate_secret_key(cls, v):
         """Generate a random secret key if none is provided"""
         if not v:
-            import secrets
             return secrets.token_hex(32)
+        return v
+    
+    @validator("CORS_ORIGINS", pre=True)
+    def parse_cors_origins(cls, v):
+        """Parse CORS_ORIGINS from string if needed"""
+        if isinstance(v, str):
+            try:
+                return json.loads(v)
+            except json.JSONDecodeError:
+                return [origin.strip() for origin in v.split(",")]
+        return v
+    
+    @validator("SLACK_BOT_SCOPES", "SLACK_USER_SCOPES", pre=True)
+    def parse_slack_scopes(cls, v):
+        """Parse SLACK_SCOPES from string if needed"""
+        if isinstance(v, str):
+            try:
+                return json.loads(v)
+            except json.JSONDecodeError:
+                return [scope.strip() for scope in v.split(",")]
         return v
     
     class Config:
@@ -79,5 +116,9 @@ class Settings(BaseSettings):
         case_sensitive = True
 
 
-# Create a global settings instance
+# Create global settings instance
 settings = Settings()
+
+def get_settings():
+    """Get settings for dependency injection"""
+    return settings

@@ -6,6 +6,8 @@ import logging
 from typing import List
 import os
 import sys
+import asyncio
+from contextlib import asynccontextmanager
 
 # Add current directory to path if needed
 current_dir = os.path.dirname(os.path.abspath(__file__))
@@ -22,28 +24,68 @@ try:
     # First try direct imports
     from config import settings
     from db.database import init_db, get_db
-    from api import auth, tools
+    from api import auth, tools, indexing
+    from indexer import run_scheduled_indexing
 except ImportError:
     try:
         # Then try package-style imports
         from .config import settings
         from .db.database import init_db, get_db
-        from .api import auth, tools
+        from .api import auth, tools, indexing
+        from .indexer import run_scheduled_indexing
     except ImportError:
         # Finally try absolute imports
         from agent.mcp.config import settings
         from agent.mcp.db.database import init_db, get_db
-        from agent.mcp.api import auth, tools
+        from agent.mcp.api import auth, tools, indexing
+        from agent.mcp.indexer import run_scheduled_indexing
 
 # Set up logging
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(
+    level=logging.INFO if settings.DEBUG else logging.WARNING,
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+)
 logger = logging.getLogger(__name__)
+
+# Scheduler task
+scheduler_task = None
+
+async def schedule_indexing():
+    """Background task for scheduled indexing"""
+    while True:
+        try:
+            await run_scheduled_indexing()
+        except Exception as e:
+            logger.error(f"Error in scheduled indexing: {str(e)}")
+        
+        # Run every hour
+        await asyncio.sleep(3600)  # 1 hour
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Startup and shutdown events"""
+    # Start scheduler at startup
+    global scheduler_task
+    scheduler_task = asyncio.create_task(schedule_indexing())
+    logger.info("Started indexing scheduler")
+    
+    yield
+    
+    # Cancel scheduler at shutdown
+    if scheduler_task:
+        scheduler_task.cancel()
+        try:
+            await scheduler_task
+        except asyncio.CancelledError:
+            pass
+        logger.info("Cancelled indexing scheduler")
 
 # Create FastAPI app
 app = FastAPI(
     title="Slack MCP Server",
-    description="MCP Server for Slack integration with agents",
+    description="Microservice Control Panel for Slack integration",
     version="1.0.0",
+    lifespan=lifespan
 )
 
 # Configure CORS
@@ -58,6 +100,7 @@ app.add_middleware(
 # Include routers
 app.include_router(auth.router, prefix="/api/auth", tags=["auth"])
 app.include_router(tools.router, prefix="/api/tools", tags=["tools"])
+app.include_router(indexing.router, prefix="/api/indexing", tags=["indexing"])
 
 @app.on_event("startup")
 async def startup():
@@ -88,7 +131,7 @@ async def startup():
 @app.get("/health")
 async def health_check():
     """Health check endpoint"""
-    return {"status": "ok"}
+    return {"status": "healthy"}
 
 @app.get("/")
 async def root():

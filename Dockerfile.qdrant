@@ -1,0 +1,20 @@
+FROM qdrant/qdrant:latest
+
+# Set working directory
+WORKDIR /qdrant
+
+# Expose ports
+EXPOSE 6333 6334
+
+# Set production configuration for Qdrant
+ENV QDRANT_ALLOW_RECOVERY_MODE=true
+
+# Create directory for initialization scripts
+RUN mkdir -p /qdrant/init
+
+# Create a startup script that initializes collections if needed
+COPY ./init-scripts/init-qdrant.sh /qdrant/init/init.sh
+RUN chmod +x /qdrant/init/init.sh
+
+# Set command to run both init script and qdrant
+CMD ["/bin/bash", "-c", "(/qdrant/init/init.sh &) && /qdrant/qdrant"] 
