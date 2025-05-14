@@ -179,11 +179,16 @@ def delete_old_messages(client: QdrantClient, collection_name: str, cutoff_ts: f
         logger.info(f"Deleting messages older than {cutoff_ts}")
         result = client.delete(
             collection_name=collection_name,
-            filter={
-                "ts": {
-                    "$lt": cutoff_ts
-                }
-            }
+            points_selector=qdrant_models.FilterSelector(
+                filter=qdrant_models.Filter(
+                    must=[
+                        qdrant_models.FieldCondition(
+                            key="ts",
+                            range=qdrant_models.Range(lt=cutoff_ts)
+                        )
+                    ]
+                )
+            )
         )
         
         logger.info(f"Deleted {result.status.deleted} points")

@@ -10,6 +10,7 @@ from sentence_transformers import SentenceTransformer
 from qdrant_client import QdrantClient
 from qdrant_client.http.models import Distance, VectorParams, CollectionStatus
 from slack_sdk import WebClient
+from slack_sdk.errors import SlackApiError
 
 from ..db.database import get_db
 from ..db import crud, models
@@ -75,11 +76,12 @@ class MessageIndexer:
         # Ensure collection exists
         self._ensure_collection_exists()
         
-        # Initialize Slack client directly
+        # Initialize Slack clients
         self.slack_client = self._get_slack_client()
+        self.user_slack_client = self._get_user_slack_client()
     
     def _get_slack_client(self) -> WebClient:
-        """Create a Slack client for the workspace"""
+        """Create a Slack client for the workspace using bot token"""
         if not self.workspace.bot_token:
             raise ValueError("Workspace has no bot token")
         
@@ -92,12 +94,34 @@ class MessageIndexer:
                 masked_token = token[:10] + "..." + token[-5:] if len(token) > 15 else "***"
                 logger.info(f"Using bot token: {masked_token}")
             else:
-                logger.error("Decrypted token is None or empty")
+                logger.error("Decrypted bot token is None or empty")
                 
             return WebClient(token=token)
         except Exception as e:
             logger.error(f"Error creating Slack client: {str(e)}")
             raise ValueError(f"Could not initialize Slack client: {str(e)}")
+    
+    def _get_user_slack_client(self) -> Optional[WebClient]:
+        """Create a Slack client using user token if available"""
+        # Check if user token exists
+        if not hasattr(self.workspace, 'user_token') or not self.workspace.user_token:
+            logger.info(f"No user token available for workspace {self.workspace_id}")
+            return None
+        
+        # Decrypt token and create client
+        try:
+            user_token = decrypt(self.workspace.user_token)
+            
+            if user_token:
+                masked_token = user_token[:10] + "..." + user_token[-5:] if len(user_token) > 15 else "***"
+                logger.info(f"Using user token: {masked_token}")
+                return WebClient(token=user_token)
+            else:
+                logger.warning("Decrypted user token is None or empty")
+                return None
+        except Exception as e:
+            logger.error(f"Error creating user Slack client: {str(e)}")
+            return None
     
     def _ensure_collection_exists(self):
         """Ensure the Qdrant collection exists"""
@@ -148,6 +172,18 @@ class MessageIndexer:
             auth_test = self.slack_client.auth_test()
             if auth_test and auth_test["ok"]:
                 logger.info(f"Successfully authenticated with Slack as {auth_test.get('user')} for team {auth_test.get('team')}")
+                
+                # Also test user token if available
+                if self.user_slack_client:
+                    try:
+                        user_auth_test = self.user_slack_client.auth_test()
+                        if user_auth_test and user_auth_test["ok"]:
+                            logger.info(f"User token is also valid for {user_auth_test.get('user')}")
+                        else:
+                            logger.warning(f"User token authentication failed")
+                    except Exception as e:
+                        logger.warning(f"Error testing user token: {str(e)}")
+                
                 return True
             return False
         except Exception as e:
@@ -313,10 +349,21 @@ class MessageIndexer:
                 if last_indexed_ts:
                     params["oldest"] = last_indexed_ts
                 
-                # Get messages directly using Slack API
+                # Get messages directly using Slack API with bot token
                 logger.debug(f"Requesting messages from channel #{channel_name} with params: {params}")
-                response = self.slack_client.conversations_history(**params)
-                messages = response.get("messages", [])
+                try:
+                    response = self.slack_client.conversations_history(**params)
+                    messages = response.get("messages", [])
+                except SlackApiError as e:
+                    # Check if error is 'not_in_channel' and try with user token as fallback
+                    if "not_in_channel" in str(e) and self.user_slack_client:
+                        logger.info(f"Bot not in channel #{channel_name}, trying with user token instead")
+                        response = self.user_slack_client.conversations_history(**params)
+                        messages = response.get("messages", [])
+                    else:
+                        # Re-raise if no user token or different error
+                        raise
+                
                 logger.info(f"Retrieved {len(messages)} messages from channel #{channel_name}")
                 
                 # Process pagination
