@@ -28,7 +28,7 @@ class LLMClient:
         )
         
         # Initialize tools and state manager
-        self.data_tools = DataTools()
+        self.data_tools = None  # Will be initialized with db_type when needed
         self.state_manager = StateManager()
     
     def render_template(self, template_name: str, **kwargs) -> str:
@@ -387,10 +387,13 @@ class OpenAIClient(LLMClient):
         Returns:
             Final analysis result with supporting data
         """
-        logger.info(f"Starting orchestrated analysis for question: {question}")
+        logger.info(f"Starting orchestrated analysis for question: {question} with database type: {db_type}")
         
         # Create a new session and initialize tools
         session_id = await self.state_manager.create_session(question)
+        
+        # Initialize data tools with the correct database type
+        self.data_tools = DataTools(db_type=db_type)
         await self.data_tools.initialize(session_id)
         
         # Get the state for this session
@@ -399,7 +402,7 @@ class OpenAIClient(LLMClient):
             raise ValueError(f"Failed to create session state for question: {question}")
         
         # Load prompt template for orchestration
-        system_prompt = self.render_template("orchestration_system.tpl")
+        system_prompt = self.render_template("orchestration_system.tpl", db_type=db_type)
         
         # Pre-load basic schema metadata to provide context to the LLM
         try:
@@ -928,10 +931,13 @@ class AnthropicClient(LLMClient):
         Returns:
             Final analysis result with supporting data
         """
-        logger.info(f"Starting orchestrated analysis for question: {question}")
+        logger.info(f"Starting orchestrated analysis for question: {question} with database type: {db_type}")
         
         # Create a new session and initialize tools
         session_id = await self.state_manager.create_session(question)
+        
+        # Initialize data tools with the correct database type
+        self.data_tools = DataTools(db_type=db_type)
         await self.data_tools.initialize(session_id)
         
         # Get the state for this session
@@ -940,7 +946,7 @@ class AnthropicClient(LLMClient):
             raise ValueError(f"Failed to create session state for question: {question}")
         
         # Load prompt template for orchestration
-        system_prompt = self.render_template("orchestration_system.tpl")
+        system_prompt = self.render_template("orchestration_system.tpl", db_type=db_type)
         
         # Pre-load basic schema metadata to provide context to the LLM
         try:

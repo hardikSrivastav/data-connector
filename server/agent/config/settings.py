@@ -50,7 +50,7 @@ class Settings(BaseSettings):
     MONGO_INITDB_ROOT_PASSWORD: Optional[str] = yaml_config.get('mongodb', {}).get('password', os.getenv('MONGO_ROOT_PASSWORD', 'dataconnector'))
     MONGO_HOST: Optional[str] = yaml_config.get('mongodb', {}).get('host', os.getenv('MONGO_HOST', 'localhost'))
     MONGO_PORT: Optional[int] = yaml_config.get('mongodb', {}).get('port', int(os.getenv('MONGO_PORT', 27000)))
-    MONGODB_DB_NAME: Optional[str] = yaml_config.get('mongodb', {}).get('database', os.getenv('MONGODB_DB_NAME', 'admin'))
+    MONGODB_DB_NAME: Optional[str] = yaml_config.get('mongodb', {}).get('database', os.getenv('MONGODB_DB_NAME', 'dataconnector_mongo'))
     MONGODB_URI: Optional[str] = yaml_config.get('mongodb', {}).get('uri', os.getenv('MONGODB_URI'))
     
     # If MongoDB URI is not set, construct it from parts
