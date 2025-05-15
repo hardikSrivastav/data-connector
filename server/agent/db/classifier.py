@@ -5,8 +5,11 @@ This module determines which databases should be queried for a given natural lan
 It uses the Schema Registry to analyze database metadata and make intelligent decisions.
 """
 import logging
+import os
+import yaml
 from typing import List, Set, Dict, Any
 import re
+from pathlib import Path
 
 # Import the schema registry client
 from .registry.integrations import registry_client
@@ -27,6 +30,66 @@ class DatabaseClassifier:
         """Initialize the classifier"""
         # Make sure the registry client is initialized
         self.client = registry_client
+        
+        # Load database types from config.yaml
+        self.db_types = self._load_database_types()
+        
+        # Define default keywords for standard database types
+        self.default_keywords = {
+            "postgres": ["table", "row", "sql", "query", "join", "database", "relational"],
+            "mongodb": ["document", "collection", "json", "nosql", "unstructured"],
+            "qdrant": ["similar", "vector", "embedding", "semantic", "similarity", "neural"],
+            "slack": ["message", "channel", "chat", "conversation", "slack", "communication"],
+        }
+        
+        # Extend with keywords for any new database types from config
+        self._extend_keywords()
+    
+    def _load_database_types(self) -> List[str]:
+        """
+        Load database types from config.yaml
+        
+        Returns:
+            List of database types defined in the config
+        """
+        config_path = os.environ.get("DATA_CONNECTOR_CONFIG", 
+                                    str(Path.home() / ".data-connector" / "config.yaml"))
+        
+        try:
+            with open(config_path, 'r') as f:
+                config = yaml.safe_load(f)
+            
+            # Get all database types from config.yaml
+            db_types = [k for k in config.keys() if k not in 
+                       ['default_database', 'vector_db', 'additional_settings']]
+            
+            logger.info(f"Loaded database types from config: {db_types}")
+            return db_types
+        except Exception as e:
+            logger.warning(f"Failed to load config.yaml: {e}")
+            # Fall back to default database types
+            default_types = ["postgres", "mongodb", "qdrant", "slack"]
+            logger.info(f"Using default database types: {default_types}")
+            return default_types
+    
+    def _extend_keywords(self):
+        """Extend keywords for new database types not in the default mapping"""
+        for db_type in self.db_types:
+            if db_type not in self.default_keywords:
+                # Generate keywords based on the database type
+                # This is a simple approach and can be improved
+                self.default_keywords[db_type] = [
+                    db_type,  # The name itself
+                    f"{db_type} database",  # "<type> database"
+                    # Add more generic keywords based on database categories
+                    # For example, if it's a new SQL database
+                    "table" if "sql" in db_type.lower() else "",
+                    "document" if "document" in db_type.lower() or "nosql" in db_type.lower() else "",
+                ]
+                # Filter out empty strings
+                self.default_keywords[db_type] = [k for k in self.default_keywords[db_type] if k]
+                
+                logger.info(f"Added keywords for new database type {db_type}: {self.default_keywords[db_type]}")
     
     def classify(self, question: str) -> Dict[str, Any]:
         """
@@ -70,8 +133,47 @@ class DatabaseClassifier:
         Returns:
             Filtered set of sources
         """
-        # For now, just use the registry's recommendations
-        # This can be expanded with more sophisticated filtering logic
+        # Enhanced filtering based on database types in config
+        sources_by_type = {}
+        all_sources = self.client.get_all_sources()
+        
+        # Group sources by database type
+        for source in all_sources:
+            source_id = source["id"]
+            db_type = source["type"]
+            if db_type not in sources_by_type:
+                sources_by_type[db_type] = []
+            sources_by_type[db_type].append(source_id)
+        
+        # Analyze question to determine database types
+        detected_db_types = set()
+        
+        # Check for database type keywords in the question
+        for db_type, keywords in self.default_keywords.items():
+            for keyword in keywords:
+                if keyword.lower() in question.lower():
+                    detected_db_types.add(db_type)
+                    break
+        
+        # If specific database types were detected, prioritize those sources
+        if detected_db_types:
+            priority_sources = set()
+            for db_type in detected_db_types:
+                if db_type in sources_by_type:
+                    priority_sources.update(sources_by_type[db_type])
+            
+            # Combine with registry recommendations
+            combined_sources = sources.union(priority_sources)
+            
+            # If we have a reasonable number of sources, use them
+            if len(combined_sources) <= 3:  # Adjust threshold as needed
+                return combined_sources
+            
+            # If too many sources, prioritize detected types
+            if len(priority_sources) > 0:
+                return priority_sources
+        
+        # Fall back to registry recommendations
         return sources
     
     def _generate_reasoning(self, sources: Set[str], question: str) -> str:
@@ -89,6 +191,34 @@ class DatabaseClassifier:
         
         # Get table information for each source
         tables_by_source = {}
+        sources_by_type = {}
+        
+        # Group sources by database type
+        all_sources = self.client.get_all_sources()
+        for source in all_sources:
+            if source["id"] in sources:
+                db_type = source["type"]
+                if db_type not in sources_by_type:
+                    sources_by_type[db_type] = []
+                sources_by_type[db_type].append(source["id"])
+        
+        # Explain selection by database type
+        for db_type, source_ids in sources_by_type.items():
+            source_names = ", ".join(source_ids)
+            
+            # Check if any keywords for this db_type appear in the question
+            matched_keywords = []
+            if db_type in self.default_keywords:
+                for keyword in self.default_keywords[db_type]:
+                    if keyword.lower() in question.lower():
+                        matched_keywords.append(keyword)
+            
+            if matched_keywords:
+                keyword_list = ", ".join(f"'{kw}'" for kw in matched_keywords)
+                reasoning.append(f"Selected {db_type} source(s) [{source_names}] because question contains keywords: {keyword_list}")
+            else:
+                reasoning.append(f"Selected {db_type} source(s) [{source_names}] based on schema relevance")
+                
         for source_id in sources:
             tables = self.client.list_tables(source_id)
             if tables:
@@ -103,20 +233,6 @@ class DatabaseClassifier:
         
         if mentioned_tables:
             reasoning.append(f"Question directly mentions tables: {', '.join(mentioned_tables)}")
-        
-        # Check for keyword matches
-        keyword_matches = {
-            "postgres": ["table", "row", "sql", "query", "join"],
-            "mongodb": ["document", "collection", "json", "nosql"],
-            "qdrant": ["similar", "vector", "embedding", "semantic"],
-            "slack": ["message", "channel", "chat", "conversation"]
-        }
-        
-        for db_type, keywords in keyword_matches.items():
-            for keyword in keywords:
-                if keyword in question.lower():
-                    reasoning.append(f"Question contains '{keyword}' which suggests {db_type}")
-                    break
         
         # Check for business entity mentions
         ontology = self.client.get_ontology_to_tables_mapping()
