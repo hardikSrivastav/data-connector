@@ -18,6 +18,7 @@ import Link from "next/link";
 import { toast } from "sonner";
 import { motion } from "framer-motion";
 import { getCalApi } from "@calcom/embed-react";
+import { useIsMobile, useIsMediumScreen, useIsLargeScreen } from "@/hooks/useMediaQuery";
 
 export default function WaitlistPage() {
   const [isSubmitted, setIsSubmitted] = useState(false);
@@ -26,6 +27,9 @@ export default function WaitlistPage() {
     email: "",
     company: "",
   });
+  const isMobile = useIsMobile();
+  const isMediumScreen = useIsMediumScreen();
+  const isLargeScreen = useIsLargeScreen();
 
   useEffect(() => {
     (async function () {
@@ -50,28 +54,31 @@ export default function WaitlistPage() {
   };
 
   return (
-    <div className="h-screen flex items-center justify-center bg-gradient-to-b from-background via-background/95 to-muted/10 overflow-hidden pt-16 pb-16">
+    <div className={`flex items-center justify-center bg-gradient-to-b from-background via-background/95 to-muted/10 overflow-hidden pt-16 pb-16`}>
       <div className="container mx-auto relative px-4">
         {/* Decorative Elements */}
         <div className="absolute -left-28 top-20 w-56 h-56 rounded-full bg-gradient-to-r from-[#9d4edd]/20 to-[#ff006e]/5 blur-3xl" />
         <div className="absolute -right-28 bottom-20 w-56 h-56 rounded-full bg-gradient-to-r from-[#3a86ff]/20 to-[#00b4d8]/5 blur-3xl" />
         
-        <motion.div 
-          className="text-center max-w-4xl mx-auto mb-10"
-          initial={{ opacity: 0, y: 20 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.5 }}
-        >
-          <h1 className="text-5xl md:text-6xl font-bold mb-5 bg-clip-text text-transparent bg-gradient-to-r from-[#FFE1E0] via-[#9d4edd] to-[#ff006e] tracking-tight font-baskerville leading-tight">
-            Join Our Waitlist
-          </h1>
-          <p className="text-xl md:text-2xl text-muted-foreground max-w-3xl mx-auto font-baskerville leading-relaxed">
-            Be among the first to experience Ceneca, the natural language interface for your data.
-          </p>
-        </motion.div>
+        {/* Conditionally render the heading based on screen size - now only on large screens */}
+        {isLargeScreen && (
+          <motion.div 
+            className="text-center max-w-4xl mx-auto mb-10"
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.5 }}
+          >
+            <h1 className="text-6xl md:text-8xl pt-16 font-bold mb-5 bg-clip-text text-transparent bg-gradient-to-r from-[#FFE1E0] via-[#9d4edd] to-[#ff006e] tracking-tight font-baskerville leading-tight">
+              Join Our Waitlist
+            </h1>
+            <p className="text-xl md:text-2xl text-muted-foreground max-w-3xl mx-auto font-baskerville leading-relaxed">
+              Be among the first to experience Ceneca, the natural language interface for your data.
+            </p>
+          </motion.div>
+        )}
         
         <motion.div 
-          className="grid md:grid-cols-2 gap-10 max-w-5xl mx-auto"
+          className="grid pt-16 md:grid-cols-2 gap-10 max-w-5xl mx-auto"
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.5, delay: 0.2 }}
@@ -163,8 +170,6 @@ export default function WaitlistPage() {
               </p>
               
               <div className="space-y-6">
-                
-                
                 <Button 
                   data-cal-namespace="15min"
                   data-cal-link="hardik-srivastava-riptu0/15min"

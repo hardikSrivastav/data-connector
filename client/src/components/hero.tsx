@@ -73,28 +73,28 @@ export function Hero() {
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.5 }}
       >
-          <h1 className="text-6xl md:text-7xl font-bold tracking-tight mb-8 font-baskerville">
-          <span className="block mb-4">Query Your Data With </span>
-            <div className="bg-clip-text text-transparent bg-gradient-to-r from-[#FFE1E0] via-[#9d4edd] to-[#ff006e] h-auto min-h-[6rem] md:min-h-[8rem] overflow-visible break-words">
+          <h1 className="text-5xl md:text-7xl font-bold tracking-tight mb-6 mt-12 font-baskerville">
+          <span className="block">Query Your Data With </span>
+            <div className="bg-clip-text text-transparent bg-gradient-to-r from-[#FFE1E0] via-[#9d4edd] to-[#ff006e] h-auto min-h-[6rem] md:min-h-[8rem] overflow-visible">
             <TypewriterComponent
               options={{
                 strings: [
                   "Natural Language.",
-                    "Zero SQL.",
-                    "AI Insights.",
+                  "Zero SQL.",
+                  "AI Insights.",
                   "Enterprise Security.",
                 ],
                 autoStart: true,
                 loop: true,
                 delay: 80,
                 deleteSpeed: 40,
-                  wrapperClassName: "text-4xl sm:text-5xl md:text-7xl font-bold font-baskerville leading-normal",
-                  cursorClassName: "text-4xl sm:text-5xl md:text-7xl font-bold font-baskerville"
+                wrapperClassName: "text-5xl md:text-7xl font-bold tracking-tight leading-tight md:leading-tight font-baskerville",
+                cursorClassName: "text-5xl md:text-7xl font-bold tracking-tight font-baskerville"
               }}
             />
-          </div>
+            </div>
         </h1>
-          <p className="text-2xl md:text-3xl text-muted-foreground max-w-4xl mx-auto mt-8 mb-12 font-baskerville">
+          <p className="text-2xl md:text-3xl text-muted-foreground max-w-4xl mx-auto mt-4 pt-4 mb-12 font-baskerville">
           {siteConfig.description}
         </p>
         <div className="flex flex-col sm:flex-row gap-8 justify-center">
@@ -119,24 +119,6 @@ export function Hero() {
           </Button>
         </div>
       </motion.div>
-
-        {/* Subtle scroll indicator at bottom */}
-        <div className="absolute bottom-8 left-0 right-0 flex justify-center animate-bounce">
-          <svg 
-            xmlns="http://www.w3.org/2000/svg" 
-            width="24" 
-            height="24" 
-            viewBox="0 0 24 24" 
-            fill="none" 
-            stroke="currentColor" 
-            strokeWidth="2" 
-            strokeLinecap="round" 
-            strokeLinejoin="round" 
-            className="text-muted-foreground"
-          >
-            <path d="M12 5v14M5 12l7 7 7-7"/>
-          </svg>
-        </div>
       </div>
 
       {/* Terminal visualization section - below the fold */}
@@ -275,7 +257,7 @@ export function Hero() {
                         >
                         <h3 className="text-lg font-bold mb-4 font-baskerville text-zinc-900">Sales Data by Region (Last Quarter)</h3>
                         
-                        <div className="overflow-hidden rounded-lg border border-zinc-200">
+                        <div className="overflow-x-auto rounded-lg border border-zinc-200">
                             <table className="min-w-full divide-y divide-zinc-200">
                             <thead className="bg-zinc-50">
                                 <tr>

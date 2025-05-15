@@ -8,7 +8,7 @@ export function CliDemo() {
   const [activeIndex, setActiveIndex] = useState(0);
   
   return (
-    <div className="py-32 px-4 bg-background">
+    <div className="pt-16 pb-32 px-4 bg-background">
       <div className="container mx-auto">
         <div className="text-center mb-20">
           <motion.h2 

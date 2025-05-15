@@ -1,18 +1,31 @@
 "use client";
 
-import { motion } from "framer-motion";
+import { motion, useInView } from "framer-motion";
 import { CliDemo } from "@/components/cli-demo";
 import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
 import { vscDarkPlus } from "react-syntax-highlighter/dist/esm/styles/prism";
+import { useRef, useEffect } from "react";
 
 export default function HowItWorks() {
+  // Create refs for each feature section
+  const feature1Ref = useRef(null);
+  const feature2Ref = useRef(null);
+  const feature3Ref = useRef(null);
+  const feature4Ref = useRef(null);
+  
+  // Check if features are in view
+  const feature1InView = useInView(feature1Ref, { once: true, amount: 0.1 });
+  const feature2InView = useInView(feature2Ref, { once: true, amount: 0.1 });
+  const feature3InView = useInView(feature3Ref, { once: true, amount: 0.1 });
+  const feature4InView = useInView(feature4Ref, { once: true, amount: 0.1 });
+
   return (
     <div className="pt-40 bg-gradient-to-b from-background via-background/90 to-muted/20">
       {/* Hero Section */}
-      <div className="container mx-auto px-4 py-20">
-        <div className="text-center mb-36">
+      <div className="container mx-auto px-4">
+        <div className="text-center mb-20">
           <motion.h1 
-            className="text-7xl md:text-9xl font-bold mb-12 bg-clip-text text-transparent bg-gradient-to-r from-[#FFE1E0] via-[#9d4edd] to-[#ff006e] tracking-tight leading-normal"
+            className="text-7xl md:text-8xl font-bold mb-8 bg-clip-text text-transparent bg-gradient-to-r from-[#FFE1E0] via-[#9d4edd] to-[#ff006e] tracking-tight leading-normal"
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.5 }}
@@ -20,7 +33,7 @@ export default function HowItWorks() {
             How It Works
           </motion.h1>
           <motion.p 
-            className="text-2xl md:text-3xl text-muted-foreground max-w-3xl mx-auto font-baskerville leading-relaxed tracking-wide"
+            className="text-xl md:text-2xl text-muted-foreground max-w-3xl mx-auto font-baskerville leading-relaxed tracking-wide"
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.5, delay: 0.2 }}
@@ -30,14 +43,14 @@ export default function HowItWorks() {
         </div>
         
         {/* Features Section - Single Column, More Artistic */}
-        <div className="max-w-5xl mx-auto space-y-52 mb-52">
+        <div className="max-w-5xl mx-auto space-y-52 mb-20">
           {/* Feature 1 */}
           <motion.div
+            ref={feature1Ref}
             className="relative"
             initial={{ opacity: 0 }}
-            whileInView={{ opacity: 1 }}
-            transition={{ duration: 0.8 }}
-            viewport={{ once: true, amount: 0.3 }}
+            animate={feature1InView ? { opacity: 1 } : { opacity: 0 }}
+            transition={{ duration: 0.8, delay: 0.1 }}
           >
             <div className="absolute -left-12 -top-12 w-36 h-36 rounded-full bg-gradient-to-r from-[#9d4edd]/20 to-[#9d4edd]/5 blur-2xl" />
             
@@ -52,7 +65,7 @@ export default function HowItWorks() {
                 Setup is simple and straightforward, with support for MongoDB, PostgreSQL, Qdrant, and more.
               </p>
               
-              <div className="w-full bg-slate-950 backdrop-blur-sm rounded-lg border border-slate-800 p-6 ml-20 overflow-hidden">
+              <div className="w-full bg-slate-950 backdrop-blur-sm rounded-lg border border-slate-800 p-4 sm:p-6 ml-0 md:ml-20 overflow-x-auto">
                 <div className="flex items-center gap-2 mb-4">
                   <div className="w-3 h-3 rounded-full bg-red-500"></div>
                   <div className="w-3 h-3 rounded-full bg-yellow-500"></div>
@@ -77,11 +90,11 @@ export default function HowItWorks() {
           
           {/* Feature 2 */}
           <motion.div
+            ref={feature2Ref}
             className="relative"
             initial={{ opacity: 0 }}
-            whileInView={{ opacity: 1 }}
-            transition={{ duration: 0.8 }}
-            viewport={{ once: true, amount: 0.3 }}
+            animate={feature2InView ? { opacity: 1 } : { opacity: 0 }}
+            transition={{ duration: 0.8, delay: 0.1 }}
           >
             <div className="absolute -left-12 -top-12 w-36 h-36 rounded-full bg-gradient-to-r from-[#3a86ff]/20 to-[#00b4d8]/5 blur-2xl" />
             
@@ -96,7 +109,7 @@ export default function HowItWorks() {
                 No need to write complex SQL or NoSQL queries - just ask what you want to know.
               </p>
               
-              <div className="w-full bg-slate-950 backdrop-blur-sm rounded-lg border border-slate-800 p-6 ml-20 overflow-hidden">
+              <div className="w-full bg-slate-950 backdrop-blur-sm rounded-lg border border-slate-800 p-4 sm:p-6 ml-0 md:ml-20 overflow-x-auto">
                 <div className="flex items-center gap-2 mb-4">
                   <div className="w-3 h-3 rounded-full bg-red-500"></div>
                   <div className="w-3 h-3 rounded-full bg-yellow-500"></div>
@@ -135,11 +148,11 @@ export default function HowItWorks() {
           
           {/* Feature 3 */}
           <motion.div
+            ref={feature3Ref}
             className="relative"
             initial={{ opacity: 0 }}
-            whileInView={{ opacity: 1 }}
-            transition={{ duration: 0.8 }}
-            viewport={{ once: true, amount: 0.3 }}
+            animate={feature3InView ? { opacity: 1 } : { opacity: 0 }}
+            transition={{ duration: 0.8, delay: 0.1 }}
           >
             <div className="absolute -left-12 -top-12 w-36 h-36 rounded-full bg-gradient-to-r from-[#ff006e]/20 to-[#ff5e78]/5 blur-2xl" />
             
@@ -154,7 +167,7 @@ export default function HowItWorks() {
                 and visualizations to help you understand your data better.
               </p>
               
-              <div className="w-full bg-slate-950 backdrop-blur-sm rounded-lg border border-slate-800 p-6 ml-20 overflow-hidden">
+              <div className="w-full bg-slate-950 backdrop-blur-sm rounded-lg border border-slate-800 p-4 sm:p-6 ml-0 md:ml-20 overflow-x-auto">
                 <div className="flex items-center gap-2 mb-4">
                   <div className="w-3 h-3 rounded-full bg-red-500"></div>
                   <div className="w-3 h-3 rounded-full bg-yellow-500"></div>
@@ -188,11 +201,11 @@ export default function HowItWorks() {
           
           {/* Feature 4 */}
           <motion.div
+            ref={feature4Ref}
             className="relative pb-8"
             initial={{ opacity: 0 }}
-            whileInView={{ opacity: 1 }}
-            transition={{ duration: 0.8 }}
-            viewport={{ once: true, amount: 0.3 }}
+            animate={feature4InView ? { opacity: 1 } : { opacity: 0 }}
+            transition={{ duration: 0.8, delay: 0.1 }}
           >
             <div className="absolute -left-12 -top-12 w-36 h-36 rounded-full bg-gradient-to-r from-[#ffbe0b]/20 to-[#fb8500]/5 blur-2xl" />
             
@@ -207,7 +220,7 @@ export default function HowItWorks() {
                 ensuring compliance with data privacy regulations and internal security policies.
               </p>
               
-              <div className="w-full bg-slate-950 backdrop-blur-sm rounded-lg border border-slate-800 p-6 ml-20 overflow-hidden">
+              <div className="w-full bg-slate-950 backdrop-blur-sm rounded-lg border border-slate-800 p-4 sm:p-6 ml-0 md:ml-20 overflow-x-auto">
                 <div className="flex items-center gap-2 mb-4">
                   <div className="w-3 h-3 rounded-full bg-red-500"></div>
                   <div className="w-3 h-3 rounded-full bg-yellow-500"></div>
@@ -240,7 +253,7 @@ export default function HowItWorks() {
       </div>
       
       {/* CLI Demo Section */}
-      <div className="relative">
+      <div className="relative mb-20">
         <CliDemo />
       </div>
     </div>

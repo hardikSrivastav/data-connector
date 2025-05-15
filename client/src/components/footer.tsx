@@ -63,8 +63,8 @@ export function Footer() {
         </div>
         
         {/* Large logo section */}
-        <div className="mb-16">
-          <h1 className="text-[8rem] md:text-[12rem] font-bold tracking-tight leading-none bg-clip-text text-transparent bg-gradient-to-r from-[#FFE1E0] via-[#9d4edd] to-[#ff006e] font-baskerville pb-8">
+        <div className="">
+          <h1 className="sm:text-5xl md:text-[12rem] font-bold tracking-tight leading-none bg-clip-text text-transparent bg-gradient-to-r from-[#FFE1E0] via-[#9d4edd] to-[#ff006e] font-baskerville pb-8">
             CENECA
           </h1>
         </div>

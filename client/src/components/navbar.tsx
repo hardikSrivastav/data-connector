@@ -7,9 +7,14 @@ import { motion, AnimatePresence } from "framer-motion";
 import { Button } from "@/components/ui/button";
 import { siteConfig } from "@/lib/constants";
 import { cn } from "@/lib/utils";
+import { Menu, X } from "lucide-react";
+import { useIsMobile, useIsDesktop } from "@/hooks/useMediaQuery";
 
 export function Navbar() {
   const [scrolled, setScrolled] = useState(false);
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const isMobile = useIsMobile();
+  const isDesktop = useIsDesktop();
 
   useEffect(() => {
     const handleScroll = () => {
@@ -19,6 +24,17 @@ export function Navbar() {
     window.addEventListener("scroll", handleScroll);
     return () => window.removeEventListener("scroll", handleScroll);
   }, []);
+
+  // Close mobile menu when switching to desktop view
+  useEffect(() => {
+    if (isDesktop && mobileMenuOpen) {
+      setMobileMenuOpen(false);
+    }
+  }, [isDesktop, mobileMenuOpen]);
+
+  const toggleMobileMenu = () => {
+    setMobileMenuOpen(!mobileMenuOpen);
+  };
 
   return (
     <AnimatePresence>
@@ -54,22 +70,42 @@ export function Navbar() {
             </div>
             
             <div className="w-1/2 flex justify-center">
-              <nav className="hidden md:flex items-center justify-center">
-                <div className="flex items-center space-x-10">
-                  <Link 
-                    href="/how-it-works" 
-                    className="text-lg font-medium hover:text-primary transition-colors py-1 px-3 hover:bg-accent/10 rounded-md font-baskerville"
+              {/* Desktop Navigation - conditionally render based on screen size */}
+              {!isMobile && (
+                <nav className="flex items-center justify-center">
+                  <div className="flex items-center space-x-10">
+                    <Link 
+                      href="/how-it-works" 
+                      className="text-lg font-medium hover:text-primary transition-colors py-1 px-3 hover:bg-accent/10 rounded-md font-baskerville"
+                    >
+                      How It Works
+                    </Link>
+                    <Link 
+                      href="/pricing" 
+                      className="text-lg font-medium hover:text-primary transition-colors py-1 px-3 hover:bg-accent/10 rounded-md font-baskerville"
+                    >
+                      Pricing
+                    </Link>
+                  </div>
+                </nav>
+              )}
+
+              {/* Mobile Menu Button - conditionally render based on screen size */}
+              {isMobile && (
+                <div className="flex items-center justify-center">
+                  <button
+                    onClick={toggleMobileMenu}
+                    className="p-2 rounded-md hover:bg-accent/10"
+                    aria-label="Toggle navigation menu"
                   >
-                    How It Works
-                  </Link>
-                  <Link 
-                    href="/pricing" 
-                    className="text-lg font-medium hover:text-primary transition-colors py-1 px-3 hover:bg-accent/10 rounded-md font-baskerville"
-                  >
-                    Pricing
-                  </Link>
+                    {mobileMenuOpen ? (
+                      <X className="h-6 w-6" />
+                    ) : (
+                      <Menu className="h-6 w-6" />
+                    )}
+                  </button>
                 </div>
-              </nav>
+              )}
             </div>
             
             <div className="w-1/4 flex justify-end">
@@ -85,6 +121,36 @@ export function Navbar() {
               </Button>
             </div>
           </div>
+
+          {/* Mobile Menu - conditionally render based on state AND screen size */}
+          <AnimatePresence>
+            {mobileMenuOpen && isMobile && (
+              <motion.div
+                initial={{ opacity: 0, y: -20 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -20 }}
+                transition={{ duration: 0.2 }}
+                className="absolute left-0 right-0 mt-2 mx-4 p-4 rounded-xl bg-navbar backdrop-blur-xl shadow-lg"
+              >
+                <nav className="flex flex-col space-y-4">
+                  <Link 
+                    href="/how-it-works" 
+                    className="text-lg font-medium hover:text-primary transition-colors py-2 px-3 hover:bg-accent/10 rounded-md font-baskerville"
+                    onClick={() => setMobileMenuOpen(false)}
+                  >
+                    How It Works
+                  </Link>
+                  <Link 
+                    href="/pricing" 
+                    className="text-lg font-medium hover:text-primary transition-colors py-2 px-3 hover:bg-accent/10 rounded-md font-baskerville"
+                    onClick={() => setMobileMenuOpen(false)}
+                  >
+                    Pricing
+                  </Link>
+                </nav>
+              </motion.div>
+            )}
+          </AnimatePresence>
         </div>
       </motion.header>
     </AnimatePresence>
