@@ -17,9 +17,10 @@ from pathlib import Path
 
 from ..classifier import classifier as db_classifier
 from ..registry.integrations import registry_client
-# Fix import to avoid circular reference
-import server.agent.db.orchestrator as base_orchestrator 
+# Fix circular import by using lazy/delayed import
+# import server.agent.db.orchestrator as base_orchestrator 
 from .result_aggregator import ResultAggregator
+from .planning_agent import PlanningAgent
 
 # Configure logging
 logger = logging.getLogger(__name__)
@@ -52,6 +53,9 @@ class CrossDatabaseOrchestrator:
         
         # Initialize result aggregator
         self.result_aggregator = ResultAggregator()
+        
+        # Initialize the planning agent
+        self.planning_agent = PlanningAgent(config=self.config)
         
         # Dictionary to cache orchestrators by source_id
         self.orchestrators = {}
@@ -200,55 +204,231 @@ class CrossDatabaseOrchestrator:
                     "execution_time": execution_time
                 }
     
-    async def execute(self, question: str, operation: str = "merge") -> Dict[str, Any]:
+    async def plan_execution(self, question: str) -> Dict[str, Any]:
         """
-        Execute a natural language query across multiple databases.
+        Plan the execution of a cross-database query without executing it.
+        
+        This implements a "dry run" capability for validation before execution.
         
         Args:
-            question: Natural language query
-            operation: Aggregation operation: "merge" (default), "join", or "union"
+            question: Natural language question
             
         Returns:
-            Dictionary with results from all relevant databases
+            Dictionary with plan and validation results
         """
-        # Step 1: Classify databases
-        relevant_sources = await self._classify_databases(question)
+        try:
+            # Use the planning agent to create and validate a plan
+            query_plan, validation_result = await self.planning_agent.create_plan(
+                question=question, 
+                optimize=True
+            )
+            
+            # Return the plan and validation result
+            return {
+                "plan": query_plan.to_dict(),
+                "validation": validation_result,
+                "valid": validation_result.get("valid", False)
+            }
+        except Exception as e:
+            logger.error(f"Error in plan execution: {e}")
+            return {
+                "error": str(e),
+                "valid": False
+            }
+    
+    async def execute_plan(self, plan: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Execute a pre-generated query plan.
         
-        if not relevant_sources:
-            logger.warning("No relevant sources found for query")
+        Args:
+            plan: Query plan dictionary or QueryPlan instance
+            
+        Returns:
+            Dictionary with execution results
+        """
+        # Import the OperationDAG class for execution
+        from .plans.dag import OperationDAG
+        
+        try:
+            # Convert plan dict to QueryPlan if needed
+            if isinstance(plan, dict):
+                from .plans.factory import create_plan_from_dict
+                query_plan = create_plan_from_dict(plan)
+            else:
+                query_plan = plan
+            
+            # Validate the plan one more time before execution
+            validation = query_plan.validate(self.registry_client)
+            if not validation["valid"]:
+                logger.error(f"Plan validation failed before execution: {validation['errors']}")
+                return {
+                    "success": False,
+                    "errors": validation["errors"],
+                    "results": []
+                }
+            
+            # Create a DAG for parallel execution
+            dag = OperationDAG(query_plan)
+            
+            # Check for cycles
+            if dag.has_cycles():
+                return {
+                    "success": False,
+                    "errors": ["Plan has cyclic dependencies"],
+                    "results": []
+                }
+            
+            # Get the parallel execution plan
+            parallel_plan = dag.get_parallel_execution_plan()
+            
+            # Dictionary to track operation results by ID
+            operation_results = {}
+            
+            # Execute operations layer by layer
+            for layer_idx, layer in enumerate(parallel_plan):
+                logger.info(f"Executing layer {layer_idx+1}/{len(parallel_plan)} with {len(layer)} operations")
+                
+                # Execute operations in this layer in parallel
+                layer_operations = []
+                for op_id in layer:
+                    operation = query_plan.get_operation(op_id)
+                    if operation:
+                        layer_operations.append(operation)
+                
+                # Execute operations in parallel with semaphore control
+                async def execute_operation(operation):
+                    async with self.semaphore:
+                        source_id = operation.source_id
+                        db_orchestrator = await self._get_or_create_orchestrator(source_id)
+                        
+                        if not db_orchestrator:
+                            operation.status = "failed"
+                            operation.error = f"Failed to initialize orchestrator for source {source_id}"
+                            return operation
+                        
+                        # Get adapter params
+                        params = operation.get_adapter_params()
+                        
+                        # Record start time
+                        start_time = time.time()
+                        
+                        try:
+                            # Execute operation
+                            operation.status = "running"
+                            result = await db_orchestrator.execute(params)
+                            operation.result = result
+                            operation.status = "completed"
+                        except Exception as e:
+                            operation.status = "failed"
+                            operation.error = str(e)
+                        
+                        # Record execution time
+                        operation.execution_time = time.time() - start_time
+                        
+                        return operation
+                
+                # Execute all operations in this layer
+                tasks = [execute_operation(op) for op in layer_operations]
+                completed_ops = await asyncio.gather(*tasks)
+                
+                # Process results
+                for op in completed_ops:
+                    operation_results[op.id] = op.result if op.status == "completed" else {"error": op.error}
+            
+            # Aggregate results if needed
+            final_results = []
+            for op in query_plan.operations:
+                if op.status == "completed" and not op.depends_on:
+                    # This is a "terminal" operation with no dependents
+                    final_results.append({
+                        "operation_id": op.id,
+                        "result": op.result
+                    })
+            
+            # If we have a final operation that depends on others, it's likely a join/aggregation
+            join_operations = [op for op in query_plan.operations 
+                               if op.depends_on and op.status == "completed"]
+            
+            if join_operations:
+                # Use the result aggregator to combine results
+                try:
+                    # Use LLM-based result aggregation for the final results
+                    aggregated_result = await self.result_aggregator.aggregate_results(
+                        query_plan=query_plan,
+                        operation_results=operation_results,
+                        user_question=query_plan.metadata.get("original_question", "")
+                    )
+                    return {
+                        "success": True,
+                        "aggregated_result": aggregated_result,
+                        "raw_results": operation_results
+                    }
+                except Exception as e:
+                    logger.error(f"Error in result aggregation: {e}")
+                    return {
+                        "success": True,
+                        "error_in_aggregation": str(e),
+                        "raw_results": operation_results
+                    }
+            
+            return {
+                "success": True,
+                "results": final_results,
+                "all_results": operation_results
+            }
+            
+        except Exception as e:
+            logger.error(f"Error in plan execution: {e}")
             return {
                 "success": False,
-                "error": "No relevant data sources found for this query",
-                "results": [],
-                "sources_queried": []
+                "errors": [str(e)],
+                "results": []
             }
+    
+    async def execute(self, question: str, operation: str = "merge") -> Dict[str, Any]:
+        """
+        Execute a cross-database query.
         
-        # Step 2: Execute queries in parallel
-        tasks = [self._execute_query_on_source(source_id, question) for source_id in relevant_sources]
-        results = await asyncio.gather(*tasks)
+        This is the main entry point for querying multiple databases.
         
-        # Step 3: Aggregate results
-        # Determine if we need type mappings (for joins)
-        type_mappings = None
-        join_fields = None
-        
-        if operation == "join":
-            # Try to automatically determine join fields based on schema
-            join_fields = self._determine_join_fields(relevant_sources)
+        Args:
+            question: Natural language question
+            operation: How to combine results from multiple sources
+                      "merge": Merge results from all sources
+                      "join": Join results based on common fields
+                      "union": Union results from all sources
+                      
+        Returns:
+            Dictionary with query results
+        """
+        try:
+            # Use the planning agent to create a plan
+            query_plan, validation_result = await self.planning_agent.create_plan(
+                question=question, 
+                optimize=True
+            )
             
-            # Auto-generate type mappings from schema
-            type_mappings = self._determine_type_mappings(relevant_sources)
+            # Check if plan is valid
+            if not validation_result.get("valid", False):
+                return {
+                    "success": False,
+                    "errors": validation_result.get("errors", ["Plan validation failed"]),
+                    "plan": query_plan.to_dict()
+                }
             
-            logger.info(f"Using join fields: {join_fields}")
-            logger.info(f"Using type mappings: {type_mappings}")
-        
-        # Aggregate results
-        return self.result_aggregator.aggregate_results(
-            results, 
-            operation=operation,
-            join_fields=join_fields,
-            type_mappings=type_mappings
-        )
+            # Execute the plan
+            execution_result = await self.execute_plan(query_plan)
+            
+            # Add plan to the result
+            execution_result["plan"] = query_plan.to_dict()
+            
+            return execution_result
+        except Exception as e:
+            logger.error(f"Error in query execution: {e}")
+            return {
+                "success": False,
+                "errors": [str(e)]
+            }
     
     def _determine_join_fields(self, source_ids: Set[str]) -> Dict[str, str]:
         """

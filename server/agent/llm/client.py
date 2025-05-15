@@ -1371,6 +1371,381 @@ class LocalLLMClient(LLMClient):
             "error": "Not implemented"
         }
 
+class DummyLLMClient(LLMClient):
+    """
+    Dummy client for simulating API calls without using real LLM APIs.
+    
+    This client returns predefined responses for different templates
+    to enable testing the cross-database orchestration system.
+    """
+    
+    def __init__(self, response_mode: str = "success"):
+        """
+        Initialize the dummy client.
+        
+        Args:
+            response_mode: Mode that determines response behavior
+                         "success": All operations succeed
+                         "validation_fail": Plan validation fails
+                         "error": Simulates errors in LLM responses
+        """
+        super().__init__()
+        self.model_name = "dummy-model"
+        self.response_mode = response_mode
+        self.client = self  # Use self as the client for chat.completions.create
+        
+        # Set up dummy response templates
+        self._setup_dummy_responses()
+    
+    def _setup_dummy_responses(self):
+        """Set up predefined responses for different templates"""
+        # Map template names to response generators
+        self.template_responses = {
+            "schema_classifier.tpl": self._generate_classifier_response,
+            "orchestration_plan.tpl": self._generate_plan_response,
+            "validation_check.tpl": self._generate_validation_response,
+            "plan_optimization.tpl": self._generate_optimization_response,
+            "result_aggregator.tpl": self._generate_aggregation_response,
+            "dry_run_analysis.tpl": self._generate_dry_run_response
+        }
+    
+    def _generate_classifier_response(self, **kwargs):
+        """Generate response for database classification"""
+        if self.response_mode == "error":
+            return {"content": "Error generating classification"}
+        
+        # Extract user question to make response somewhat relevant
+        question = kwargs.get("user_question", "")
+        
+        # Determine databases to include based on question keywords
+        databases = []
+        if "user" in question.lower() or "customer" in question.lower():
+            databases.append("postgres")
+        if "document" in question.lower() or "content" in question.lower():
+            databases.append("mongodb")
+        if "similar" in question.lower() or "like" in question.lower():
+            databases.append("qdrant")
+        if "message" in question.lower() or "chat" in question.lower():
+            databases.append("slack")
+            
+        # Default to postgres if nothing matched
+        if not databases:
+            databases = ["postgres"]
+        
+        response = {
+            "selected_databases": databases,
+            "rationale": {
+                database: f"Selected based on relevance to query: '{question}'"
+                for database in databases
+            }
+        }
+        
+        return {"content": json.dumps(response, indent=2)}
+    
+    def _generate_plan_response(self, **kwargs):
+        """Generate a dummy query plan"""
+        if self.response_mode == "error":
+            return {"content": "Error generating plan"}
+        
+        # Extract parameters to make response somewhat relevant
+        question = kwargs.get("user_question", "")
+        db_candidates = kwargs.get("db_candidates", ["postgres"])
+        
+        # Create a simple plan with one operation per database type
+        operations = []
+        for i, db_type in enumerate(db_candidates):
+            op_id = f"op{i+1}"
+            
+            if db_type == "postgres":
+                operations.append({
+                    "id": op_id,
+                    "db_type": "postgres",
+                    "source_id": "postgres_main",
+                    "params": {
+                        "query": f"SELECT * FROM users WHERE active = true LIMIT 10 /* {question} */",
+                        "params": []
+                    },
+                    "depends_on": []
+                })
+            elif db_type == "mongodb":
+                operations.append({
+                    "id": op_id,
+                    "db_type": "mongodb",
+                    "source_id": "mongodb_main",
+                    "params": {
+                        "collection": "users",
+                        "pipeline": [
+                            {"$match": {"active": True}},
+                            {"$limit": 10}
+                        ]
+                    },
+                    "depends_on": []
+                })
+            elif db_type == "qdrant":
+                operations.append({
+                    "id": op_id,
+                    "db_type": "qdrant",
+                    "source_id": "qdrant_products",
+                    "params": {
+                        "collection": "products",
+                        "vector": [0.1, 0.2, 0.3],
+                        "filter": {"category": "electronics"},
+                        "limit": 10
+                    },
+                    "depends_on": []
+                })
+            elif db_type == "slack":
+                operations.append({
+                    "id": op_id,
+                    "db_type": "slack",
+                    "source_id": "slack_main",
+                    "params": {
+                        "channels": ["general"],
+                        "query": question,
+                        "date_from": "2023-01-01",
+                        "date_to": "2023-12-31"
+                    },
+                    "depends_on": []
+                })
+        
+        # If we have multiple databases, add a join operation
+        if len(operations) > 1:
+            join_op = {
+                "id": "join_op",
+                "db_type": "postgres",
+                "source_id": "postgres_main",
+                "params": {
+                    "query": "SELECT * FROM joined_data",
+                    "params": []
+                },
+                "depends_on": [op["id"] for op in operations]
+            }
+            operations.append(join_op)
+        
+        plan = {
+            "metadata": {
+                "description": f"Plan for: {question}",
+                "databases_used": db_candidates
+            },
+            "operations": operations
+        }
+        
+        return {"content": json.dumps(plan, indent=2)}
+    
+    def _generate_validation_response(self, **kwargs):
+        """Generate a validation response"""
+        if self.response_mode == "error":
+            return {"content": "Error validating plan"}
+        
+        if self.response_mode == "validation_fail":
+            validation = {
+                "valid": False,
+                "errors": [
+                    {
+                        "operation_id": "op1",
+                        "error_type": "invalid_table",
+                        "description": "Table 'users' does not exist in schema registry"
+                    }
+                ],
+                "warnings": [],
+                "suggestions": [
+                    {
+                        "operation_id": "op1",
+                        "suggestion_type": "alternative",
+                        "description": "Consider using 'customers' table instead"
+                    }
+                ]
+            }
+        else:
+            validation = {
+                "valid": True,
+                "errors": [],
+                "warnings": [
+                    {
+                        "operation_id": "op1",
+                        "warning_type": "performance",
+                        "description": "Consider adding a limit to the query for better performance"
+                    }
+                ],
+                "suggestions": [
+                    {
+                        "operation_id": "op1",
+                        "suggestion_type": "optimization",
+                        "description": "Add an index on the column being filtered"
+                    }
+                ]
+            }
+        
+        return {"content": json.dumps(validation, indent=2)}
+    
+    def _generate_optimization_response(self, **kwargs):
+        """Generate an optimization response"""
+        if self.response_mode == "error":
+            return {"content": "Error optimizing plan"}
+        
+        # Get the original plan to optimize
+        original_plan = kwargs.get("original_plan", "{}")
+        try:
+            plan_dict = json.loads(original_plan)
+            
+            # Add optimization metadata
+            plan_dict["metadata"]["optimization_notes"] = "Optimized by pushing filters earlier in the pipeline"
+            
+            # Make a small change to each operation to simulate optimization
+            for op in plan_dict.get("operations", []):
+                if op["db_type"] == "postgres" and "params" in op and "query" in op["params"]:
+                    # Add a comment to indicate optimization
+                    op["params"]["query"] += " /* optimized */"
+                elif op["db_type"] == "mongodb" and "params" in op and "pipeline" in op["params"]:
+                    # Add a comment field to indicate optimization
+                    op["params"]["pipeline"].append({"$comment": "optimized"})
+            
+            return {"content": json.dumps(plan_dict, indent=2)}
+        except Exception:
+            # If parsing fails, return a generic optimized plan
+            return {"content": original_plan}
+    
+    def _generate_aggregation_response(self, **kwargs):
+        """Generate an aggregation response"""
+        if self.response_mode == "error":
+            return {"content": "Error aggregating results"}
+        
+        # Create a simple aggregation result
+        aggregation = {
+            "aggregated_results": [
+                {"id": 1, "name": "User 1", "email": "user1@example.com"},
+                {"id": 2, "name": "User 2", "email": "user2@example.com"}
+            ],
+            "summary_statistics": {
+                "total_count": 2,
+                "sources_used": 2
+            },
+            "key_insights": [
+                "Found 2 matching records across databases"
+            ],
+            "aggregation_notes": {
+                "join_strategy": "inner join on id field"
+            }
+        }
+        
+        return {"content": json.dumps(aggregation, indent=2)}
+    
+    def _generate_dry_run_response(self, **kwargs):
+        """Generate a dry run analysis response"""
+        if self.response_mode == "error":
+            return {"content": "Error analyzing dry run"}
+        
+        # Create a simple dry run analysis
+        analysis = {
+            "overall_assessment": "PROCEED",
+            "confidence": 0.9,
+            "analysis": {
+                "correctness": {
+                    "score": 9,
+                    "notes": "Plan appears correct based on schema validation"
+                },
+                "completeness": {
+                    "score": 8,
+                    "notes": "Plan covers all aspects of the user query"
+                },
+                "efficiency": {
+                    "score": 7,
+                    "notes": "Query plan could be optimized but is generally efficient"
+                },
+                "robustness": {
+                    "score": 8,
+                    "notes": "Plan handles expected edge cases"
+                },
+                "security": {
+                    "score": 9,
+                    "notes": "No security concerns detected"
+                }
+            },
+            "critical_issues": [],
+            "recommendations": {
+                "proceed_conditions": "Plan can proceed as is",
+                "modifications": []
+            }
+        }
+        
+        return {"content": json.dumps(analysis, indent=2)}
+    
+    async def chat_completions_create(self, model=None, messages=None, **kwargs):
+        """
+        Simulate the chat.completions.create method of OpenAI/Anthropic.
+        
+        Args:
+            model: Model name (ignored)
+            messages: List of message objects
+            **kwargs: Additional parameters
+            
+        Returns:
+            Simulated response object
+        """
+        # Extract the user message
+        user_message = None
+        for message in messages:
+            if message.get("role") == "user":
+                user_message = message.get("content")
+                break
+        
+        # Determine which template is being used by looking for key phrases
+        template_type = None
+        for template_name in self.template_responses:
+            template_content = self.render_template(template_name)
+            if user_message and any(phrase in user_message for phrase in template_content.split('\n')[:3]):
+                template_type = template_name
+                break
+        
+        # Get template variables from the user message
+        template_vars = {}
+        if template_type:
+            # Extract variables from user message - this is a simplified approach
+            for line in user_message.split('\n'):
+                if "# User Question" in line and ":" in line:
+                    template_vars["user_question"] = line.split(":", 1)[1].strip()
+                    break
+        
+        # Generate response based on template type
+        if template_type and template_type in self.template_responses:
+            response_content = self.template_responses[template_type](**template_vars)
+        else:
+            # Fallback response
+            response_content = {"content": "I'm a dummy LLM response"}
+        
+        # Create a response object similar to what the API would return
+        response = type('DummyResponse', (), {
+            'choices': [
+                type('Choice', (), {
+                    'message': type('Message', (), response_content)
+                })
+            ]
+        })
+        
+        return response
+    
+    async def generate_sql(self, prompt: str) -> str:
+        """Generate SQL from a natural language prompt"""
+        return "SELECT * FROM users LIMIT 10"
+    
+    async def generate_mongodb_query(self, prompt: str) -> str:
+        """Generate MongoDB query from a natural language prompt"""
+        return '{"collection": "users", "pipeline": [{"$match": {}}, {"$limit": 10}]}'
+    
+    async def analyze_results(self, rows: List[Dict[str, Any]], is_vector_search: bool = False) -> str:
+        """Analyze query results"""
+        return f"Analysis of {len(rows)} rows: Sample data looks good."
+    
+    async def orchestrate_analysis(self, question: str, db_type: str = "postgres") -> Dict[str, Any]:
+        """Orchestrate a multi-step analysis"""
+        return {
+            "session_id": "dummy-session",
+            "question": question,
+            "analysis": f"Analysis for '{question}' using {db_type} database: Found relevant data.",
+            "steps_taken": 3,
+            "state": {"status": "completed"}
+        }
+
 def get_llm_client() -> LLMClient:
     """
     Factory function to get the appropriate LLM client based on configuration
@@ -1380,8 +1755,13 @@ def get_llm_client() -> LLMClient:
     """
     settings = Settings()
     
+    # Check if we want to use the dummy client
+    if os.environ.get("USE_DUMMY_LLM") == "true":
+        response_mode = os.environ.get("DUMMY_RESPONSE_MODE", "success")
+        logger.info(f"Using dummy LLM client with mode: {response_mode}")
+        return DummyLLMClient(response_mode=response_mode)
     # Check for Anthropic configuration
-    if os.environ.get("ANTHROPIC_API_KEY"):
+    elif os.environ.get("ANTHROPIC_API_KEY"):
         logger.info("Using Anthropic client")
         return AnthropicClient()
     elif settings.LLM_API_URL and settings.LLM_API_KEY:

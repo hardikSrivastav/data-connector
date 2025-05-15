@@ -39,6 +39,11 @@ I recommend implementing this project in vertical slices that deliver end-to-end
    - Add schema validation for generated plans
    - Implement dry-run capability for basic validation
 
+4. **Two-Phase Schema Awareness**
+   - Implement a planning-time schema retrieval using FAISS indices
+   - Ensure execution-time validation using Schema Registry
+   - Build synchronization mechanism to detect schema drift between the two
+
 **Deliverable**: System that generates and validates cross-database query plans (viewable but not yet executable).
 
 ## Phase 3: Implementation Agent (Weeks 5-6)

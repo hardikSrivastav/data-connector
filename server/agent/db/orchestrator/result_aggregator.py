@@ -1,280 +1,309 @@
 """
-Result Aggregator
+Result Aggregator for Cross-Database Orchestration
 
-This module provides functionality for aggregating results from different databases
-with different schemas and data types.
+This module implements the result aggregation for cross-database queries.
+It combines results from multiple database operations into a unified result.
 """
 
 import logging
-from typing import Dict, List, Any, Optional, Set, Tuple, Callable
-from datetime import datetime
 import json
+from typing import Dict, List, Any, Optional, Union
+import asyncio
+import importlib
 
 # Configure logging
+logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 class ResultAggregator:
     """
-    Aggregator for combining results from different databases.
+    Aggregator for combining results from multiple database operations.
     
-    This class provides functionality for:
-    1. Type coercion between different database types
-    2. Joining results from different databases
-    3. Handling different result formats
+    This class handles the combination of heterogeneous results from
+    different database operations into a unified result set.
     """
     
-    def __init__(self):
-        """Initialize the result aggregator"""
-        # Type coercion functions
-        self.type_coercers = {
-            'date': lambda v: (
-                datetime.fromisoformat(v.replace('Z', '+00:00')) 
-                if isinstance(v, str) else v
-            ),
-            'int': lambda v: int(float(v)) if v is not None and (isinstance(v, (int, float, str))) else v,
-            'float': lambda v: float(v) if v is not None and (isinstance(v, (int, float, str))) else v,
-            'str': lambda v: str(v) if v is not None else v,
-            'bool': lambda v: bool(v) if v is not None else v,
-            'array': lambda v: v if isinstance(v, list) else [v] if v is not None else [],
-            'object': lambda v: v if isinstance(v, dict) else json.loads(v) if isinstance(v, str) else {},
-        }
-    
-    def coerce_value(self, value: Any, target_type: str) -> Any:
+    def __init__(self, config: Optional[Dict[str, Any]] = None):
         """
-        Coerce a value to a specific type.
+        Initialize the result aggregator.
         
         Args:
-            value: The value to coerce
-            target_type: The target type
-            
-        Returns:
-            The coerced value
+            config: Optional configuration dictionary
         """
-        if target_type in self.type_coercers:
-            try:
-                return self.type_coercers[target_type](value)
-            except Exception as e:
-                logger.warning(f"Error coercing {value} to {target_type}: {e}")
-                return value
-        
-        # Default: return as-is
-        return value
+        self.config = config or {}
+        self._llm_client = None
     
-    def coerce_record(self, record: Dict[str, Any], type_mapping: Dict[str, str]) -> Dict[str, Any]:
+    @property
+    def llm_client(self):
+        """Lazy loading of LLM client to avoid circular imports"""
+        if self._llm_client is None:
+            # Import here to avoid circular dependency
+            from ...llm.client import get_llm_client
+            self._llm_client = get_llm_client()
+        return self._llm_client
+    
+    def _convert_for_aggregation(self, value: Any) -> Any:
         """
-        Coerce a record based on a type mapping.
+        Convert a value to a format suitable for aggregation.
         
         Args:
-            record: The record to coerce
-            type_mapping: Mapping of field names to target types
+            value: Value to convert
             
         Returns:
-            The coerced record
+            Converted value
         """
-        if not isinstance(record, dict):
-            logger.warning(f"Cannot coerce non-dict record: {record}")
-            return record
+        # Handle custom types that might not be JSON serializable
+        if hasattr(value, 'isoformat'):  # datetime objects
+            return value.isoformat()
+        elif hasattr(value, '__dict__'):  # custom objects
+            return str(value)
+        elif isinstance(value, (set, frozenset)):
+            return list(value)
+        elif isinstance(value, (list, tuple)):
+            return [self._convert_for_aggregation(item) for item in value]
+        elif isinstance(value, dict):
+            return {k: self._convert_for_aggregation(v) for k, v in value.items()}
+        else:
+            return value
+    
+    async def aggregate_results(
+        self, 
+        query_plan: Any, 
+        operation_results: Dict[str, Any],
+        user_question: str
+    ) -> Dict[str, Any]:
+        """
+        Aggregate results from multiple operations into a unified result.
         
-        coerced = {}
-        for field, value in record.items():
-            if field in type_mapping:
-                coerced[field] = self.coerce_value(value, type_mapping[field])
+        Args:
+            query_plan: The query plan that was executed
+            operation_results: Dictionary mapping operation IDs to results
+            user_question: Original user question for context
+            
+        Returns:
+            Aggregated result
+        """
+        logger.info("Aggregating results from multiple operations")
+        
+        try:
+            # Convert operation results to JSON-serializable format
+            processed_results = {}
+            for op_id, result in operation_results.items():
+                processed_results[op_id] = self._convert_for_aggregation(result)
+            
+            # Convert query plan to dict if it's not already
+            if hasattr(query_plan, 'to_dict'):
+                plan_dict = query_plan.to_dict()
             else:
-                coerced[field] = value
-        
-        return coerced
+                plan_dict = query_plan
+            
+            # Use LLM to aggregate results
+            prompt = self.llm_client.render_template(
+                "result_aggregator.tpl",
+                query_plan=json.dumps(plan_dict, indent=2),
+                operation_results=processed_results,
+                user_question=user_question
+            )
+            
+            # Call LLM for aggregation
+            response = await self.llm_client.client.chat.completions.create(
+                model=self.llm_client.model_name,
+                messages=[{"role": "user", "content": prompt}],
+                temperature=0.2
+            )
+            
+            # Parse the JSON response
+            content = response.choices[0].message.content
+            # Extract JSON string from content
+            if "```json" in content:
+                json_str = content.split("```json")[1].split("```")[0].strip()
+            else:
+                json_str = content.strip()
+                
+            aggregated_result = json.loads(json_str)
+            
+            logger.info("Successfully aggregated results")
+            
+            return aggregated_result
+        except Exception as e:
+            logger.error(f"Error aggregating results: {e}")
+            # Return a basic aggregation with error information
+            return {
+                "error": f"Failed to aggregate results: {str(e)}",
+                "partial_results": operation_results
+            }
     
-    def merge_results(self, results: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    def merge_results(self, results: List[Dict[str, Any]]) -> Dict[str, Any]:
         """
-        Simple merge of results from different databases.
+        Merge results from multiple sources without LLM involvement.
         
-        This just combines all results into a single list.
+        This is a simpler alternative to LLM-based aggregation.
         
         Args:
-            results: List of result dictionaries from different databases
+            results: List of result dictionaries from different sources
             
         Returns:
-            Combined list of results
+            Merged result dictionary
         """
+        # Count successful and failed operations
+        success_count = sum(1 for r in results if r.get("success", False))
+        failed_count = len(results) - success_count
+        
+        # Collect all data
         all_data = []
-        
         for result in results:
-            if not result.get("success", False):
-                continue
-            
-            source_id = result.get("source_id", "unknown")
-            data = result.get("data", [])
-            
-            # Add source_id to each record
-            for record in data:
-                if isinstance(record, dict):
-                    record["_source"] = source_id
-            
-            all_data.extend(data)
+            if result.get("success", False) and "data" in result:
+                data = result.get("data", [])
+                if isinstance(data, list):
+                    all_data.extend(data)
+                else:
+                    all_data.append(data)
         
-        return all_data
+        # Create merged result
+        merged = {
+            "success": success_count > 0,
+            "sources_queried": len(results),
+            "successful_sources": success_count,
+            "failed_sources": failed_count,
+            "total_rows": len(all_data),
+            "results": all_data
+        }
+        
+        # Add errors if any
+        errors = []
+        for result in results:
+            if not result.get("success", False) and "error" in result:
+                errors.append({
+                    "source_id": result.get("source_id", "unknown"),
+                    "error": result.get("error")
+                })
+        
+        if errors:
+            merged["errors"] = errors
+        
+        return merged
     
     def join_results(
         self, 
         results: List[Dict[str, Any]], 
-        join_fields: Dict[str, str],
+        join_fields: Optional[Dict[str, str]] = None,
         type_mappings: Optional[Dict[str, Dict[str, str]]] = None
-    ) -> List[Dict[str, Any]]:
+    ) -> Dict[str, Any]:
         """
-        Join results from different databases based on join fields.
+        Join results from multiple sources on specified fields.
         
         Args:
-            results: List of result dictionaries from different databases
-            join_fields: Mapping of source_id to join field
-            type_mappings: Optional mapping of field names to target types for each source
+            results: List of result dictionaries from different sources
+            join_fields: Mapping of source_id to field name to join on
+            type_mappings: Mapping of source_id to field type mappings
             
         Returns:
-            Joined list of results
+            Joined result dictionary
         """
-        if not results:
-            return []
-        
-        # First, coerce types if mappings provided
-        if type_mappings:
-            for result in results:
-                source_id = result.get("source_id", "unknown")
-                if source_id in type_mappings:
-                    mapping = type_mappings[source_id]
-                    if result.get("success", False) and "data" in result:
-                        result["data"] = [
-                            self.coerce_record(record, mapping)
-                            for record in result["data"]
-                        ]
-        
-        # Extract data from successful results
-        data_by_source = {}
-        for result in results:
-            if not result.get("success", False):
-                continue
-            
-            source_id = result.get("source_id", "unknown")
-            data = result.get("data", [])
-            
-            data_by_source[source_id] = data
-        
-        # If we don't have at least two sources with data, just merge
-        if len(data_by_source) < 2:
+        if not join_fields:
+            logger.warning("No join fields specified, falling back to merge")
             return self.merge_results(results)
         
-        # Prepare join index
-        join_indices = {}
-        for source_id, data in data_by_source.items():
-            if source_id not in join_fields:
-                logger.warning(f"No join field specified for source {source_id}")
-                continue
-            
-            join_field = join_fields[source_id]
-            join_index = {}
-            
-            for i, record in enumerate(data):
-                if not isinstance(record, dict):
-                    continue
-                
-                if join_field not in record:
-                    continue
-                
-                key = record[join_field]
-                if key in join_index:
-                    join_index[key].append(i)
+        # Process each source's data
+        source_data = {}
+        for result in results:
+            if result.get("success", False) and "data" in result:
+                source_id = result.get("source_id", "unknown")
+                data = result.get("data", [])
+                if isinstance(data, list):
+                    source_data[source_id] = data
                 else:
-                    join_index[key] = [i]
-            
-            join_indices[source_id] = join_index
+                    source_data[source_id] = [data]
         
-        # Choose a primary source (the one with the most data)
-        primary_source = max(data_by_source.keys(), key=lambda s: len(data_by_source[s]))
+        # If we don't have enough sources, fall back to merge
+        if len(source_data) < 2:
+            logger.warning("Not enough successful sources for join, falling back to merge")
+            return self.merge_results(results)
         
-        # Perform the join
-        joined_results = []
-        primary_data = data_by_source[primary_source]
-        primary_join_field = join_fields.get(primary_source)
+        # Perform join
+        joined_data = []
         
-        for primary_record in primary_data:
-            if not isinstance(primary_record, dict):
+        # Get the primary source (first one)
+        primary_source_id = list(source_data.keys())[0]
+        primary_data = source_data[primary_source_id]
+        primary_join_field = join_fields.get(primary_source_id)
+        
+        if not primary_join_field:
+            logger.warning(f"No join field for primary source {primary_source_id}")
+            return self.merge_results(results)
+        
+        # For each row in the primary source
+        for primary_row in primary_data:
+            # Skip if join field doesn't exist
+            if primary_join_field not in primary_row:
                 continue
+                
+            join_value = primary_row[primary_join_field]
             
-            if primary_join_field not in primary_record:
-                joined_record = primary_record.copy()
-                joined_record["_source"] = primary_source
-                joined_results.append(joined_record)
-                continue
+            # Create a new row with primary data
+            joined_row = {f"{primary_source_id}_{k}": v for k, v in primary_row.items()}
             
-            key = primary_record[primary_join_field]
-            joined_record = primary_record.copy()
-            joined_record["_source"] = primary_source
-            joined_record["_joined"] = True
-            
-            # Join with other sources
-            for source_id, join_index in join_indices.items():
-                if source_id == primary_source:
+            # Add data from other sources
+            for source_id, data in source_data.items():
+                if source_id == primary_source_id:
                     continue
-                
-                if key not in join_index:
-                    continue
-                
-                # Get matching records
-                matching_indices = join_index[key]
-                matching_data = data_by_source[source_id]
-                
-                # Get the first matching record
-                if matching_indices:
-                    matching_record = matching_data[matching_indices[0]]
                     
-                    # Add fields from matching record
-                    for field, value in matching_record.items():
-                        if field not in joined_record and field != join_fields.get(source_id):
-                            joined_record[f"{source_id}_{field}"] = value
+                join_field = join_fields.get(source_id)
+                if not join_field:
+                    continue
+                
+                # Find matching rows
+                matches = []
+                for row in data:
+                    if join_field in row:
+                        # Apply type coercion if needed
+                        row_value = row[join_field]
+                        if type_mappings and source_id in type_mappings:
+                            field_type = type_mappings[source_id].get(join_field)
+                            primary_type = (type_mappings.get(primary_source_id, {})
+                                           .get(primary_join_field))
+                            
+                            # Convert to common type if possible
+                            if field_type and primary_type:
+                                if field_type == "str" or primary_type == "str":
+                                    # Convert both to string
+                                    row_value = str(row_value)
+                                    join_value = str(join_value)
+                                elif field_type == "int" and primary_type == "int":
+                                    # Convert to int
+                                    try:
+                                        row_value = int(row_value)
+                                        join_value = int(join_value)
+                                    except:
+                                        pass
+                        
+                        # Compare values (with coercion for common cases)
+                        if isinstance(row_value, str) and not isinstance(join_value, str):
+                            if str(join_value) == row_value:
+                                matches.append(row)
+                        elif isinstance(row_value, (int, float)) and isinstance(join_value, (int, float)):
+                            if float(row_value) == float(join_value):
+                                matches.append(row)
+                        elif row_value == join_value:
+                            matches.append(row)
+                
+                # Add first match to joined row
+                if matches:
+                    for k, v in matches[0].items():
+                        joined_row[f"{source_id}_{k}"] = v
             
-            joined_results.append(joined_record)
+            # Add the joined row to results
+            joined_data.append(joined_row)
         
-        return joined_results
+        return {
+            "success": True,
+            "sources_joined": len(source_data),
+            "join_fields": join_fields,
+            "total_rows": len(joined_data),
+            "results": joined_data
+        }
     
-    def union_results(self, results: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-        """
-        Union results from different databases.
-        
-        This returns a single list with duplicate values removed.
-        
-        Args:
-            results: List of result dictionaries from different databases
-            
-        Returns:
-            Union of results
-        """
-        # First, merge all results
-        merged = self.merge_results(results)
-        
-        # Convert records to tuples for deduplication
-        seen = set()
-        unique_records = []
-        
-        for record in merged:
-            if not isinstance(record, dict):
-                unique_records.append(record)
-                continue
-            
-            # Remove _source field for deduplication
-            record_copy = record.copy()
-            source = record_copy.pop("_source", None)
-            
-            # Convert to tuple for hashing
-            try:
-                record_tuple = tuple(sorted(record_copy.items()))
-                if record_tuple not in seen:
-                    seen.add(record_tuple)
-                    unique_records.append(record)
-            except:
-                # If the record cannot be hashed, just include it
-                unique_records.append(record)
-        
-        return unique_records
-    
-    def aggregate_results(
+    def aggregate_results_legacy(
         self, 
         results: List[Dict[str, Any]], 
         operation: str = "merge",
@@ -282,49 +311,20 @@ class ResultAggregator:
         type_mappings: Optional[Dict[str, Dict[str, str]]] = None
     ) -> Dict[str, Any]:
         """
-        Aggregate results from different databases.
+        Legacy method for aggregating results.
+        
+        This method is kept for backward compatibility.
         
         Args:
-            results: List of result dictionaries from different databases
-            operation: Aggregation operation: "merge", "join", or "union"
-            join_fields: Mapping of source_id to join field (for join operation)
-            type_mappings: Optional mapping of field names to target types for each source
+            results: List of result dictionaries from different sources
+            operation: Aggregation operation (merge, join, union)
+            join_fields: Mapping of source_id to field name to join on
+            type_mappings: Mapping of source_id to field type mappings
             
         Returns:
-            Dictionary with aggregated results
+            Aggregated result dictionary
         """
-        # Default response structure
-        response = {
-            "success": True,
-            "sources_queried": [],
-            "sources_succeeded": [],
-            "sources_failed": [],
-            "warnings": [],
-            "results": []
-        }
-        
-        # Collect metadata
-        for result in results:
-            source_id = result.get("source_id", "unknown")
-            response["sources_queried"].append(source_id)
-            
-            if result.get("success", False):
-                response["sources_succeeded"].append(source_id)
-            else:
-                response["sources_failed"].append(source_id)
-                error = result.get("error", "Unknown error")
-                response["warnings"].append(f"Query failed on {source_id}: {error}")
-        
-        # Perform the specified operation
-        if operation == "join" and join_fields:
-            response["results"] = self.join_results(results, join_fields, type_mappings)
-        elif operation == "union":
-            response["results"] = self.union_results(results)
+        if operation == "join":
+            return self.join_results(results, join_fields, type_mappings)
         else:
-            # Default to merge
-            response["results"] = self.merge_results(results)
-        
-        # Set overall success
-        response["success"] = len(response["sources_succeeded"]) > 0
-        
-        return response 
+            return self.merge_results(results) 
