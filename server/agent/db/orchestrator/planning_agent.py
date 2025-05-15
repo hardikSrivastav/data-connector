@@ -259,6 +259,7 @@ class PlanningAgent:
             validation_result = json.loads(json_str)
             
             logger.info(f"Plan validation result: valid={validation_result.get('valid')}")
+            logger.info(f"Validation result content: {validation_result}")
             
             return validation_result
         except Exception as e:

@@ -47,6 +47,21 @@ class GenericOperation(Operation):
         """Get parameters for the database adapter"""
         return self.params
 
+    @property
+    def operation_id(self):
+        """Alias for id to match the implementation agent"""
+        return self.id
+    
+    @property
+    def operation_type(self):
+        """Return operation type from metadata"""
+        return self.metadata.get("operation_type", "unknown")
+    
+    @property
+    def parameters(self):
+        """Return params as parameters for the implementation agent"""
+        return self.params
+
 
 @register_operation("postgres")
 class SqlOperation(Operation):

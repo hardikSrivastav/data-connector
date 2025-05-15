@@ -33,6 +33,49 @@ class SchemaRegistryClient:
         """Initialize the client and ensure the registry is initialized"""
         init_registry()
     
+    def get_source_by_id(self, source_id: str) -> Optional[Dict[str, Any]]:
+        """
+        Get a specific data source by ID
+        
+        Args:
+            source_id: ID of the data source to retrieve
+            
+        Returns:
+            Data source information including type and connection info, or None if not found
+        """
+        source = get_data_source(source_id)
+        if not source:
+            return None
+            
+        # Extract the connection info from the config
+        import os
+        import yaml
+        from pathlib import Path
+        
+        # Get config path from environment or use default
+        config_path = os.environ.get(
+            "DATA_CONNECTOR_CONFIG",
+            str(Path.home() / ".data-connector" / "config.yaml")
+        )
+        
+        try:
+            with open(config_path, 'r') as f:
+                config = yaml.safe_load(f)
+                
+            # Get connection info from config
+            source_type = source.get("type", "")
+            connection_info = config.get(source_type, {})
+            
+            # Add the connection info to the source
+            source["connection_info"] = connection_info
+            
+            return source
+            
+        except Exception as e:
+            logger.error(f"Error getting connection info for source {source_id}: {e}")
+            # Return basic source info without connection details
+            return source
+    
     def get_all_sources(self) -> List[Dict[str, Any]]:
         """Get all data sources in the registry"""
         return list_data_sources()

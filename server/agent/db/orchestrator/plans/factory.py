@@ -165,7 +165,7 @@ def create_plan_from_dict(plan_dict: Dict[str, Any]) -> QueryPlan:
         
         # Get database type from source_id using registry client
         try:
-            source_info = registry_client.get_source_by_id(source_id)
+            source_info = registry_client.get_data_source(source_id)
             db_type = source_info.get("type")
         except Exception as e:
             logger.warning(f"Error getting source info for {source_id}: {e}")

@@ -51,6 +51,22 @@ class DBAdapter(ABC):
         """
         pass
     
+    async def execute_query(self, query: Any) -> List[Dict]:
+        """
+        Execute the database query and return results (alias for execute).
+        
+        This method provides compatibility with the implementation agent.
+        By default, it delegates to execute(), but adapters can override
+        this if they need different behavior.
+        
+        Args:
+            query: Database-specific query (as returned by llm_to_query)
+            
+        Returns:
+            List of dictionaries representing the query results
+        """
+        return await self.execute(query)
+    
     @abstractmethod
     async def introspect_schema(self) -> List[Dict[str, str]]:
         """

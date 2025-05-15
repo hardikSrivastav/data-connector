@@ -9,9 +9,17 @@ from abc import ABC, abstractmethod
 from typing import Dict, List, Any, Optional, Set, Union
 from datetime import datetime
 import logging
+from enum import Enum, auto
 
 # Configure logging
 logger = logging.getLogger(__name__)
+
+class OperationStatus(str, Enum):
+    """Status of a database operation"""
+    PENDING = "PENDING"
+    RUNNING = "RUNNING"
+    COMPLETED = "COMPLETED"
+    FAILED = "FAILED"
 
 class Operation(ABC):
     """
@@ -44,7 +52,7 @@ class Operation(ABC):
         self.result = None
         self.error = None
         self.execution_time = 0
-        self.status = "pending"  # pending, running, completed, failed
+        self.status = OperationStatus.PENDING
     
     @abstractmethod
     def get_adapter_params(self) -> Dict[str, Any]:
@@ -123,6 +131,16 @@ class QueryPlan:
             "version": "1.0"
         }
         self.id = str(uuid.uuid4())
+    
+    @property
+    def plan_id(self) -> str:
+        """Alias for id to maintain compatibility with implementation agent"""
+        return self.id
+        
+    @property
+    def output_operation_id(self) -> Optional[str]:
+        """ID of the operation to use as final output"""
+        return self.metadata.get("output_operation_id")
     
     def add_operation(self, operation: Operation) -> None:
         """

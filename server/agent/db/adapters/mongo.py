@@ -170,6 +170,22 @@ class MongoAdapter(DBAdapter):
         except Exception as e:
             logger.error(f"Error executing MongoDB query: {e}")
             raise
+            
+    async def execute_query(self, query: Dict) -> List[Dict]:
+        """
+        Execute a MongoDB query (alias for execute).
+        
+        This method exists for compatibility with the implementation agent.
+        
+        Args:
+            query: Dict containing:
+                - pipeline: MongoDB aggregation pipeline
+                - collection: Target collection name
+                
+        Returns:
+            List of dictionaries with query results
+        """
+        return await self.execute(query)
     
     async def introspect_schema(self) -> List[Dict[str, str]]:
         """

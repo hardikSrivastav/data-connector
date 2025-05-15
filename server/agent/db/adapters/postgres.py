@@ -79,6 +79,20 @@ class PostgresAdapter(DBAdapter):
         """
         return await execute_query(query)
     
+    async def execute_query(self, query: str) -> List[Dict]:
+        """
+        Execute a SQL query (alias for execute).
+        
+        This method exists for compatibility with the implementation agent.
+        
+        Args:
+            query: SQL query string
+            
+        Returns:
+            List of dictionaries with query results
+        """
+        return await self.execute(query)
+    
     async def introspect_schema(self) -> List[Dict[str, str]]:
         """
         Introspect the database schema using the existing functionality.
