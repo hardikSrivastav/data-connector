@@ -31,6 +31,7 @@ services:
     volumes:
       - ./server:/app
       - ~/.data-connector:/root/.data-connector
+      - schema-registry-data:/app/agent/db/registry/data
     ports:
       - "8500:8500"
     environment:
@@ -53,6 +54,7 @@ services:
       - MCP_QDRANT_HOST=slack-qdrant
       - MCP_QDRANT_PORT=7750
       - MCP_QDRANT_GRPC_PORT=7751
+      - SCHEMA_REGISTRY_PATH=/app/agent/db/registry/data/schema_registry.db
     container_name: slack-mcp-server
     restart: unless-stopped
     networks:
@@ -156,4 +158,5 @@ volumes:
   postgres-mcp-data:
   mongodb-data:
   qdrant-data:
-  slack-qdrant-data: 
+  slack-qdrant-data:
+  schema-registry-data: 

@@ -313,6 +313,24 @@ class QdrantAdapter(DBAdapter):
         except Exception as e:
             logger.error(f"Error executing Qdrant query: {e}")
             raise
+            
+    async def execute_query(self, query: Dict) -> List[Dict]:
+        """
+        Execute a Qdrant search query (alias for execute).
+        
+        This method exists for compatibility with the implementation agent.
+        
+        Args:
+            query: Dict containing:
+                - vector: Query vector
+                - top_k: Number of results to return
+                - filter: Optional query filter
+                - collection: Target collection name
+                
+        Returns:
+            List of dictionaries with search results
+        """
+        return await self.execute(query)
     
     def _parse_filter(self, filter_json: Dict) -> Filter:
         """

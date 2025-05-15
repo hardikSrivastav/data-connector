@@ -271,6 +271,34 @@ This document explores key challenges and solutions for enabling an LLM to dynam
 
    * Warm up hot shards, cache recent query embeddings and nearest neighbors in a tiny in‑memory LRU cache.
 
+### 12. Two-Phase Schema Awareness
+
+**Challenge:** Planning requires fast schema access while execution needs guaranteed correctness.
+
+**Solution Approach:**
+
+1. **Separation of Concerns**
+   * Planning phase: Use FAISS indices for fast semantic schema search
+   * Execution phase: Validate operations against Schema Registry
+   * This creates a "lookahead planning, verified execution" pipeline
+
+2. **Schema Drift Detection**
+   * Compare FAISS search results with Registry validation
+   * When discrepancies found, trigger FAISS reindexing
+   * Log warnings for operations planned with outdated schema
+
+3. **Implementation Pattern**
+   ```python
+   # Planning phase
+   schema_info = await schema_searcher.search(query)  # Uses FAISS
+   plan = await llm.generate_plan(query, schema_info)
+   
+   # Execution phase
+   validation = plan.validate(registry_client)  # Uses Registry
+   if validation["valid"]:
+       result = await orchestrator.execute_plan(plan)
+   ```
+
 ---
 
 ## Next Steps

@@ -9,7 +9,8 @@ from decimal import Decimal
 from ..db.execute import create_connection_pool
 from ..meta.ingest import SchemaSearcher
 from ..config.settings import Settings
-from ..db.orchestrator import Orchestrator
+# Use lazy import for Orchestrator
+# from ..db.orchestrator import Orchestrator
 import redis
 from redis.asyncio import Redis
 import pickle
@@ -83,6 +84,9 @@ class DataTools:
         
         # Initialize the orchestrator with the appropriate connection
         try:
+            # Lazy import to avoid circular dependency
+            from ..db.orchestrator import Orchestrator
+            
             conn_uri = self.settings.connection_uri
             logger.info(f"Initializing orchestrator for {self.db_type} with URI: {conn_uri.replace(self.settings.DB_PASS, '***') if self.settings.DB_PASS else conn_uri}")
             self.orchestrator = Orchestrator(conn_uri, db_type=self.db_type)
