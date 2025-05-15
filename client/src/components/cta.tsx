@@ -5,21 +5,22 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { useState } from "react";
 import { toast } from "sonner";
+import { useRouter } from "next/navigation";
 
 export function Cta() {
   const [email, setEmail] = useState("");
   const [loading, setLoading] = useState(false);
+  const router = useRouter();
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
     
-    // Simulate API call
+    // Redirect to waitlist page with email parameter
+    toast.success("Redirecting to waitlist registration...");
     setTimeout(() => {
-      toast.success("Thank you for joining our waitlist!");
-      setEmail("");
-      setLoading(false);
-    }, 1500);
+      router.push(`/waitlist?email=${encodeURIComponent(email)}`);
+    }, 1000);
   };
 
   return (
@@ -56,7 +57,7 @@ export function Cta() {
               size="massive"
               className="text-xl transition-all duration-300 bg-zinc-900 text-white hover:bg-[#7b35b8] font-baskerville"
             >
-              {loading ? "Submitting..." : "Join Waitlist"}
+              {loading ? "Redirecting..." : "Join Waitlist"}
             </Button>
           </form>
           
