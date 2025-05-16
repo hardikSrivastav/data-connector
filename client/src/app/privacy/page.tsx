@@ -89,13 +89,13 @@ export default function PrivacyPolicy() {
 
             <h2 className="text-2xl font-bold mb-4 mt-10">Contact Us</h2>
             <p className="mb-6 text-muted-foreground leading-relaxed">
-              If you have any questions about this privacy policy or our privacy practices, please contact us at:
+              If you have any questions about this privacy policy or our privacy practices, please contact us:
             </p>
-            <p className="text-muted-foreground leading-relaxed">
-              Email: privacy@ceneca.com<br />
-              Phone: +1 (555) 123-4567<br />
-              Address: 123 Tech Street, San Francisco, CA 94105
-            </p>
+            <div className="flex justify-center mt-8">
+              <a href="/contact" className="inline-block px-8 py-3 text-base text-white bg-zinc-900 hover:bg-[#7b35b8] rounded-md transition-all duration-300 font-baskerville">
+                Contact Us
+              </a>
+            </div>
           </div>
         </motion.div>
       </div>

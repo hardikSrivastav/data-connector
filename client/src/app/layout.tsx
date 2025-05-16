@@ -12,7 +12,7 @@ export const metadata: Metadata = {
   description: siteConfig.description,
   icons: {
     icon: '/ceneca-light.png',
-  },
+  }
 };
 
 export default function RootLayout({

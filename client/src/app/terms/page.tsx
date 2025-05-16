@@ -101,13 +101,13 @@ export default function TermsOfService() {
 
             <h2 className="text-2xl font-bold mb-4 mt-10">8. Contact Us</h2>
             <p className="mb-6 text-muted-foreground leading-relaxed">
-              In order to resolve a complaint regarding the services or to receive further information regarding use of the services, please contact us at:
+              In order to resolve a complaint regarding the services or to receive further information regarding use of the services, please contact us:
             </p>
-            <p className="text-muted-foreground leading-relaxed">
-              Email: legal@ceneca.com<br />
-              Phone: +1 (555) 123-4567<br />
-              Address: 123 Tech Street, San Francisco, CA 94105
-            </p>
+            <div className="flex justify-center mt-8">
+              <a href="/contact" className="inline-block px-8 py-3 text-base text-white bg-zinc-900 hover:bg-[#7b35b8] rounded-md transition-all duration-300 font-baskerville">
+                Contact Us
+              </a>
+            </div>
           </div>
         </motion.div>
       </div>

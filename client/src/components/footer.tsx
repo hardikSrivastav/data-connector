@@ -71,14 +71,8 @@ export function Footer() {
         
         <div className="mt-10 pt-5 border-t border-border/40 flex flex-col items-center space-y-6">
           <div className="flex space-x-8 tracking-wide">
-            <Link href={siteConfig.links.twitter} className="text-muted-foreground hover:text-primary font-baskerville uppercase text-sm">
-              Twitter
-            </Link>
             <Link href={siteConfig.links.github} className="text-muted-foreground hover:text-primary font-baskerville uppercase text-sm">
               GitHub
-            </Link>
-            <Link href={siteConfig.links.linkedin} className="text-muted-foreground hover:text-primary font-baskerville uppercase text-sm">
-              LinkedIn
             </Link>
           </div>
           
