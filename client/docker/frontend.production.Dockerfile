@@ -11,35 +11,26 @@ RUN npm ci
 # Copy all project files
 COPY . .
 
-# Create a comprehensive next.config.js that forcefully disables all linting and type checking
-RUN echo '// Generated from next.config.ts\nmodule.exports = {\n  eslint: {\n    ignoreDuringBuilds: true,\n    dirs: [],\n  },\n  typescript: {\n    ignoreBuildErrors: true,\n  },\n  webpack: (config) => {\n    // Ignore all ESLint rules\n    config.module.rules.forEach((rule) => {\n      if (rule.use && rule.use.loader === "next-swc-loader") {\n        rule.options = rule.options || {};\n        rule.options.eslint = { enabled: false };\n      }\n    });\n    return config;\n  },\n};' > next.config.js
+# Build the application
+RUN npm run build
 
-# Verify next.config.js exists with proper content
-RUN cat next.config.js
-
-# Create .eslintrc.json to disable all rules
-RUN echo '{\n  "extends": "next",\n  "rules": {}\n}' > .eslintrc.json
-
-# Skip type checking completely during build with environment variables
-ENV NEXT_TELEMETRY_DISABLED=1
-ENV NEXT_SKIP_ESLINT=1
-ENV NEXT_SKIP_TYPE_CHECK=1
-ENV NODE_ENV=production
-
-# Build with verbose output but skip all type and lint checking
-RUN echo "Starting build..." && \
-    SKIP_LINTING=true DISABLE_ESLINT_PLUGIN=true npm run build && \
-    echo "Build completed successfully"
-
-# Debug: Verify .next directory exists and show contents
-RUN ls -la .next || echo "ERROR: .next directory was not created!"
-
-# Single-stage build - skip the runner stage to avoid copy issues
+# Production image
+FROM node:18-alpine AS runner
 WORKDIR /app
+
 ENV NODE_ENV=production
+
+# Copy necessary files from builder stage
+COPY --from=builder /app/next.config.ts ./
+COPY --from=builder /app/public ./public
+COPY --from=builder /app/package.json ./package.json
+
+# Copy the build output
+COPY --from=builder /app/.next ./.next
+COPY --from=builder /app/node_modules ./node_modules
 
 # Expose the port
 EXPOSE 3000
 
 # Run the production server
-CMD ["npm", "start"]
+CMD ["npm", "start"] 
