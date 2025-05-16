@@ -127,12 +127,12 @@ export default function AboutPage() {
               {
                 name: "Hardik Srivastava",
                 role: "Founder & CEO",
-                bio: "Former data scientist with over 10 years of experience in machine learning and natural language processing."
+                bio: "Built Ceneca after one too many late nights building SQL Dashboards."
               },
               {
                 name: "You?",
-                role: "Join Our Team",
-                bio: "We're looking for passionate individuals to join our mission of democratizing data access. Could this be you?",
+                role: "Come Hang With Us",
+                bio: "We're building cool stuff with data and looking for laid-back, talented folks to join the crew. Wanna be part of it?",
                 isTypeform: true
               }
             ].map((member, index) => (
@@ -145,9 +145,22 @@ export default function AboutPage() {
                 viewport={{ once: true, amount: 0.3 }}
               >
                 <div className="h-64 bg-muted/50 flex items-center justify-center">
-                  <div className="w-32 h-32 rounded-full bg-gradient-to-r from-[#9d4edd] to-[#ff006e] flex items-center justify-center text-white text-5xl font-bold">
-                    {member.name.split(' ').map(n => n[0]).join('')}
-                  </div>
+                  {index === 0 ? (
+                    <div className="relative w-32 h-32 rounded-full overflow-hidden">
+                      <Image 
+                        src="/hardik.JPG" 
+                        alt="Hardik Srivastava" 
+                        fill
+                        sizes="128px"
+                        style={{ objectFit: 'cover' }}
+                        className="rounded-full"
+                      />
+                    </div>
+                  ) : (
+                    <div className="w-32 h-32 rounded-full bg-gradient-to-r from-[#9d4edd] to-[#ff006e] flex items-center justify-center text-white text-5xl font-bold">
+                      {member.name.split(' ').map(n => n[0]).join('')}
+                    </div>
+                  )}
                 </div>
                 <div className="p-6">
                   <h3 className="text-xl font-bold mb-1 font-baskerville">{member.name}</h3>
