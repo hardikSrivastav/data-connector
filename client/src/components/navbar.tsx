@@ -56,6 +56,7 @@ export function Navbar() {
           >
             <div className="w-1/4">
               <Link href="/" className="flex items-center">
+              {!isMobile && (
                 <Image 
                   src="/ceneca-light.png"
                   alt={siteConfig.name}
@@ -63,12 +64,12 @@ export function Navbar() {
                   height={80}
                   className="mr-2"
                 />
-                <span className="text-3xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-[#9d4edd] to-[#ff006e] font-baskerville">
-                  {siteConfig.name}
-                </span>
+                )}
+                  <span className="text-3xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-[#9d4edd] to-[#ff006e] font-baskerville">
+                    {siteConfig.name}
+                  </span>
               </Link>
             </div>
-            
             <div className="w-1/2 flex justify-center">
               {/* Desktop Navigation - conditionally render based on screen size */}
               {!isMobile && (
