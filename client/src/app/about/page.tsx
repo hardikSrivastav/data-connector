@@ -132,7 +132,7 @@ export default function AboutPage() {
               {
                 name: "You?",
                 role: "Come Hang With Us",
-                bio: "We're building cool stuff with data and looking for laid-back, talented folks to join the crew. Wanna be part of it?",
+                bio: "We're building cool stuff with data and looking for chill talent to join the crew. Wanna be part of it?",
                 isTypeform: true
               }
             ].map((member, index) => (
@@ -157,8 +157,14 @@ export default function AboutPage() {
                       />
                     </div>
                   ) : (
-                    <div className="w-32 h-32 rounded-full bg-gradient-to-r from-[#9d4edd] to-[#ff006e] flex items-center justify-center text-white text-5xl font-bold">
-                      {member.name.split(' ').map(n => n[0]).join('')}
+                    <div className="relative w-40 h-40">
+                      <Image 
+                        src="/chillguy.png" 
+                        alt="Join Our Team" 
+                        fill
+                        sizes="160px"
+                        style={{ objectFit: 'contain' }}
+                      />
                     </div>
                   )}
                 </div>
@@ -166,6 +172,16 @@ export default function AboutPage() {
                   <h3 className="text-xl font-bold mb-1 font-baskerville">{member.name}</h3>
                   <p className="text-[#9d4edd] mb-4 font-baskerville">{member.role}</p>
                   <p className="text-muted-foreground font-baskerville">{member.bio}</p>
+                  {index === 0 && (
+                    <a 
+                      href="https://www.linkedin.com/in/hardik-srivastava/" 
+                      target="_blank" 
+                      rel="noopener noreferrer"
+                      className="inline-block mt-4 px-6 py-2 text-sm font-medium rounded-md text-zinc-900 border border-zinc-900 hover:bg-[#7b35b8] hover:text-white transition-all duration-300 font-baskerville"
+                    >
+                      Connect on LinkedIn
+                    </a>
+                  )}
                   {member.isTypeform && (
                     <>
                       <button 
