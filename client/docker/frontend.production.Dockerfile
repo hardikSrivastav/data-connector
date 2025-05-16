@@ -11,6 +11,9 @@ RUN npm ci
 # Copy all project files
 COPY . .
 
+# Create a next.config.js file if it doesn't exist
+RUN if [ ! -f next.config.js ]; then echo 'module.exports = { output: "standalone" };' > next.config.js; fi
+
 # Build the application
 RUN npm run build
 
