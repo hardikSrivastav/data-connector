@@ -1746,6 +1746,90 @@ class DummyLLMClient(LLMClient):
             "state": {"status": "completed"}
         }
 
+class FallbackLLMClient(LLMClient):
+    """
+    Client that implements automatic fallbacks between different LLM providers.
+    If the primary client fails, it will try alternative clients in sequence.
+    """
+    
+    def __init__(self, clients: List[LLMClient] = None):
+        """
+        Initialize with a list of LLM clients to try in order
+        
+        Args:
+            clients: List of LLM clients in priority order (first is primary)
+        """
+        super().__init__()
+        self.clients = clients or []
+        
+        # Set model name to the primary client's model name, if available
+        if self.clients and hasattr(self.clients[0], 'model_name'):
+            self.model_name = self.clients[0].model_name
+        else:
+            self.model_name = "fallback-model"
+            
+        # For client access, forward to primary client
+        if self.clients:
+            self.client = self.clients[0].client
+        
+        logger.info(f"Initialized FallbackLLMClient with {len(self.clients)} clients")
+        for i, client in enumerate(self.clients):
+            logger.info(f"  Client {i+1}: {client.__class__.__name__} ({getattr(client, 'model_name', 'unknown')})")
+    
+    async def _try_clients(self, method_name: str, *args, **kwargs) -> Any:
+        """
+        Try calling a method on each client in order until one succeeds
+        
+        Args:
+            method_name: The name of the method to call
+            *args: Arguments to pass to the method
+            **kwargs: Keyword arguments to pass to the method
+            
+        Returns:
+            Result from the first successful client
+            
+        Raises:
+            Exception: If all clients fail
+        """
+        errors = []
+        
+        for i, client in enumerate(self.clients):
+            try:
+                method = getattr(client, method_name)
+                result = await method(*args, **kwargs)
+                
+                # If this is not the primary client, log that we used a fallback
+                if i > 0:
+                    logger.info(f"Successfully used fallback client {i+1} ({client.__class__.__name__}) for {method_name}")
+                
+                return result
+            except Exception as e:
+                # Log the error and try the next client
+                error_msg = str(e)
+                # Only log the first 100 chars of error to avoid massive logs
+                logger.warning(f"Client {i+1} ({client.__class__.__name__}) failed for {method_name}: {error_msg[:100]}...")
+                errors.append(f"Client {i+1} ({client.__class__.__name__}): {error_msg}")
+                continue
+        
+        # If we get here, all clients failed
+        raise Exception(f"All LLM clients failed for {method_name}: {'; '.join(errors)}")
+    
+    async def generate_sql(self, prompt: str) -> str:
+        """Generate SQL from a natural language prompt"""
+        return await self._try_clients("generate_sql", prompt)
+    
+    async def generate_mongodb_query(self, prompt: str) -> str:
+        """Generate MongoDB query from a natural language prompt"""
+        return await self._try_clients("generate_mongodb_query", prompt)
+    
+    async def analyze_results(self, rows: List[Dict[str, Any]], is_vector_search: bool = False) -> str:
+        """Analyze query results"""
+        return await self._try_clients("analyze_results", rows, is_vector_search)
+    
+    async def orchestrate_analysis(self, question: str, db_type: str = "postgres") -> Dict[str, Any]:
+        """Orchestrate a multi-step analysis"""
+        return await self._try_clients("orchestrate_analysis", question, db_type)
+
 def get_llm_client() -> LLMClient:
     """
     Factory function to get the appropriate LLM client based on configuration
@@ -1755,20 +1839,41 @@ def get_llm_client() -> LLMClient:
     """
     settings = Settings()
     
+    # Create a list to hold available clients
+    clients = []
+    
     # Check if we want to use the dummy client
     if os.environ.get("USE_DUMMY_LLM") == "true":
         response_mode = os.environ.get("DUMMY_RESPONSE_MODE", "success")
         logger.info(f"Using dummy LLM client with mode: {response_mode}")
         return DummyLLMClient(response_mode=response_mode)
-    # Check for Anthropic configuration
-    elif os.environ.get("ANTHROPIC_API_KEY"):
-        logger.info("Using Anthropic client")
-        return AnthropicClient()
-    elif settings.LLM_API_URL and settings.LLM_API_KEY:
-        logger.info("Using OpenAI client")
-        return OpenAIClient()
-    elif settings.MODEL_PATH and settings.MODEL_TYPE:
-        logger.info("Using local LLM client")
-        return LocalLLMClient()
+    
+    # Try to initialize Anthropic client if API key is available
+    if os.environ.get("ANTHROPIC_API_KEY"):
+        try:
+            logger.info("Initializing Anthropic client")
+            clients.append(AnthropicClient())
+        except Exception as e:
+            logger.warning(f"Failed to initialize Anthropic client: {str(e)}")
+    
+    # Try to initialize OpenAI client if API key and URL are available
+    if settings.LLM_API_URL and settings.LLM_API_KEY:
+        try:
+            logger.info("Initializing OpenAI client")
+            clients.append(OpenAIClient())
+        except Exception as e:
+            logger.warning(f"Failed to initialize OpenAI client: {str(e)}")
+    
+    # Try to initialize local model if path and type are available
+    if settings.MODEL_PATH and settings.MODEL_TYPE:
+        try:
+            logger.info("Initializing local LLM client")
+            clients.append(LocalLLMClient())
+        except Exception as e:
+            logger.warning(f"Failed to initialize local LLM client: {str(e)}")
+    
+    # Create and return fallback client if we have at least one client
+    if clients:
+        return FallbackLLMClient(clients)
     else:
-        raise ValueError("Either OpenAI API, Anthropic API or local model settings must be configured")
+        raise ValueError("No valid LLM clients could be initialized. Check your configuration.")

@@ -10,6 +10,7 @@ This module implements the planning agent that:
 import logging
 import json
 import asyncio
+import re
 from typing import Dict, List, Any, Optional, Set, Tuple
 import uuid
 
@@ -19,6 +20,7 @@ from ..classifier import classifier as db_classifier
 from ..registry.integrations import registry_client
 from .plans.factory import create_plan_from_dict, create_empty_plan
 from .plans.base import QueryPlan, Operation
+from ...tools.tools import DataTools
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -46,7 +48,14 @@ class PlanningAgent:
         self.config = config or {}
         self.llm_client = get_llm_client()
         self.schema_searcher = SchemaSearcher()
+        
+        # Import the rule-based classifier for fallback
+        from ...db.classifier import classifier as db_classifier
         self.classifier = db_classifier
+        
+        # Import and initialize DataTools
+        self.data_tools = None  # Will be initialized when needed with the correct db_type
+        
         self.registry_client = registry_client
         
         # Maximum tokens for schema context
@@ -54,6 +63,82 @@ class PlanningAgent:
         
         # Number of schema items to retrieve per database type
         self.schema_items_per_db = self.config.get("schema_items_per_db", 5)
+        
+        # Cache for schema metadata to avoid duplicate fetching
+        self.cached_schema_metadata = None
+        
+        # Track the current session ID
+        self.session_id = str(uuid.uuid4())
+    
+    async def _call_llm(self, prompt: str, temperature: float = 0.2) -> str:
+        """
+        Call the LLM with the appropriate client method based on client type
+        
+        Args:
+            prompt: The prompt to send to the LLM
+            temperature: Temperature parameter for the LLM
+            
+        Returns:
+            Content string from the LLM response
+        """
+        # Determine if we're using OpenAI or Anthropic
+        client_class_name = self.llm_client.__class__.__name__
+        
+        try:
+            if client_class_name == "OpenAIClient":
+                # Use OpenAI's structure
+                response = await self.llm_client.client.chat.completions.create(
+                    model=self.llm_client.model_name,
+                    messages=[{"role": "user", "content": prompt}],
+                    temperature=temperature
+                )
+                content = response.choices[0].message.content
+                
+            elif client_class_name == "AnthropicClient":
+                # Use Anthropic's structure
+                response = await self.llm_client.client.messages.create(
+                    model=self.llm_client.model_name,
+                    messages=[{"role": "user", "content": prompt}],
+                    temperature=temperature,
+                    max_tokens=4000
+                )
+                
+                # Extract content from Anthropic response
+                if hasattr(response, 'content') and len(response.content) > 0:
+                    if hasattr(response.content[0], 'text'):
+                        content = response.content[0].text
+                    else:
+                        content = response.content[0]
+                else:
+                    content = ""
+                    
+            elif client_class_name == "DummyLLMClient":
+                # Handle dummy client
+                response = await self.llm_client.client.chat_completions_create(
+                    model=self.llm_client.model_name,
+                    messages=[{"role": "user", "content": prompt}],
+                    temperature=temperature
+                )
+                content = response.choices[0].message.content
+                
+            else:
+                # Use a generic approach for other client types
+                logger.warning(f"Unknown LLM client type: {client_class_name}. Using generic call.")
+                content = await self.llm_client.generate_sql(prompt)
+                
+            # Extract JSON if wrapped in ```json blocks
+            if "```json" in content:
+                json_str = content.split("```json")[1].split("```")[0].strip()
+            elif "```" in content:
+                json_str = content.split("```")[1].strip()
+            else:
+                json_str = content.strip()
+                
+            return json_str
+            
+        except Exception as e:
+            logger.error(f"Error calling LLM with {client_class_name}: {e}")
+            raise
     
     async def _classify_databases(self, question: str) -> List[str]:
         """
@@ -73,19 +158,7 @@ class PlanningAgent:
             )
             
             # Call LLM to classify database types
-            response = await self.llm_client.client.chat.completions.create(
-                model=self.llm_client.model_name,
-                messages=[{"role": "user", "content": prompt}],
-                temperature=0.2
-            )
-            
-            # Parse the JSON response
-            content = response.choices[0].message.content
-            # Extract JSON string from content (might be wrapped in ```json blocks)
-            if "```json" in content:
-                json_str = content.split("```json")[1].split("```")[0].strip()
-            else:
-                json_str = content.strip()
+            json_str = await self._call_llm(prompt)
                 
             result = json.loads(json_str)
             
@@ -96,18 +169,74 @@ class PlanningAgent:
             rationale = result.get("rationale", {})
             logger.info(f"Database classification rationale: {rationale}")
             
-            return selected_dbs
+            # Clear cached schema metadata since we're not using the fallback
+            self.cached_schema_metadata = None
+            
+            # If LLM returned valid results, use them
+            if selected_dbs:
+                logger.info(f"LLM classified databases: {selected_dbs}")
+                return selected_dbs
+                
+            # If LLM returned empty results, fall back to rule-based classifier
+            logger.info("LLM classification returned empty results, falling back to rule-based classifier")
+            db_types, schema_metadata = await self._fallback_classification(question)
+            # Cache the schema metadata for later use
+            self.cached_schema_metadata = schema_metadata
+            return db_types
+            
         except Exception as e:
-            logger.error(f"Error in database classification: {e}")
-            # Return empty list on error
-            return []
+            logger.error(f"Error in LLM database classification: {e}")
+            # Fall back to rule-based classifier
+            logger.info("Error in LLM classification, falling back to rule-based classifier")
+            db_types, schema_metadata = await self._fallback_classification(question)
+            # Cache the schema metadata for later use
+            self.cached_schema_metadata = schema_metadata
+            return db_types
     
-    async def _get_schema_info(self, db_types: List[str]) -> List[Dict[str, Any]]:
+    async def _fallback_classification(self, question: str) -> Tuple[List[str], Optional[Dict[str, Any]]]:
+        """
+        Fallback to rule-based classification using DatabaseClassifier
+        when LLM-based classification fails.
+        
+        Args:
+            question: User's natural language question
+            
+        Returns:
+            Tuple of (database_types, schema_metadata)
+        """
+        try:
+            # Use the rule-based classifier from classifier.py
+            result = await self.classifier.classify(question)
+            
+            # Get the source IDs from the result
+            source_ids = result.get("sources", [])
+            
+            # Get the database types for these sources
+            db_types = set()
+            for source_id in source_ids:
+                source_info = self.registry_client.get_source_by_id(source_id)
+                if source_info and "type" in source_info:
+                    db_types.add(source_info["type"])
+            
+            logger.info(f"Rule-based classifier selected databases: {list(db_types)}")
+            logger.info(f"Rule-based reasoning: {result.get('reasoning', 'No reasoning provided')}")
+            
+            # Get the schema metadata for reuse
+            schema_metadata = result.get("schema_metadata")
+            
+            return list(db_types), schema_metadata
+        except Exception as e:
+            logger.error(f"Error in rule-based classification: {e}")
+            # Return empty list if both classification methods fail
+            return [], None
+    
+    async def _get_schema_info(self, db_types: List[str], question: str = "") -> List[Dict[str, Any]]:
         """
         Retrieve schema information from FAISS indices for the specified database types.
         
         Args:
             db_types: List of database types to retrieve schema for
+            question: User's question to use for relevant schema search
             
         Returns:
             List of schema metadata objects
@@ -117,15 +246,73 @@ class PlanningAgent:
         # For each database type, retrieve schema information
         for db_type in db_types:
             try:
-                # Search for relevant schema in FAISS index
+                # Search for relevant schema in FAISS index, using the question for better relevance
+                # If question is empty, fall back to a generic search term
+                search_query = question if question else "database schema"
+                
                 schema_results = await self.schema_searcher.search(
-                    query="",  # Empty query to get general schema information
+                    query=search_query,
                     top_k=self.schema_items_per_db,
                     db_type=db_type
                 )
                 
                 # Add to combined results
                 all_schema_info.extend(schema_results)
+                
+                # Log detailed schema info for debugging
+                logger.info(f"Retrieved {len(schema_results)} schema items for {db_type}:")
+                for i, schema_item in enumerate(schema_results):
+                    # Extract item type and name - check various possible metadata fields
+                    item_type = "unknown"
+                    item_name = "unknown"
+                    
+                    # Check content for metadata extraction if available
+                    if 'content' in schema_item:
+                        content = schema_item.get('content', '')
+                        if content and isinstance(content, str):
+                            # Try to extract metadata from content
+                            if "TABLE:" in content:
+                                item_type = "table"
+                                # Extract table name from "TABLE: table_name"
+                                table_match = re.search(r'TABLE:\s*(\w+)', content)
+                                if table_match:
+                                    item_name = table_match.group(1)
+                            elif "COLLECTION:" in content:
+                                item_type = "collection"
+                                # Extract collection name from "COLLECTION: collection_name"
+                                coll_match = re.search(r'COLLECTION:\s*(\w+)', content)
+                                if coll_match:
+                                    item_name = coll_match.group(1)
+                    
+                    # Check other fields if we couldn't extract from content
+                    if item_type == "unknown" or item_name == "unknown":
+                        if 'table_name' in schema_item:
+                            item_name = schema_item.get('table_name')
+                            item_type = "table"
+                        elif 'name' in schema_item:
+                            item_name = schema_item.get('name')
+                        
+                        if 'type' in schema_item:
+                            item_type = schema_item.get('type')
+                    
+                    logger.info(f"  Schema {i+1}: {item_type} '{item_name}'")
+                    
+                    # Log columns if available
+                    if 'columns' in schema_item:
+                        columns = schema_item.get('columns', [])
+                        if isinstance(columns, list) and columns:
+                            col_names = [col.get('name', str(col)) if isinstance(col, dict) else str(col) for col in columns[:5]]
+                            logger.info(f"    Columns: {', '.join(col_names)}...")
+                        elif isinstance(columns, dict):
+                            col_names = list(columns.keys())[:5]
+                            logger.info(f"    Columns: {', '.join(col_names)}...")
+                    
+                    # Log content preview
+                    if 'content' in schema_item:
+                        content = schema_item.get('content', '')
+                        if content and isinstance(content, str):
+                            preview = content[:100] + "..." if len(content) > 100 else content
+                            logger.info(f"    Content preview: {preview}")
                 
                 logger.info(f"Retrieved {len(schema_results)} schema items for {db_type}")
             except Exception as e:
@@ -156,19 +343,7 @@ class PlanningAgent:
             )
             
             # Call LLM to generate plan
-            response = await self.llm_client.client.chat.completions.create(
-                model=self.llm_client.model_name,
-                messages=[{"role": "user", "content": prompt}],
-                temperature=0.2
-            )
-            
-            # Parse the JSON response
-            content = response.choices[0].message.content
-            # Extract JSON string from content (might be wrapped in ```json blocks)
-            if "```json" in content:
-                json_str = content.split("```json")[1].split("```")[0].strip()
-            else:
-                json_str = content.strip()
+            json_str = await self._call_llm(prompt)
                 
             plan_dict = json.loads(json_str)
             
@@ -180,6 +355,62 @@ class PlanningAgent:
             # Return empty plan on error
             return {"metadata": {}, "operations": []}
     
+    async def _initialize_data_tools(self, db_type: str) -> None:
+        """
+        Initialize DataTools for a specific database type
+        
+        Args:
+            db_type: Database type to initialize tools for
+        """
+        if self.data_tools is None or self.data_tools.db_type != db_type:
+            self.data_tools = DataTools(db_type=db_type)
+            await self.data_tools.initialize(self.session_id)
+            logger.info(f"Initialized DataTools for {db_type}")
+
+    async def _get_detailed_metadata(self, db_type: str, tables: Optional[List[str]] = None) -> Dict[str, Any]:
+        """
+        Get detailed metadata about database tables and columns
+        
+        Args:
+            db_type: Database type to get metadata for
+            tables: Optional list of tables to focus on
+            
+        Returns:
+            Dictionary with detailed metadata
+        """
+        await self._initialize_data_tools(db_type)
+        return await self.data_tools.get_metadata(table_names=tables)
+
+    async def _sample_data(self, db_type: str, query: str, sample_size: int = 10) -> Dict[str, Any]:
+        """
+        Get a sample of data to better understand the database content
+        
+        Args:
+            db_type: Database type to sample from
+            query: Query to execute (SQL for postgres, etc.)
+            sample_size: Number of rows to sample
+            
+        Returns:
+            Dictionary with sample data
+        """
+        await self._initialize_data_tools(db_type)
+        return await self.data_tools.sample_data(query, sample_size=sample_size)
+
+    async def _run_summary_query(self, db_type: str, table: str, columns: Optional[List[str]] = None) -> Dict[str, Any]:
+        """
+        Get statistical summaries for data in a table
+        
+        Args:
+            db_type: Database type
+            table: Table to summarize
+            columns: Optional columns to focus on
+            
+        Returns:
+            Dictionary with summary statistics
+        """
+        await self._initialize_data_tools(db_type)
+        return await self.data_tools.run_summary_query(table, columns=columns)
+
     async def _validate_plan(self, query_plan: QueryPlan, 
                              user_question: str) -> Dict[str, Any]:
         """
@@ -212,6 +443,16 @@ class PlanningAgent:
                 source_type = source_info.get("type")
                 tables = registry_client.list_tables(source_id)
                 
+                # Get detailed metadata for additional validation if needed
+                try:
+                    detailed_metadata = await self._get_detailed_metadata(
+                        source_type, tables=tables
+                    )
+                    logger.info(f"Retrieved detailed metadata for {source_id} ({source_type})")
+                except Exception as e:
+                    logger.warning(f"Failed to get detailed metadata for {source_id}: {str(e)}")
+                    detailed_metadata = {}
+                
                 table_schemas = {}
                 for table in tables:
                     schema = registry_client.get_table_schema(source_id, table)
@@ -220,7 +461,8 @@ class PlanningAgent:
                 
                 registry_schemas[source_id] = {
                     "type": source_type,
-                    "tables": table_schemas
+                    "tables": table_schemas,
+                    "detailed_metadata": detailed_metadata
                 }
             
             # First, perform basic validation using QueryPlan.validate()
@@ -242,19 +484,7 @@ class PlanningAgent:
             )
             
             # Call LLM for detailed validation
-            response = await self.llm_client.client.chat.completions.create(
-                model=self.llm_client.model_name,
-                messages=[{"role": "user", "content": prompt}],
-                temperature=0.2
-            )
-            
-            # Parse the JSON response
-            content = response.choices[0].message.content
-            # Extract JSON string from content
-            if "```json" in content:
-                json_str = content.split("```json")[1].split("```")[0].strip()
-            else:
-                json_str = content.strip()
+            json_str = await self._call_llm(prompt)
                 
             validation_result = json.loads(json_str)
             
@@ -283,26 +513,70 @@ class PlanningAgent:
             Optimized plan dictionary
         """
         try:
+            # Get additional optimization insights using DataTools when possible
+            optimization_insights = {}
+            
+            # For each operation in the plan, try to gather performance insights
+            operations = plan_dict.get("operations", [])
+            for op in operations:
+                source_id = op.get("source_id")
+                if not source_id:
+                    continue
+                    
+                # Get source info
+                source_info = registry_client.get_source_by_id(source_id)
+                if not source_info:
+                    continue
+                    
+                source_type = source_info.get("type")
+                if not source_type:
+                    continue
+                
+                # For relevant operations, get sample statistics
+                op_type = op.get("metadata", {}).get("operation_type")
+                if op_type in ["query", "aggregate"] and "params" in op:
+                    # Only do this for a small subset of critical operations
+                    if len(optimization_insights) < 2:  # Limit to avoid excessive API calls
+                        try:
+                            # Initialize data tools for this source type
+                            await self._initialize_data_tools(source_type)
+                            
+                            # For query operations, we might run small test queries or get table statistics
+                            if op_type == "query" and source_type in ["postgres", "postgresql"]:
+                                table_name = None
+                                # Try to extract the main table from the query
+                                query = op.get("params", {}).get("query", "")
+                                if "FROM" in query.upper():
+                                    table_match = re.search(r'FROM\s+([^\s,;()]+)', query, re.IGNORECASE)
+                                    if table_match:
+                                        table_name = table_match.group(1).strip()
+                                
+                                if table_name:
+                                    # Get table statistics
+                                    stats = await self._run_summary_query(source_type, table_name)
+                                    if not isinstance(stats, dict) or "error" in stats:
+                                        continue
+                                    
+                                    # Add to optimization insights
+                                    operation_id = op.get("id", "unknown")
+                                    optimization_insights[operation_id] = {
+                                        "table_stats": stats,
+                                        "source_type": source_type
+                                    }
+                                    logger.info(f"Added optimization insights for operation {operation_id}")
+                        except Exception as e:
+                            logger.warning(f"Error getting optimization insights for {source_type}: {str(e)}")
+            
+            # Include optimization insights in the prompt if available
             prompt = self.llm_client.render_template(
                 "plan_optimization.tpl",
                 original_plan=json.dumps(plan_dict, indent=2),
-                schemas=registry_schemas
+                schemas=registry_schemas,
+                optimization_insights=optimization_insights
             )
             
             # Call LLM for plan optimization
-            response = await self.llm_client.client.chat.completions.create(
-                model=self.llm_client.model_name,
-                messages=[{"role": "user", "content": prompt}],
-                temperature=0.2
-            )
-            
-            # Parse the JSON response
-            content = response.choices[0].message.content
-            # Extract JSON string from content
-            if "```json" in content:
-                json_str = content.split("```json")[1].split("```")[0].strip()
-            else:
-                json_str = content.strip()
+            json_str = await self._call_llm(prompt)
                 
             optimized_plan = json.loads(json_str)
             
@@ -342,9 +616,32 @@ class PlanningAgent:
         
         logger.info(f"Identified relevant database types: {db_types}")
         
-        # Step 2: Retrieve schema information from FAISS for plan generation
-        logger.info("Retrieving schema information from FAISS indices")
-        schema_info = await self._get_schema_info(db_types)
+        # Step 2: Retrieve schema information for plan generation
+        logger.info("Retrieving schema information for planning")
+        
+        # Use cached schema metadata if available, otherwise fetch it
+        schema_info = []
+        remaining_db_types = list(db_types)  # Copy to track which db types still need fetching
+        
+        if self.cached_schema_metadata and "schema_info" in self.cached_schema_metadata:
+            logger.info("Using cached schema metadata from classifier")
+            
+            # Extract schema info for selected database types only
+            cached_info = self.cached_schema_metadata.get("schema_info", {})
+            for db_type in list(db_types):  # Use a copy for iteration
+                if db_type in cached_info:
+                    schema_results = cached_info[db_type]
+                    schema_info.extend(schema_results)
+                    logger.info(f"Using {len(schema_results)} cached schema items for {db_type}")
+                    # Remove from the list of types that need fetching
+                    if db_type in remaining_db_types:
+                        remaining_db_types.remove(db_type)
+        
+        # Fetch schema for any db types not in cache
+        if remaining_db_types:
+            logger.info(f"Fetching schema information from FAISS for remaining types: {remaining_db_types}")
+            additional_schema_info = await self._get_schema_info(remaining_db_types, question)
+            schema_info.extend(additional_schema_info)
         
         # Step 3: Generate initial query plan
         logger.info("Generating query plan")
