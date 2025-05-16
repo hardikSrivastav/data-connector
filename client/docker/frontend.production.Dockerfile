@@ -1,26 +1,17 @@
-FROM node:18.18-alpine
+FROM node:18-alpine
 WORKDIR /app
 
-# Install deps, copy source, build
+# 1) Install deps
 COPY package*.json ./
 RUN npm ci
 
+# 2) Copy source & build
 COPY . .
-
-# Create a valid next.config.js that disables TypeScript and ESLint checks
-RUN echo 'module.exports = { eslint: { ignoreDuringBuilds: true }, typescript: { ignoreBuildErrors: true } };' > next.config.js
-
-# Set environment variables to disable checks
-ENV NODE_ENV=production
-ENV NEXT_TELEMETRY_DISABLED=1
-ENV NEXT_SKIP_TYPECHECKING=1
-ENV NEXT_SKIP_ESLINT=1
-
-# Build the app
 RUN npm run build
 
-RUN next build
-
-# Production run
+# 3) Runtime config
+ENV NODE_ENV=production
 EXPOSE 3000
+
+# next start will see a valid /app/.next directory
 CMD ["npm", "start"]
