@@ -4,10 +4,10 @@ const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001/a
 
 export async function PATCH(
   request: NextRequest,
-  { params }: { params: { id: string } }
+  params: { params: { id: string } }
 ) {
   try {
-    const { id } = params;
+    const { id } = params.params;
     const authHeader = request.headers.get('authorization');
     
     if (!authHeader) {
@@ -44,4 +44,4 @@ export async function PATCH(
       { status: 500 }
     );
   }
-} 
+}
