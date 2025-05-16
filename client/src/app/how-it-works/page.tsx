@@ -65,7 +65,7 @@ export default function HowItWorks() {
                 Setup is simple and straightforward, with support for MongoDB, PostgreSQL, Qdrant, and more.
               </p>
               
-              <div className="w-full bg-slate-950 backdrop-blur-sm rounded-lg border border-slate-800 p-4 sm:p-6 ml-0 md:ml-20 overflow-x-auto">
+              <div className="bg-slate-950 backdrop-blur-sm rounded-lg border border-slate-800 p-4 sm:p-6 ml-0 md:ml-20 overflow-x-auto">
                 <div className="flex items-center gap-2 mb-4">
                   <div className="w-3 h-3 rounded-full bg-red-500"></div>
                   <div className="w-3 h-3 rounded-full bg-yellow-500"></div>
@@ -109,7 +109,7 @@ export default function HowItWorks() {
                 No need to write complex SQL or NoSQL queries - just ask what you want to know.
               </p>
               
-              <div className="w-full bg-slate-950 backdrop-blur-sm rounded-lg border border-slate-800 p-4 sm:p-6 ml-0 md:ml-20 overflow-x-auto">
+              <div className="bg-slate-950 backdrop-blur-sm rounded-lg border border-slate-800 p-4 sm:p-6 ml-0 md:ml-20 overflow-x-auto">
                 <div className="flex items-center gap-2 mb-4">
                   <div className="w-3 h-3 rounded-full bg-red-500"></div>
                   <div className="w-3 h-3 rounded-full bg-yellow-500"></div>
@@ -167,7 +167,7 @@ export default function HowItWorks() {
                 and visualizations to help you understand your data better.
               </p>
               
-              <div className="w-full bg-slate-950 backdrop-blur-sm rounded-lg border border-slate-800 p-4 sm:p-6 ml-0 md:ml-20 overflow-x-auto">
+              <div className="bg-slate-950 backdrop-blur-sm rounded-lg border border-slate-800 p-4 sm:p-6 ml-0 md:ml-20 overflow-x-auto">
                 <div className="flex items-center gap-2 mb-4">
                   <div className="w-3 h-3 rounded-full bg-red-500"></div>
                   <div className="w-3 h-3 rounded-full bg-yellow-500"></div>
@@ -220,7 +220,7 @@ export default function HowItWorks() {
                 ensuring compliance with data privacy regulations and internal security policies.
               </p>
               
-              <div className="w-full bg-slate-950 backdrop-blur-sm rounded-lg border border-slate-800 p-4 sm:p-6 ml-0 md:ml-20 overflow-x-auto">
+              <div className="bg-slate-950 backdrop-blur-sm rounded-lg border border-slate-800 p-4 sm:p-6 ml-0 md:ml-20 overflow-x-auto">
                 <div className="flex items-center gap-2 mb-4">
                   <div className="w-3 h-3 rounded-full bg-red-500"></div>
                   <div className="w-3 h-3 rounded-full bg-yellow-500"></div>

@@ -116,12 +116,16 @@ export default function ContactPage() {
                     <Mail className="h-6 w-6 text-[#9d4edd] shrink-0 mt-1" />
                     <div>
                       <h3 className="font-bold mb-2 text-lg font-baskerville">Email Us</h3>
-                      <p className="text-muted-foreground font-baskerville">
-                        hardik.y.srivastava@gmail.com
-                      </p>
-                      <p className="text-sm text-muted-foreground font-baskerville mt-1">
+
+                      <p className="text-muted-foreground font-baskerville mb-4">
                         We'll respond within 24 hours
                       </p>
+                      <Button 
+                        onClick={() => window.open('mailto:hardik.y.srivastava@gmail.com')}
+                        className="w-full h-10 text-base text-zinc-900 border border-zinc-900 hover:text-white hover:bg-[#7b35b8] transition-all duration-300 font-baskerville"
+                      >
+                        Send Email
+                      </Button>
                     </div>
                   </div>
                   
