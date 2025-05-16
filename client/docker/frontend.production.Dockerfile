@@ -32,5 +32,7 @@ COPY --from=builder /app/node_modules ./node_modules
 # Expose the port
 EXPOSE 3000
 
+RUN npm run build
+
 # Run the production server
 CMD ["npm", "start"] 
