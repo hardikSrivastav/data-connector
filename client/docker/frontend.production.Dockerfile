@@ -11,34 +11,31 @@ RUN npm ci
 # Copy all project files
 COPY . .
 
-# Build the application - this will also transpile next.config.ts to next.config.js
-RUN npm run build
+# Debug: Check if next.config.ts exists
+RUN ls -la && echo "Current directory contents"
 
-# Transpile the next.config.ts file explicitly to ensure it exists
-RUN npx tsc next.config.ts --outDir ./ --module commonjs --moduleResolution node || echo "Transpilation attempt complete"
+# Make sure TypeScript is installed
+RUN npm install typescript @types/node --save-dev
 
-# Create next.config.js if it wasn't created by the transpilation
-RUN if [ ! -f next.config.js ]; then echo "module.exports = $(cat next.config.ts | sed 's/export default//' | sed 's/: NextConfig//');" > next.config.js; fi
+# Explicitly transpile next.config.ts to next.config.js
+RUN echo "Transpiling next.config.ts..." && \
+    npx tsc next.config.ts --outDir ./ --module commonjs --moduleResolution node --esModuleInterop true || \
+    echo "module.exports = $(cat next.config.ts | sed 's/export default//' | sed 's/: NextConfig//' | grep -v 'import');" > next.config.js
 
-# Production image
-FROM node:18-alpine AS runner
+# Verify next.config.js exists
+RUN cat next.config.js && echo "next.config.js contents shown above"
+
+# Build with verbose output to see any errors
+RUN echo "Starting build..." && \
+    npm run build && \
+    echo "Build completed successfully"
+
+# Debug: Verify .next directory exists and show contents
+RUN ls -la .next || echo "ERROR: .next directory was not created!"
+
+# Single-stage build - skip the runner stage to avoid copy issues
 WORKDIR /app
-
 ENV NODE_ENV=production
-
-# Copy the transpiled next.config.js file
-COPY --from=builder /app/next.config.js ./
-
-# Copy other necessary files
-COPY --from=builder /app/public ./public
-COPY --from=builder /app/package.json ./package.json
-
-# Copy the build output
-COPY --from=builder /app/.next ./.next
-COPY --from=builder /app/node_modules ./node_modules
-
-# Ensure the .next directory exists with a complete build
-RUN ls -la .next || echo "Build directory not copied correctly"
 
 # Expose the port
 EXPOSE 3000
