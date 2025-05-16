@@ -38,7 +38,7 @@ export default function PaymentModal({ isOpen, onClose, userId, userDetails }: P
 
     return () => {
       if (script.parentNode) {
-        document.body.removeChild(script);
+      document.body.removeChild(script);
       }
     };
   }, []);

@@ -1,6 +1,20 @@
 version: '3.8'
 
 services:
+  frontend:
+    build:
+      context: .
+      dockerfile: docker/frontend.Dockerfile
+    container_name: ceneca-frontend
+    ports:
+      - "3000:3000"
+    volumes:
+      - .:/app
+      - /app/node_modules
+    environment:
+      - NEXT_PUBLIC_API_URL=http://localhost:3001/api
+    command: npm run dev 
+    
   postgres:
     image: postgres:14-alpine
     container_name: waitlist-postgres
@@ -16,8 +30,8 @@ services:
 
   backend:
     build:
-      context: ../
-      dockerfile: client/docker/backend.Dockerfile
+      context: .
+      dockerfile: docker/backend.Dockerfile
     container_name: waitlist-backend
     environment:
       - PORT=3001
@@ -35,8 +49,8 @@ services:
       - postgres
     restart: unless-stopped
     volumes:
-      - ../landing_routes:/app
+      - ./landing_routes:/app
       - /app/node_modules
 
 volumes:
-  pg_data: 
+  pg_data:
