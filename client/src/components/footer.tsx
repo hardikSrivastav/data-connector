@@ -7,7 +7,7 @@ export function Footer() {
   return (
     <footer className="py-20 border-t border-border/40 px-4 bg-background">
       <div className="container mx-auto text-center">
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-10 mb-16 justify-center">
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-10 mb-10 justify-center">
           <div>
             <h3 className="font-bold mb-4 text-lg">Product</h3>
             <ul className="space-y-3">
@@ -64,8 +64,8 @@ export function Footer() {
         
         {/* Large logo section */}
         <div className="">
-          <h1 className="sm:text-5xl md:text-[12rem] font-bold tracking-tight leading-none bg-clip-text text-transparent bg-gradient-to-r from-[#FFE1E0] via-[#9d4edd] to-[#ff006e] font-baskerville pb-8">
-            CENECA
+          <h1 className="sm:text-5xl md:text-[14rem] font-bold tracking-tight leading-none bg-clip-text text-transparent bg-gradient-to-r from-[#FFE1E0] via-[#9d4edd] to-[#ff006e] font-baskerville pb-8">
+            ceneca
           </h1>
         </div>
         
