@@ -2,11 +2,18 @@ import { NextRequest, NextResponse } from 'next/server';
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001/api';
 
+interface RouteContext {
+  params: {
+    id: string;
+  };
+}
+
 export async function PATCH(
   request: NextRequest,
-  { params }: { params: { id: string } }
+  context: RouteContext
 ) {
   try {
+    const { id } = context.params;
     const authHeader = request.headers.get('authorization');
     
     if (!authHeader) {
@@ -21,7 +28,7 @@ export async function PATCH(
     
     const body = await request.json();
     
-    const response = await fetch(`${API_BASE_URL}/admin/waitlist/${params.id}`, {
+    const response = await fetch(`${API_BASE_URL}/admin/waitlist/${id}`, {
       method: 'PATCH',
       headers: {
         'Content-Type': 'application/json',
