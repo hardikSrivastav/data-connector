@@ -1,19 +1,25 @@
 version: '3.8'
 
+x-frontend-common: &frontend-common
+  container_name: ceneca-frontend
+  ports:
+    - "3000:3000"
+  environment:
+    - NEXT_PUBLIC_API_URL=http://waitlist-backend:3001/api
+
 services:
   frontend:
+    <<: *frontend-common
     build:
       context: .
-      dockerfile: docker/frontend.Dockerfile
-    container_name: ceneca-frontend
-    ports:
-      - "3000:3000"
+      dockerfile: docker/frontend.${NODE_ENV:-development}.Dockerfile
     volumes:
       - .:/app
       - /app/node_modules
     environment:
+      - NODE_ENV=${NODE_ENV:-development}
       - NEXT_PUBLIC_API_URL=http://waitlist-backend:3001/api
-    command: npm run dev 
+    command: sh -c 'if [ "$$NODE_ENV" = "production" ]; then npm start; else npm run dev; fi'
     
   postgres:
     image: postgres:14-alpine
@@ -43,8 +49,6 @@ services:
       - RAZORPAY_KEY_ID=${RAZORPAY_KEY_ID}
       - RAZORPAY_KEY_SECRET=${RAZORPAY_KEY_SECRET}
       - JWT_SECRET=admin-secret-key-change-in-production
-    ports:
-      - "3001:3001"
     depends_on:
       - postgres
     restart: unless-stopped

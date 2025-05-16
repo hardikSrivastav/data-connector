@@ -101,4 +101,63 @@ exports.getStatus = async (req, res) => {
       error: error.message
     });
   }
+};
+
+/**
+ * Check waitlist status by email
+ */
+exports.checkStatusByEmail = async (req, res) => {
+  const { email } = req.body;
+  
+  if (!email) {
+    return res.status(400).json({
+      success: false,
+      message: 'Email is required'
+    });
+  }
+
+  try {
+    // Find user by email
+    const user = await User.findOne({ where: { email } });
+    
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: 'User not found with this email'
+      });
+    }
+    
+    // Find waitlist entry for this user
+    const waitlistEntry = await Waitlist.findOne({
+      where: { userId: user.id }
+    });
+    
+    if (!waitlistEntry) {
+      return res.status(404).json({
+        success: false,
+        message: 'User not found in waitlist'
+      });
+    }
+    
+    return res.status(200).json({
+      success: true,
+      data: {
+        userId: waitlistEntry.userId,
+        position: waitlistEntry.position,
+        status: waitlistEntry.status,
+        user: {
+          name: user.name,
+          email: user.email,
+          company: user.company
+        }
+      }
+    });
+  } catch (error) {
+    console.error('Error checking waitlist status by email:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'Failed to check waitlist status',
+      error: error.message
+    });
+  }
 }; 

@@ -132,7 +132,7 @@ export default function WaitlistPage() {
   };
 
   return (
-    <div className={`h-screen flex items-center justify-center bg-gradient-to-b from-background via-background/95 to-muted/10 overflow-hidden pt-16 pb-16`}>
+    <div className={`${isMobile ? 'pt-16' : 'pt-16 h-screen'}  flex items-center justify-center bg-gradient-to-b from-background via-background/95 to-muted/10 overflow-hidden pb-16`}>
       <div className="container mx-auto relative px-4">
         {/* Decorative Elements */}
         <div className="absolute -left-28 top-20 w-56 h-56 rounded-full bg-gradient-to-r from-[#9d4edd]/20 to-[#ff006e]/5 blur-3xl" />

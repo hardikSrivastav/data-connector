@@ -34,3 +34,32 @@ You can check out [the Next.js GitHub repository](https://github.com/vercel/next
 The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
 
 Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+
+## Docker Setup
+
+The application can be run in both development and production modes using Docker. The appropriate Dockerfile is automatically selected based on the `NODE_ENV` environment variable.
+
+### Development Mode
+
+To run the application in development mode (default):
+
+```bash
+# Run without specifying NODE_ENV (defaults to development)
+docker-compose up -d
+```
+
+or explicitly:
+
+```bash
+NODE_ENV=development docker-compose up -d
+```
+
+### Production Mode
+
+To run the application in production mode:
+
+```bash
+NODE_ENV=production docker-compose up -d
+```
+
+This will use the optimized production Dockerfile with multi-stage builds that creates a smaller and more efficient Docker image suitable for production environments.

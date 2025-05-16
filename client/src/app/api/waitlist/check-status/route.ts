@@ -28,6 +28,13 @@ export async function POST(request: NextRequest) {
       body: JSON.stringify({ email: body.email }),
     });
     
+    if (!response.ok) {
+      console.error(`API returned status: ${response.status}`);
+      const text = await response.text();
+      console.error(`Response body: ${text}`);
+      throw new Error(`API error: ${response.status}`);
+    }
+    
     const data = await response.json();
     
     return NextResponse.json(data);
