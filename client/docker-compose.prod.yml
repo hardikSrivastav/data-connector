@@ -1,0 +1,58 @@
+version: '3.8'
+
+x-frontend-common: &frontend-common
+  container_name: ceneca-frontend
+  ports:
+    - "3000:3000"
+  environment:
+    - NEXT_PUBLIC_API_URL=http://waitlist-backend:3001/api
+
+services:
+  frontend:
+    <<: *frontend-common
+    build:
+      context: .
+      dockerfile: docker/frontend.production.Dockerfile
+    environment:
+      - NODE_ENV=production
+      - NEXT_PUBLIC_API_URL=http://waitlist-backend:3001/api
+    # No volumes in production to use the built .next directory
+    command: npm start
+    
+  postgres:
+    image: postgres:14-alpine
+    container_name: waitlist-postgres
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: waitlist_db
+    ports:
+      - "5460:5432"
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+    restart: unless-stopped
+
+  backend:
+    build:
+      context: .
+      dockerfile: docker/backend.Dockerfile
+    container_name: waitlist-backend
+    environment:
+      - PORT=3001
+      - DB_HOST=postgres
+      - DB_PORT=5432
+      - DB_USER=postgres
+      - DB_PASSWORD=postgres
+      - DB_NAME=waitlist_db
+      - RAZORPAY_KEY_ID=${RAZORPAY_KEY_ID}
+      - RAZORPAY_KEY_SECRET=${RAZORPAY_KEY_SECRET}
+      - JWT_SECRET=admin-secret-key-change-in-production
+    depends_on:
+      - postgres
+    restart: unless-stopped
+    volumes:
+      - ./landing_routes:/app
+      - /app/node_modules
+
+volumes:
+  pg_data: 
