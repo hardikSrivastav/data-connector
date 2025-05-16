@@ -1,5 +1,17 @@
 import { Hero } from "@/components/hero";
 import { Cta } from "@/components/cta";
+import { Metadata } from "next";
+import { siteConfig } from "@/lib/constants";
+
+export const metadata: Metadata = {
+  title: "On-premise AI Data Analysis",
+  description: "Connect AI directly to your databases for secure, private data analysis with natural language queries.",
+  keywords: ["AI data platform", "on-premise data analysis", "secure AI", "database connector", "natural language queries"],
+  openGraph: {
+    title: "Ceneca: On-premise AI Data Analysis",
+    description: "Connect AI directly to your databases for secure, private data analysis with natural language queries.",
+  },
+};
 
 function BackgroundPattern() {
   return (
