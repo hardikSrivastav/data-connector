@@ -2,10 +2,44 @@
 
 import { motion } from "framer-motion";
 import Image from "next/image";
+import { useEffect, useState, useRef } from "react";
+import Script from "next/script";
+
+// Add TypeScript interface for window with Typeform
+declare global {
+  interface Window {
+    tf?: {
+      load: () => void;
+    };
+  }
+}
 
 export default function AboutPage() {
+  const [showTypeform, setShowTypeform] = useState(false);
+  const typeformRef = useRef(null);
+
+  useEffect(() => {
+    // Initialize Typeform when modal is opened
+    if (showTypeform && typeformRef.current && window.tf) {
+      window.tf.load();
+    }
+  }, [showTypeform]);
+
+  const closeTypeform = () => {
+    setShowTypeform(false);
+  };
+
   return (
     <div className="pt-40 pb-20 bg-gradient-to-b from-background via-background/90 to-muted/20">
+      {/* Add Typeform script */}
+      <Script 
+        src="//embed.typeform.com/next/embed.js" 
+        strategy="lazyOnload"
+        onLoad={() => {
+          console.log("Typeform script loaded");
+        }}
+      />
+      
       <div className="container mx-auto px-4">
         <motion.div 
           className="text-center mb-20"
@@ -36,15 +70,15 @@ export default function AboutPage() {
             
             <div className="space-y-6 relative z-10">
               <p className="text-lg text-muted-foreground font-baskerville leading-relaxed">
-                Ceneca was founded in 2023 by a team of data scientists and engineers who were frustrated with the complexity of data analysis tools and the steep learning curve required to extract insights from data.
+                Ceneca was born in May 2025 when I, a caffeinated data science intern, hit my breaking point after the 17th time explaining to my boss why our analytics dashboard crashed. Armed with nothing but determination, instant ramen, and way too many energy drinks, I embarked on a solo mission to fix data analysis forever.
               </p>
               
               <p className="text-lg text-muted-foreground font-baskerville leading-relaxed">
-                We saw that while organizations were collecting more data than ever before, the tools to analyze that data remained in the hands of specialists. We believed that everyone in an organization should be able to get answers from their data without learning SQL or complex BI tools.
+                I noticed something absurd: companies were hoarding data like digital dragons sitting on piles of gold, yet only the chosen few with arcane SQL knowledge could actually use it. The rest of us mere mortals were left begging the data wizards for basic insights. This had to change!
               </p>
               
               <p className="text-lg text-muted-foreground font-baskerville leading-relaxed">
-                Our solution was to build a natural language interface for databases that would allow anyone to ask questions in plain English and get instant answers. But we knew that for many organizations, data security and privacy were paramount concerns. That's why we built Ceneca to work completely on-premise, ensuring that sensitive data never leaves your secure environment.
+                So, from my tiny apartment with my loyal rubber duck debugging companion, I built a natural language interface that lets anyone talk to databases like they're chatting with a friend. Security was non-negotiable (my previous boss would have a heart attack otherwise), so Ceneca works completely on-premise, keeping your precious data safe and sound where it belongs.
               </p>
             </div>
           </div>
@@ -88,7 +122,7 @@ export default function AboutPage() {
         <div className="mb-32">
           <h2 className="text-3xl md:text-4xl font-bold mb-16 text-center font-baskerville">Our Team</h2>
           
-          <div className="grid md:grid-cols-3 gap-8 max-w-5xl mx-auto">
+          <div className="grid md:grid-cols-2 gap-8 max-w-5xl mx-auto">
             {[
               {
                 name: "Hardik Srivastava",
@@ -96,14 +130,10 @@ export default function AboutPage() {
                 bio: "Former data scientist with over 10 years of experience in machine learning and natural language processing."
               },
               {
-                name: "Sarah Chen",
-                role: "CTO",
-                bio: "Previously led engineering teams at top tech companies, specializing in database systems and distributed computing."
-              },
-              {
-                name: "Michael Rodriguez",
-                role: "Head of Product",
-                bio: "Product leader with a passion for creating intuitive interfaces for complex technical products."
+                name: "You?",
+                role: "Join Our Team",
+                bio: "We're looking for passionate individuals to join our mission of democratizing data access. Could this be you?",
+                isTypeform: true
               }
             ].map((member, index) => (
               <motion.div 
@@ -123,6 +153,16 @@ export default function AboutPage() {
                   <h3 className="text-xl font-bold mb-1 font-baskerville">{member.name}</h3>
                   <p className="text-[#9d4edd] mb-4 font-baskerville">{member.role}</p>
                   <p className="text-muted-foreground font-baskerville">{member.bio}</p>
+                  {member.isTypeform && (
+                    <>
+                      <button 
+                        onClick={() => setShowTypeform(true)}
+                        className="inline-block mt-4 px-6 py-2 text-sm font-medium rounded-md bg-zinc-900 text-white hover:bg-[#7b35b8] transition-all duration-300 font-baskerville"
+                      >
+                        Apply Now
+                      </button>
+                    </>
+                  )}
                 </div>
               </motion.div>
             ))}
@@ -149,6 +189,42 @@ export default function AboutPage() {
           </a>
         </motion.div>
       </div>
+
+      {/* Typeform Modal */}
+      {showTypeform && (
+        <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50">
+          <div className="relative w-full h-full md:max-w-4xl md:max-h-[90vh] p-2">
+            {/* Top close button */}
+            <button 
+              onClick={closeTypeform}
+              className="absolute top-4 right-4 z-10 bg-white rounded-full p-2 shadow-lg hover:bg-gray-100 transition-colors"
+              aria-label="Close form"
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+            </button>
+            
+            {/* Typeform container */}
+            <div 
+              ref={typeformRef}
+              className="w-full h-full" 
+              data-tf-live="01JVC4WYFFAPCC80ZF362G9DFV"
+              data-tf-iframe-props="title=Ceneca Application" 
+              data-tf-medium="embed"
+            ></div>
+            
+            {/* Bottom close button for better accessibility */}
+            <div className="absolute bottom-4 left-0 right-0 flex justify-center z-10">
+              <button 
+                onClick={closeTypeform}
+                className="bg-white/90 backdrop-blur-sm text-black px-6 py-3 rounded-full shadow-lg font-medium hover:bg-white transition-colors flex items-center gap-2"
+              >
+                <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+                Close Form
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 } 

@@ -40,8 +40,8 @@ services:
       - DB_USER=postgres
       - DB_PASSWORD=postgres
       - DB_NAME=waitlist_db
-      - RAZORPAY_KEY_ID=rzp_test_Lpk9B9aflaSSbu
-      - RAZORPAY_KEY_SECRET=KaUCdOrSUX70UJunkRr3097i
+      - RAZORPAY_KEY_ID=${RAZORPAY_KEY_ID}
+      - RAZORPAY_KEY_SECRET=${RAZORPAY_KEY_SECRET}
       - JWT_SECRET=admin-secret-key-change-in-production
     ports:
       - "3001:3001"

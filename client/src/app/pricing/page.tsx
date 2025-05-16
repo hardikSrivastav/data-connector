@@ -5,8 +5,17 @@ import { Card, CardContent, CardFooter, CardHeader, CardTitle } from "@/componen
 import { Check } from "lucide-react";
 import { motion } from "framer-motion";
 import Link from "next/link";
+import { useEffect } from "react";
+import { getCalApi } from "@calcom/embed-react";
 
 export default function PricingPage() {
+  useEffect(() => {
+    (async function () {
+      const cal = await getCalApi({"namespace":"15min"});
+      cal("ui", {"theme":"light","hideEventTypeDetails":false,"layout":"month_view"});
+    })();
+  }, []);
+
   return (
     <div className="pt-40 pb-20 bg-gradient-to-b from-background via-background/90 to-muted/20">
       <div className="container mx-auto px-4">
@@ -130,9 +139,13 @@ export default function PricingPage() {
             </CardContent>
             <CardFooter className="relative z-10">
               <Button asChild variant="outline" className="w-full h-12 text-base border-zinc-900 text-zinc-900 hover:bg-[#7b35b8] hover:text-white transition-all duration-300 font-baskerville">
-                <Link href="/contact">
-                  Contact Sales
-                </Link>
+                <button
+                  data-cal-namespace="15min"
+                  data-cal-link="hardik-srivastava-riptu0/15min"
+                  data-cal-config='{"layout":"month_view","theme":"light"}'
+                >
+                  Contact Founder
+                </button>
               </Button>
             </CardFooter>
           </Card>
