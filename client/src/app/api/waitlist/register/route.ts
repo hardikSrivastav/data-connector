@@ -1,10 +1,13 @@
 import { NextRequest, NextResponse } from 'next/server';
 
-const API_BASE_URL = process.env.API_URL || 'http://localhost:3060/api';
+// Use NEXT_PUBLIC_API_URL as specified in docker-compose.yml
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001/api';
 
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
+    
+    console.log(`Connecting to API: ${API_BASE_URL}/waitlist/register`);
     
     const response = await fetch(`${API_BASE_URL}/waitlist/register`, {
       method: 'POST',

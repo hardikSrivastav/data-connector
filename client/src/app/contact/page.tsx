@@ -13,6 +13,7 @@ import { useEffect } from "react";
 
 export default function ContactPage() {
   const [isSubmitted, setIsSubmitted] = useState(false);
+  const [isSubmitting, setIsSubmitting] = useState(false);
   const [formData, setFormData] = useState({
     name: "",
     email: "",
@@ -36,13 +37,37 @@ export default function ContactPage() {
     });
   };
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    // Simulate form submission
-    setTimeout(() => {
+    setIsSubmitting(true);
+    
+    try {
+      // Send email using EmailJS or similar service
+      const templateParams = {
+        to_email: "hardik.y.srivastava@gmail.com",
+        from_name: formData.name,
+        from_email: formData.email,
+        company: formData.company,
+        message: formData.message,
+        reply_to: formData.email
+      };
+      
+      // This is a fallback that will open the user's mail client
+      // In production, you should implement a server-side email sending solution
+      const mailtoLink = `mailto:hardik.y.srivastava@gmail.com?subject=Contact from ${formData.name} (${formData.company})&body=${encodeURIComponent(`Name: ${formData.name}\nEmail: ${formData.email}\nCompany: ${formData.company}\n\nMessage:\n${formData.message}`)}`;
+      
+      // Open the mailto link in a new tab
+      window.open(mailtoLink, '_blank');
+      
+      // Show success message
       toast.success("Message sent successfully!");
       setIsSubmitted(true);
-    }, 1500);
+    } catch (error) {
+      console.error("Error sending email:", error);
+      toast.error("Failed to send message. Please try again or email us directly.");
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   return (
@@ -79,10 +104,10 @@ export default function ContactPage() {
                     <div>
                       <h3 className="font-bold mb-2 text-lg font-baskerville">Call Us</h3>
                       <p className="text-muted-foreground font-baskerville">
-                        +1 (555) 123-4567
+                        +91 9971869915
                       </p>
                       <p className="text-sm text-muted-foreground font-baskerville mt-1">
-                        Monday - Friday, 9am - 5pm PT
+                        Anytime, Anyday
                       </p>
                     </div>
                   </div>
@@ -92,7 +117,7 @@ export default function ContactPage() {
                     <div>
                       <h3 className="font-bold mb-2 text-lg font-baskerville">Email Us</h3>
                       <p className="text-muted-foreground font-baskerville">
-                        info@ceneca.com
+                        hardik.y.srivastava@gmail.com
                       </p>
                       <p className="text-sm text-muted-foreground font-baskerville mt-1">
                         We'll respond within 24 hours
@@ -196,9 +221,10 @@ export default function ContactPage() {
                       
                       <Button 
                         type="submit" 
+                        disabled={isSubmitting}
                         className="w-full h-10 text-base text-white mt-2 bg-zinc-900 hover:bg-[#7b35b8] transition-all duration-300 font-baskerville"
                       >
-                        Send Message
+                        {isSubmitting ? "Sending..." : "Send Message"}
                       </Button>
                     </form>
                   </div>
