@@ -10,8 +10,6 @@ const nextConfig = {
   },
   // Enable React strict mode
   reactStrictMode: true,
-  // Emit a standalone server build for smaller runtime images
-  output: 'standalone',
   // Note: SWC minification is on by default and no longer configurable via next.config.js
 };
 
