@@ -19,6 +19,8 @@ ENV NEXT_SKIP_ESLINT=1
 # Build the app
 RUN npm run build
 
+RUN next build
+
 # Production run
 EXPOSE 3000
 CMD ["npm", "start"]
