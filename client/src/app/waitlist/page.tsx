@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, Suspense } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -23,7 +23,7 @@ import PaymentModal from "@/components/waitlist/PaymentModal";
 import { registerForWaitlist, UserData, checkWaitlistStatus } from "@/lib/api";
 import { useSearchParams } from "next/navigation";
 
-export default function WaitlistPage() {
+function WaitlistForm() {
   const [isSubmitted, setIsSubmitted] = useState(false);
   const [isPaymentModalOpen, setIsPaymentModalOpen] = useState(false);
   const [userId, setUserId] = useState("");
@@ -253,5 +253,17 @@ export default function WaitlistPage() {
         userDetails={formData}
       />
     </div>
+  );
+}
+
+export default function WaitlistPage() {
+  return (
+    <Suspense fallback={
+      <div className="flex items-center justify-center h-screen">
+        <div className="animate-pulse text-xl">Loading...</div>
+      </div>
+    }>
+      <WaitlistForm />
+    </Suspense>
   );
 } 
