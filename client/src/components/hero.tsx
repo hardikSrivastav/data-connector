@@ -68,7 +68,7 @@ export function Hero() {
   return (
     <div className="relative">
       {/* Main hero section - full viewport height */}
-      <div className={`flex flex-col items-center justify-center ${isMobile ? "pt-25 mb-24" : "h-screen"} px-4 text-center bg-gradient-to-b from-background via-background/95 to-muted/10`}>
+      <div className={`flex flex-col items-center justify-center ${isMobile ? "pt-24 mb-24" : "h-screen"} px-4 text-center bg-gradient-to-b from-background via-background/95 to-muted/10`}>
       <motion.div
           className="max-w-6xl w-full"
         initial={{ opacity: 0, y: 20 }}
@@ -99,24 +99,24 @@ export function Hero() {
           <p className="text-2xl md:text-3xl text-muted-foreground max-w-4xl mx-auto mt-4 pt-4 mb-12 font-baskerville">
           {siteConfig.description}
         </p>
-        <div className="flex flex-col sm:flex-row gap-8 justify-center">
+        <div className="flex flex-row gap-3 justify-center">
           <Button 
-            size="massive" 
+            size={isMobile ? "lg" : "massive"} 
             asChild
-              className="text-xl text-white py-8 px-10 transition-all duration-300 bg-zinc-900 hover:bg-[#7b35b8] font-baskerville"
+            className={`${isMobile ? "text-lg py-2 px-3" : "text-xl py-8 px-10"} transition-all duration-300 bg-zinc-900 text-white hover:bg-[#7b35b8] font-baskerville`}
           >
             <Link href="/waitlist">
-              Join the Waitlist
+              {isMobile ? "Waitlist" : "Join the Waitlist"}
             </Link>
           </Button>
           <Button 
-            size="massive" 
+            size={isMobile ? "lg" : "massive"} 
             variant="outline" 
             asChild
-              className="text-xl py-8 px-10 transition-all duration-300 hover:bg-[#7b35b8] hover:text-white font-baskerville"
+            className={`${isMobile ? "text-lg py-2 px-3" : "text-xl py-8 px-10"} transition-all duration-300 hover:bg-[#7b35b8] hover:text-white font-baskerville`}
           >
             <Link href="/how-it-works">
-              See How It Works
+              {isMobile ? "How It Works" : "See How It Works"}
             </Link>
           </Button>
         </div>
