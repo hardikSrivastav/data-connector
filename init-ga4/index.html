@@ -1,0 +1,309 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Data Connector GA4 Test Page</title>
+    
+    <!-- Replace G-XXXXXXXXXX with your actual Measurement ID -->
+    <!-- Google tag (gtag.js) -->
+    <script async src="https://www.googletagmanager.com/gtag/js?id=G-XXXXXXXXXX"></script>
+    <script>
+      window.dataLayer = window.dataLayer || [];
+      function gtag(){dataLayer.push(arguments);}
+      gtag('js', new Date());
+
+      gtag('config', 'G-XXXXXXXXXX');
+      
+      // Optional: Add any default parameters for all events
+      gtag('set', {
+        'user_id': 'test-user-' + Math.floor(Math.random() * 1000),
+        'page_location': window.location.href
+      });
+    </script>
+    
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            line-height: 1.6;
+        }
+        section {
+            margin-bottom: 30px;
+            padding: 20px;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+        }
+        h1, h2 {
+            color: #333;
+        }
+        button {
+            padding: 8px 16px;
+            background-color: #4285f4;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            margin: 5px;
+        }
+        button:hover {
+            background-color: #3367d6;
+        }
+        .product {
+            display: inline-block;
+            width: 200px;
+            margin: 10px;
+            padding: 15px;
+            border: 1px solid #eee;
+            text-align: center;
+        }
+        .timer {
+            font-weight: bold;
+            color: #d62d20;
+        }
+    </style>
+</head>
+<body>
+    <h1>Data Connector GA4 Test Page</h1>
+    <p>This page generates various GA4 events for testing the Data Connector GA4 adapter.</p>
+    
+    <section id="pageview-section">
+        <h2>Page Navigation (Pageviews)</h2>
+        <p>Click these links to simulate page navigation:</p>
+        <div>
+            <button onclick="simulatePageView('home')">Home Page</button>
+            <button onclick="simulatePageView('products')">Products Page</button>
+            <button onclick="simulatePageView('about')">About Page</button>
+            <button onclick="simulatePageView('contact')">Contact Page</button>
+        </div>
+    </section>
+    
+    <section id="user-engagement">
+        <h2>User Engagement Events</h2>
+        <p>Generate user engagement events:</p>
+        <div>
+            <button onclick="trackEvent('search', {search_term: 'test product'})">Search</button>
+            <button onclick="trackEvent('login', {method: 'email'})">Login</button>
+            <button onclick="trackEvent('sign_up', {method: 'google'})">Sign Up</button>
+            <button onclick="trackEvent('contact', {method: 'form'})">Contact Form</button>
+            <button onclick="trackEvent('download', {file_name: 'sample.pdf', file_type: 'pdf'})">Download</button>
+        </div>
+    </section>
+    
+    <section id="ecommerce">
+        <h2>E-commerce Events</h2>
+        <p>Simulate e-commerce interactions:</p>
+        
+        <div class="products">
+            <div class="product">
+                <h3>Product A</h3>
+                <p>$19.99</p>
+                <button onclick="viewItem('prod-001', 'Product A', 19.99, 'Electronics')">View</button>
+                <button onclick="addToCart('prod-001', 'Product A', 19.99, 'Electronics')">Add to Cart</button>
+                <button onclick="purchase('prod-001', 'Product A', 19.99, 'Electronics')">Purchase</button>
+            </div>
+            
+            <div class="product">
+                <h3>Product B</h3>
+                <p>$24.99</p>
+                <button onclick="viewItem('prod-002', 'Product B', 24.99, 'Clothing')">View</button>
+                <button onclick="addToCart('prod-002', 'Product B', 24.99, 'Clothing')">Add to Cart</button>
+                <button onclick="purchase('prod-002', 'Product B', 24.99, 'Clothing')">Purchase</button>
+            </div>
+            
+            <div class="product">
+                <h3>Product C</h3>
+                <p>$49.99</p>
+                <button onclick="viewItem('prod-003', 'Product C', 49.99, 'Home')">View</button>
+                <button onclick="addToCart('prod-003', 'Product C', 49.99, 'Home')">Add to Cart</button>
+                <button onclick="purchase('prod-003', 'Product C', 49.99, 'Home')">Purchase</button>
+            </div>
+        </div>
+    </section>
+
+    <section id="custom-events">
+        <h2>Custom Events</h2>
+        <p>Generate custom events with various parameters:</p>
+        <div>
+            <button onclick="trackCustomEvent('video_start', {video_id: 'vid123', video_title: 'Product Demo', duration: 120})">Start Video</button>
+            <button onclick="trackCustomEvent('video_complete', {video_id: 'vid123', video_title: 'Product Demo', duration: 120})">Complete Video</button>
+            <button onclick="trackCustomEvent('notification_click', {notification_type: 'promo', notification_id: 'promo-summer'})">Click Notification</button>
+            <button onclick="trackCustomEvent('share_content', {content_type: 'article', content_id: 'article-123', share_method: 'twitter'})">Share Content</button>
+        </div>
+    </section>
+    
+    <section id="session">
+        <h2>Session Testing</h2>
+        <p>Current session duration: <span id="session-timer" class="timer">0</span> seconds</p>
+        <p>Use these buttons to test session-related tracking:</p>
+        <div>
+            <button onclick="trackEvent('page_scroll', {percent_scrolled: 75})">Track 75% Scroll</button>
+            <button onclick="trackEvent('outbound_link', {link_url: 'https://example.com', link_domain: 'example.com'})">Outbound Link Click</button>
+        </div>
+    </section>
+    
+    <section id="batch-events">
+        <h2>Generate Batch Events</h2>
+        <p>Generate multiple events at once for testing data volume:</p>
+        <div>
+            <button onclick="generateRandomEvents(10)">Generate 10 Events</button>
+            <button onclick="generateRandomEvents(50)">Generate 50 Events</button>
+            <button onclick="generateRandomEvents(100)">Generate 100 Events</button>
+        </div>
+    </section>
+    
+    <script>
+        // Session timer
+        let sessionSeconds = 0;
+        setInterval(() => {
+            sessionSeconds++;
+            document.getElementById('session-timer').textContent = sessionSeconds;
+            
+            // Track session duration every minute
+            if (sessionSeconds % 60 === 0) {
+                trackEvent('session_duration_update', {duration_minutes: sessionSeconds / 60});
+            }
+        }, 1000);
+        
+        // Generic event tracking
+        function trackEvent(eventName, params = {}) {
+            // Add timestamp to all events
+            params.timestamp = new Date().toISOString();
+            console.log(`Tracking event: ${eventName}`, params);
+            gtag('event', eventName, params);
+        }
+        
+        // Custom event tracking (with user properties)
+        function trackCustomEvent(eventName, params = {}) {
+            // Set user properties for this event
+            gtag('set', 'user_properties', {
+                user_tier: Math.random() > 0.5 ? 'premium' : 'free',
+                days_active: Math.floor(Math.random() * 100),
+                preferred_theme: Math.random() > 0.5 ? 'dark' : 'light'
+            });
+            
+            // Track the event
+            trackEvent(eventName, params);
+        }
+        
+        // Simulate pageview
+        function simulatePageView(pageName) {
+            // Change URL without refreshing the page
+            history.pushState({}, pageName, `#${pageName}`);
+            
+            // Send pageview to GA4
+            gtag('event', 'page_view', {
+                page_title: pageName,
+                page_location: window.location.href,
+                page_path: `/${pageName}`
+            });
+            
+            console.log(`Page view: ${pageName}`);
+        }
+        
+        // E-commerce: View Item
+        function viewItem(id, name, price, category) {
+            gtag('event', 'view_item', {
+                currency: 'USD',
+                value: price,
+                items: [{
+                    item_id: id,
+                    item_name: name,
+                    price: price,
+                    item_category: category,
+                    currency: 'USD'
+                }]
+            });
+            console.log(`View item: ${name}`);
+        }
+        
+        // E-commerce: Add to Cart
+        function addToCart(id, name, price, category, quantity = 1) {
+            gtag('event', 'add_to_cart', {
+                currency: 'USD',
+                value: price * quantity,
+                items: [{
+                    item_id: id,
+                    item_name: name,
+                    price: price,
+                    item_category: category,
+                    quantity: quantity,
+                    currency: 'USD'
+                }]
+            });
+            console.log(`Add to cart: ${name}`);
+        }
+        
+        // E-commerce: Purchase
+        function purchase(id, name, price, category, quantity = 1) {
+            const transaction_id = 'T-' + Math.floor(Math.random() * 100000);
+            gtag('event', 'purchase', {
+                transaction_id: transaction_id,
+                value: price * quantity,
+                currency: 'USD',
+                tax: price * 0.1,
+                shipping: 4.99,
+                items: [{
+                    item_id: id,
+                    item_name: name,
+                    price: price,
+                    item_category: category,
+                    quantity: quantity,
+                    currency: 'USD'
+                }]
+            });
+            console.log(`Purchase: ${name}, Transaction ID: ${transaction_id}`);
+        }
+        
+        // Generate random events for volume testing
+        function generateRandomEvents(count) {
+            const eventTypes = [
+                'search', 'login', 'sign_up', 'download', 
+                'page_view', 'scroll', 'click', 'video_progress',
+                'file_download', 'form_submit', 'outbound_link'
+            ];
+            
+            const startTime = performance.now();
+            console.log(`Generating ${count} random events...`);
+            
+            for (let i = 0; i < count; i++) {
+                // Pick a random event type
+                const eventType = eventTypes[Math.floor(Math.random() * eventTypes.length)];
+                
+                // Create random parameters for the event
+                const params = {
+                    test_id: `batch-${i}`,
+                    timestamp: new Date().toISOString(),
+                    value: Math.random() * 100
+                };
+                
+                // Send the event
+                gtag('event', eventType, params);
+                
+                // Instead of using await, we'll stagger large batches with setTimeout
+                if (i % 10 === 0 && i > 0) {
+                    setTimeout(() => {}, 100);
+                }
+            }
+            
+            const endTime = performance.now();
+            console.log(`Generated ${count} events in ${((endTime - startTime)/1000).toFixed(2)} seconds`);
+        }
+        
+        // Fire initial pageview event when page loads
+        window.onload = function() {
+            console.log('Page loaded, sending initial pageview');
+            trackEvent('page_view', {
+                page_title: document.title,
+                page_location: window.location.href
+            });
+        };
+    </script>
+
+    <footer>
+        <p><small>Created for testing the Data Connector GA4 adapter. Replace G-XXXXXXXXXX with your actual GA4 Measurement ID.</small></p>
+    </footer>
+</body>
+</html> 
