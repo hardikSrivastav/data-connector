@@ -16,6 +16,26 @@ jobs:
           username: ${{ secrets.EC2_USER }}
           key: ${{ secrets.EC2_SSH_KEY }}
           script: |
+            # Check available disk space
+            AVAILABLE_SPACE=$(df / | grep / | awk '{ print $4 }')
+            MINIMUM_SPACE=10000000  # About 10GB in KB
+            
+            echo "Available space: $AVAILABLE_SPACE KB"
+            
+            # Only prune if disk space is low
+            if [ $AVAILABLE_SPACE -lt $MINIMUM_SPACE ]; then
+              echo "Disk space low, cleaning up Docker resources..."
+              sudo docker system prune -af --volumes
+            fi
+            
+            # Pull latest code
             cd ~/data-connector/client
             git pull
-            sudo docker compose -f docker-compose.prod.yml up -d --build 
+            
+            # Try to build and start containers
+            if ! sudo docker compose -f docker-compose.prod.yml up -d --build; then
+              echo "Build failed, trying with cleanup..."
+              sudo docker system prune -af --volumes
+              sudo docker compose -f docker-compose.prod.yml build --no-cache --build-arg NODE_ENV=production
+              sudo docker compose -f docker-compose.prod.yml up -d
+            fi 
