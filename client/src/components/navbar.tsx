@@ -112,12 +112,12 @@ export function Navbar() {
             <div className="w-1/4 flex justify-end">
               <Button 
                 variant="default" 
-                size="lg"
+                size={isMobile ? "sm" : "lg"}
                 asChild
                 className="font-medium text-base transition-all duration-300 bg-zinc-900 text-white hover:bg-[#7b35b8] font-baskerville"
               >
                 <Link href="/waitlist">
-                  Join Waitlist
+                  {isMobile ? "Waitlist" : "Join Waitlist"}
                 </Link>
               </Button>
             </div>
