@@ -52,12 +52,12 @@ export default function HowItWorks() {
             animate={feature1InView ? { opacity: 1 } : { opacity: 0 }}
             transition={{ duration: 0.8, delay: 0.1 }}
           >
-            <div className="absolute -left-12 -top-12 w-36 h-36 rounded-full bg-gradient-to-r from-[#9d4edd]/20 to-[#9d4edd]/5 blur-2xl" />
+            <div className="absolute -left-12 -top-12 w-36 h-36 rounded-full bg-gradient-to-r from-black/10 to-black/5 blur-2xl" />
             
             <div className="space-y-8">
               <div className="flex items-baseline gap-4">
-                <span className="text-6xl font-light text-[#9d4edd]/50 font-baskerville leading-none py-2">01</span>
-                <h2 className="text-4xl md:text-5xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-[#9d4edd] to-[#c77dff] font-baskerville leading-normal py-1">Connect to Your Databases</h2>
+                <span className="text-6xl font-light text-black/50 font-baskerville leading-none py-2">01</span>
+                <h2 className="text-4xl md:text-5xl font-bold text-black font-baskerville leading-normal py-1">Connect to Your Databases</h2>
               </div>
               
               <p className="text-xl md:text-2xl text-muted-foreground max-w-3xl ml-20 mb-10 font-baskerville leading-relaxed">
@@ -96,12 +96,12 @@ export default function HowItWorks() {
             animate={feature2InView ? { opacity: 1 } : { opacity: 0 }}
             transition={{ duration: 0.8, delay: 0.1 }}
           >
-            <div className="absolute -left-12 -top-12 w-36 h-36 rounded-full bg-gradient-to-r from-[#3a86ff]/20 to-[#00b4d8]/5 blur-2xl" />
+            <div className="absolute -left-12 -top-12 w-36 h-36 rounded-full bg-gradient-to-r from-black/10 to-black/5 blur-2xl" />
             
             <div className="space-y-8">
               <div className="flex items-baseline gap-4">
-                <span className="text-6xl font-light text-[#3a86ff]/50 font-baskerville leading-none py-2">02</span>
-                <h2 className="text-4xl md:text-5xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-[#3a86ff] to-[#00b4d8] font-baskerville leading-normal py-1">Query With Natural Language</h2>
+                <span className="text-6xl font-light text-black/50 font-baskerville leading-none py-2">02</span>
+                <h2 className="text-4xl md:text-5xl font-bold text-black font-baskerville leading-normal py-1">Query With Natural Language</h2>
               </div>
               
               <p className="text-xl md:text-2xl text-muted-foreground max-w-3xl ml-20 mb-10 font-baskerville leading-relaxed">
@@ -154,12 +154,12 @@ export default function HowItWorks() {
             animate={feature3InView ? { opacity: 1 } : { opacity: 0 }}
             transition={{ duration: 0.8, delay: 0.1 }}
           >
-            <div className="absolute -left-12 -top-12 w-36 h-36 rounded-full bg-gradient-to-r from-[#ff006e]/20 to-[#ff5e78]/5 blur-2xl" />
+            <div className="absolute -left-12 -top-12 w-36 h-36 rounded-full bg-gradient-to-r from-black/10 to-black/5 blur-2xl" />
             
             <div className="space-y-8">
               <div className="flex items-baseline gap-4">
-                <span className="text-6xl font-light text-[#ff006e]/50 font-baskerville leading-none py-2">03</span>
-                <h2 className="text-4xl md:text-5xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-[#ff006e] to-[#ff5e78] font-baskerville leading-normal py-1">Get AI-Powered Insights</h2>
+                <span className="text-6xl font-light text-black/50 font-baskerville leading-none py-2">03</span>
+                <h2 className="text-4xl md:text-5xl font-bold text-black font-baskerville leading-normal py-1">Get AI-Powered Insights</h2>
               </div>
               
               <p className="text-xl md:text-2xl text-muted-foreground max-w-3xl ml-20 mb-10 font-baskerville leading-relaxed">
@@ -207,12 +207,12 @@ export default function HowItWorks() {
             animate={feature4InView ? { opacity: 1 } : { opacity: 0 }}
             transition={{ duration: 0.8, delay: 0.1 }}
           >
-            <div className="absolute -left-12 -top-12 w-36 h-36 rounded-full bg-gradient-to-r from-[#ffbe0b]/20 to-[#fb8500]/5 blur-2xl" />
+            <div className="absolute -left-12 -top-12 w-36 h-36 rounded-full bg-gradient-to-r from-black/10 to-black/5 blur-2xl" />
             
             <div className="space-y-8">
               <div className="flex items-baseline gap-4 pb-2">
-                <span className="text-6xl font-light text-[#ffbe0b]/50 font-baskerville leading-none py-2">04</span>
-                <h2 className="text-4xl md:text-5xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-[#ffbe0b] to-[#fb8500] font-baskerville leading-normal pt-1 pb-3">Enterprise-Grade Security</h2>
+                <span className="text-6xl font-light text-black/50 font-baskerville leading-none py-2">04</span>
+                <h2 className="text-4xl md:text-5xl font-bold text-black font-baskerville leading-normal pt-1 pb-3">Enterprise-Grade Security</h2>
               </div>
               
               <p className="text-xl md:text-2xl text-muted-foreground max-w-3xl ml-20 mb-10 font-baskerville leading-relaxed">
