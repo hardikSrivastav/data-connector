@@ -466,7 +466,18 @@ def list_sessions(
             # Format the time as a relative time string
             start_time = session.get("start_time", 0)
             now = time.time()
-            elapsed = now - start_time
+            
+            # Ensure start_time is a number
+            if isinstance(start_time, str):
+                try:
+                    start_time = float(start_time)
+                except (ValueError, TypeError):
+                    start_time = now  # Default to now if conversion fails
+            
+            try:
+                elapsed = now - start_time
+            except TypeError:
+                elapsed = 0  # Default to 0 if subtraction fails
             
             if elapsed < 60:
                 time_str = f"{int(elapsed)} seconds ago"
@@ -579,13 +590,18 @@ def registry_status():
         
         for source in sources:
             # Get table count for this source
-            tables = registry_client.get_tables_for_source(source["id"])
+            tables = registry_client.list_tables(source["id"])
             
             # Format last updated time
-            last_updated = source.get("last_updated", "Never")
+            last_updated = source.get("updated_at", source.get("last_updated", "Never"))
             if isinstance(last_updated, (int, float)):
                 # Convert epoch time to relative time
                 now = time.time()
+                
+                # Convert milliseconds to seconds if needed (timestamps over 1 billion likely in milliseconds)
+                if last_updated > 1000000000000:  # Timestamp in milliseconds
+                    last_updated = last_updated / 1000
+                
                 elapsed = now - last_updated
                 
                 if elapsed < 60:

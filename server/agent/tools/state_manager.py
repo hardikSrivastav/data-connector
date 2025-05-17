@@ -70,8 +70,23 @@ class AnalysisState:
         """Restore state from a dictionary"""
         self.session_id = data.get("session_id", self.session_id)
         self.user_question = data.get("user_question", self.user_question)
-        self.start_time = data.get("start_time", self.start_time)
-        self.last_update_time = data.get("last_update_time", self.last_update_time)
+        
+        # Ensure time values are stored as floats
+        start_time = data.get("start_time", self.start_time)
+        if isinstance(start_time, str):
+            try:
+                start_time = float(start_time)
+            except (ValueError, TypeError):
+                start_time = time.time()
+        self.start_time = start_time
+        
+        last_update_time = data.get("last_update_time", self.last_update_time)
+        if isinstance(last_update_time, str):
+            try:
+                last_update_time = float(last_update_time)
+            except (ValueError, TypeError):
+                last_update_time = time.time()
+        self.last_update_time = last_update_time
         
         self.generated_queries = data.get("generated_queries", [])
         self.executed_tools = data.get("executed_tools", [])
@@ -328,12 +343,35 @@ class StateManager:
                 session_id = state_file.replace('.json', '')
                 state = await self.get_state(session_id)
                 if state:
+                    # Ensure start_time is a float value for calculations
+                    start_time = state.start_time
+                    if isinstance(start_time, str):
+                        try:
+                            start_time = float(start_time)
+                        except ValueError:
+                            # If conversion fails, use current time
+                            start_time = time.time()
+                    
+                    last_update_time = state.last_update_time
+                    if isinstance(last_update_time, str):
+                        try:
+                            last_update_time = float(last_update_time)
+                        except ValueError:
+                            last_update_time = time.time()
+                    
+                    # Calculate duration safely
+                    current_time = time.time()
+                    try:
+                        duration = current_time - start_time
+                    except TypeError:
+                        duration = 0
+                    
                     sessions.append({
                         "session_id": state.session_id,
                         "user_question": state.user_question,
-                        "start_time": state.start_time,
-                        "last_update_time": state.last_update_time,
-                        "duration_seconds": time.time() - state.start_time,
+                        "start_time": start_time,
+                        "last_update_time": last_update_time,
+                        "duration_seconds": duration,
                         "has_final_result": state.final_result is not None
                     })
             except Exception as e:
