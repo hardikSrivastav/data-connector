@@ -193,7 +193,7 @@ export function Hero() {
                     {/* Chart View */}
                     {activeTab === 'chart' && (
                         <motion.div 
-                        className="flex flex-col"
+                        className="flex flex-col overflow-x-auto"
                         initial={{ opacity: 0 }}
                         animate={{ opacity: 1 }}
                         exit={{ opacity: 0 }}
@@ -201,7 +201,7 @@ export function Hero() {
                         >
                         <h3 className="text-lg font-bold mb-4 font-baskerville text-zinc-900">Sales by Region (Last Quarter)</h3>
                         
-                        <div className="space-y-3 mb-3">
+                        <div className="space-y-3 mb-3 min-w-[500px]">
                             {chartData.map((item, index) => (
                             <div key={index} className="w-full flex items-center">
                                 <div className="w-[120px] text-right pr-4 text-zinc-800 font-baskerville text-sm">
