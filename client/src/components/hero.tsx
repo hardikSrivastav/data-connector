@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import Link from "next/link";
 import { siteConfig } from "@/lib/constants";
 import { useEffect, useState } from "react";
+import { useIsMobile } from "@/hooks/useMediaQuery";
 
 export function Hero() {
   // Data for the visualization
@@ -19,7 +20,8 @@ export function Hero() {
   const [isAnalyzing, setIsAnalyzing] = useState(true);
   const [showResult, setShowResult] = useState(false);
   const [activeTab, setActiveTab] = useState("chart");
-  
+  const isMobile = useIsMobile();
+
   // Animate the chart data
   useEffect(() => {
     if (isAnalyzing) {
@@ -66,7 +68,7 @@ export function Hero() {
   return (
     <div className="relative">
       {/* Main hero section - full viewport height */}
-      <div className="flex flex-col items-center justify-center h-screen px-4 text-center bg-gradient-to-b from-background via-background/95 to-muted/10">
+      <div className={`flex flex-col items-center justify-center ${isMobile ? "pt-25 mb-24" : "h-screen"} px-4 text-center bg-gradient-to-b from-background via-background/95 to-muted/10`}>
       <motion.div
           className="max-w-6xl w-full"
         initial={{ opacity: 0, y: 20 }}
