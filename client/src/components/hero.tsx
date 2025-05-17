@@ -75,7 +75,7 @@ export function Hero() {
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.5 }}
       >
-          <h1 className="text-5xl md:text-7xl font-bold tracking-tight mb-6 mt-12 font-baskerville">
+          <h1 className="text-5xl md:text-7xl font-bold tracking-tight leading-tight mb-6 mt-12 font-baskerville">
           <span className="block">Query Your Data With </span>
             <div className="bg-clip-text text-transparent bg-gradient-to-r from-[#FFE1E0] via-[#9d4edd] to-[#ff006e] h-auto min-h-[6rem] md:min-h-[8rem] overflow-visible">
             <TypewriterComponent
