@@ -215,7 +215,18 @@ class SchemaRegistryClient:
                 "row": ["postgres"],
                 "channel": ["slack"],
                 "message": ["slack"],
-                "chat": ["slack"]
+                "chat": ["slack"],
+                # GA4-specific keywords
+                "analytics": ["ga4"],
+                "session": ["ga4"],
+                "pageview": ["ga4"],
+                "event": ["ga4"],
+                "dimension": ["ga4"],
+                "metric": ["ga4"],
+                "visitor": ["ga4"],
+                "traffic": ["ga4"],
+                "user": ["postgres", "ga4"],
+                "conversion": ["ga4"]
             }
             
             # Check for keyword matches

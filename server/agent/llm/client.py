@@ -10,6 +10,7 @@ import anthropic
 from ..config.settings import Settings
 from ..tools.tools import DataTools
 from ..tools.state_manager import StateManager, AnalysisState
+import re
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
@@ -102,6 +103,27 @@ class LLMClient:
             Final analysis result
         """
         raise NotImplementedError("Subclasses must implement orchestrate_analysis")
+
+    async def generate_ga4_query(self, prompt: str) -> str:
+        """
+        Generate a GA4 query from a prompt.
+        
+        Args:
+            prompt: The prompt for generating the GA4 query
+            
+        Returns:
+            A JSON string with GA4 query parameters
+        """
+        logger.info(f"Generating GA4 query from prompt: {prompt[:100]}...")
+        response = await self.generate(prompt)
+        
+        # Extract json if needed
+        json_match = re.search(r'```(?:json)?\s*(.*?)```', response, re.DOTALL)
+        if json_match:
+            return json_match.group(1).strip()
+        
+        # If no code block markers, assume raw JSON
+        return response.strip()
 
 class OpenAIClient(LLMClient):
     """Client for OpenAI API"""

@@ -1,5 +1,5 @@
 from pydantic import validator, BaseSettings
-from typing import Optional
+from typing import Optional, List
 import os
 from dotenv import load_dotenv
 from pathlib import Path
@@ -136,6 +136,12 @@ class Settings(BaseSettings):
     # Application data directory
     APP_DATA_DIR: Optional[str] = None
     
+    # Google Analytics 4 Settings
+    GA4_KEY_FILE: Optional[Path] = yaml_config.get('ga4', {}).get('key_file', os.getenv('GA4_KEY_FILE'))
+    GA4_PROPERTY_ID: int = yaml_config.get('ga4', {}).get('property_id', int(os.getenv('GA4_PROPERTY_ID', 0)))
+    GA4_SCOPES: List[str] = yaml_config.get('ga4', {}).get('scopes', os.getenv('GA4_SCOPES', 'https://www.googleapis.com/auth/analytics.readonly').split(','))
+    GA4_TOKEN_CACHE_DB: Optional[Path] = yaml_config.get('ga4', {}).get('token_cache_db', os.getenv('GA4_TOKEN_CACHE_DB'))
+    
     def get_app_dir(self) -> str:
         """
         Returns the directory where application data should be stored.
@@ -207,6 +213,10 @@ class Settings(BaseSettings):
         elif self.DB_TYPE.lower() == "slack" and self.SLACK_URI:
             logger.info(f"Using SLACK_URI: {self.SLACK_URI}")
             return self.SLACK_URI
+        elif self.DB_TYPE.lower() == "ga4" and self.GA4_KEY_FILE:
+            ga4_uri = f"ga4://{self.GA4_PROPERTY_ID}"
+            logger.info(f"Using GA4 URI: {ga4_uri}")
+            return ga4_uri
             
         # Check for DB_DSN_OVERRIDE only if db_type is 'postgres' to avoid overriding other db types
         if self.DB_TYPE.lower() == "postgres" and self.DB_DSN_OVERRIDE:
