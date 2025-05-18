@@ -9,7 +9,7 @@ import { useRouter } from "next/navigation";
 
 export default function AdminLoginPage() {
   const [formData, setFormData] = useState({
-    email: "admin@ceneca.io",
+    email: "admin@ceneca.ai",
     password: "adminPassword",
   });
   const [isLoading, setIsLoading] = useState(false);
@@ -28,7 +28,7 @@ export default function AdminLoginPage() {
 
     // Hardcode credentials for testing
     const testCredentials = {
-      email: "admin@ceneca.io",
+      email: "admin@ceneca.ai",
       password: "adminPassword"
     };
 
@@ -83,7 +83,7 @@ export default function AdminLoginPage() {
                 value={formData.email}
                 onChange={handleChange}
                 required
-                placeholder="admin@ceneca.io"
+                placeholder="admin@ceneca.ai"
                 className="h-10 bg-background/80 border-muted"
               />
             </div>

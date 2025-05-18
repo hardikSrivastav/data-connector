@@ -7,7 +7,7 @@ const { sequelize } = require('../config/database');
 
 // Admin users (in production, this would be in a database)
 const ADMIN_USERS = {
-  'admin@ceneca.io': {
+  'admin@ceneca.ai': {
     plainPassword: 'adminPassword', // Plain text for direct comparison
     name: 'Admin User'
   }

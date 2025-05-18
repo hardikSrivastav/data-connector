@@ -1,7 +1,7 @@
 export const siteConfig = {
   name: "Ceneca",
   description: "On-premise AI data-analysis that connects directly to your databases.",
-  url: "https://ceneca.io",
+  url: "https://ceneca.ai",
   ogImage: "/og.png",
   links: {
     twitter: "https://twitter.com/ceneca",

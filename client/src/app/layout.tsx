@@ -9,6 +9,7 @@ import "@fontsource/libre-baskerville/700.css";
 import { RootSEO } from "@/components/seo/root-seo";
 import { reportWebVitals } from "@/components/seo/web-vitals";
 import AnalyticsProvider from "@/components/analytics-provider";
+import Script from "next/script";
 
 export const metadata: Metadata = {
   title: {
@@ -63,7 +64,23 @@ export default function RootLayout({
   return (
     <html lang="en" className="dark" suppressHydrationWarning>
       <head>
-        {/* Favicon is now defined in metadata */}
+        {/* Google Analytics Tag - placed immediately after head tag as recommended */}
+        <Script
+          strategy="afterInteractive"
+          src="https://www.googletagmanager.com/gtag/js?id=G-0KY7J773R1"
+        />
+        <Script
+          id="google-analytics"
+          strategy="afterInteractive"
+          dangerouslySetInnerHTML={{
+            __html: `
+              window.dataLayer = window.dataLayer || [];
+              function gtag(){dataLayer.push(arguments);}
+              gtag('js', new Date());
+              gtag('config', 'G-0KY7J773R1');
+            `,
+          }}
+        />
       </head>
       <body className="text-base md:text-lg">
         <RootSEO />

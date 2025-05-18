@@ -96,7 +96,7 @@ The admin dashboard is accessible at `/admin` and allows:
 - Adding notes to entries
 
 Default admin credentials:
-- Email: admin@ceneca.io
+- Email: admin@ceneca.ai
 - Password: adminPassword
 
 ## Development
