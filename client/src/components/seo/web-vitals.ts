@@ -17,15 +17,6 @@ export function reportWebVitals(metric: NextWebVitalsMetric) {
     console.log(metric);
   }
   
-  // Send metrics to analytics in production
-  const analyticsId = process.env.NEXT_PUBLIC_ANALYTICS_ID;
-  
-  if (!analyticsId) {
-    return;
-  }
-  
-  // When in production, send metrics to your analytics service
-  // This example uses a basic beacon API, replace with your analytics service
   const body = JSON.stringify({
     name: metric.name,
     id: metric.id,
@@ -34,7 +25,7 @@ export function reportWebVitals(metric: NextWebVitalsMetric) {
     label: metric.label,
   });
   
-  // Example for Google Analytics 4
+  // Send to Google Analytics 4
   if (typeof window !== 'undefined' && window.gtag) {
     window.gtag('event', 'web_vitals', {
       event_category: 'Web Vitals',
@@ -43,6 +34,7 @@ export function reportWebVitals(metric: NextWebVitalsMetric) {
       metric_id: metric.id,
       metric_name: metric.name,
       metric_value: metric.value,
+      non_interaction: true, // Don't count against bounce rate
     });
   }
   

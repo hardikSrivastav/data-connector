@@ -8,6 +8,7 @@ import "@fontsource/libre-baskerville/400.css";
 import "@fontsource/libre-baskerville/700.css";
 import { RootSEO } from "@/components/seo/root-seo";
 import { reportWebVitals } from "@/components/seo/web-vitals";
+import AnalyticsProvider from "@/components/analytics-provider";
 
 export const metadata: Metadata = {
   title: {
@@ -66,12 +67,14 @@ export default function RootLayout({
       </head>
       <body className="text-base md:text-lg">
         <RootSEO />
-        <Navbar />
-        <main className="relative min-h-screen">
-          {children}
-        </main>
-        <Footer />
-        <Toaster position="bottom-right" />
+        <AnalyticsProvider>
+          <Navbar />
+          <main className="relative min-h-screen">
+            {children}
+          </main>
+          <Footer />
+          <Toaster position="bottom-right" />
+        </AnalyticsProvider>
       </body>
     </html>
   );
