@@ -6,6 +6,8 @@ import { Toaster } from "@/components/ui/sonner";
 import { siteConfig } from "@/lib/constants";
 import "@fontsource/libre-baskerville/400.css";
 import "@fontsource/libre-baskerville/700.css";
+import { RootSEO } from "@/components/seo/root-seo";
+import { reportWebVitals } from "@/components/seo/web-vitals";
 
 export const metadata: Metadata = {
   title: {
@@ -17,6 +19,9 @@ export const metadata: Metadata = {
   authors: [{ name: "Ceneca" }],
   creator: "Ceneca",
   publisher: "Ceneca",
+  verification: {
+    google: "970ebd24dc07b485",
+  },
   openGraph: {
     type: "website",
     locale: "en_US",
@@ -51,15 +56,16 @@ export const metadata: Metadata = {
 
 export default function RootLayout({
   children,
-}: Readonly<{
+}: {
   children: React.ReactNode;
-}>) {
+}) {
   return (
-    <html lang="en" className="dark">
+    <html lang="en" className="dark" suppressHydrationWarning>
       <head>
         {/* Favicon is now defined in metadata */}
       </head>
       <body className="text-base md:text-lg">
+        <RootSEO />
         <Navbar />
         <main className="relative min-h-screen">
           {children}
@@ -70,3 +76,6 @@ export default function RootLayout({
     </html>
   );
 }
+
+// Export the reportWebVitals function
+export { reportWebVitals };
