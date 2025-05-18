@@ -2,6 +2,7 @@ import { Hero } from "@/components/hero";
 import { Cta } from "@/components/cta";
 import { Metadata } from "next";
 import { siteConfig } from "@/lib/constants";
+import { StructuredData } from "@/components/seo/structured-data";
 
 export const metadata: Metadata = {
   title: "On-premise AI Data Analysis",
@@ -37,12 +38,16 @@ function BackgroundPattern() {
 
 export default function Home() {
   return (
-    <div className="relative">
-      <BackgroundPattern />
-      <div className="relative z-10">
-        <Hero />
-        <Cta />
+    <main>
+      <StructuredData type="website" />
+      <StructuredData type="product" />
+      <div className="relative">
+        <BackgroundPattern />
+        <div className="relative z-10">
+          <Hero />
+          <Cta />
+        </div>
       </div>
-    </div>
+    </main>
   );
 }
