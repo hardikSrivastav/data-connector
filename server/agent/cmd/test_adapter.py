@@ -17,7 +17,7 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.syntax import Syntax
 
-from agent.db.orchestrator import Orchestrator
+from agent.db.db_orchestrator import Orchestrator
 from agent.db.adapters.postgres import PostgresAdapter
 from agent.config.settings import Settings
 
@@ -73,7 +73,7 @@ def list_adapters():
     """
     List all available database adapters.
     """
-    from agent.db.orchestrator import ADAPTERS
+    from agent.db.db_orchestrator import ADAPTERS
     
     console.print("[bold]Available Database Adapters:[/bold]")
     

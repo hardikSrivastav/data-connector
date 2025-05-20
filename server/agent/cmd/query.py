@@ -33,7 +33,7 @@ from agent.tools.state_manager import StateManager
 from agent.config.settings import Settings
 from agent.config.config_loader import load_config, load_config_with_defaults
 from agent.performance import ensure_schema_index_updated
-from agent.db.orchestrator import Orchestrator
+from agent.db.db_orchestrator import Orchestrator
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
@@ -48,7 +48,7 @@ app = typer.Typer(help="Data Connector CLI")
 @app.command()
 def test_connection(
     db_uri: Optional[str] = typer.Option(None, "--uri", "-u", help="Database connection URI (overrides settings)"),
-    db_type: Optional[str] = typer.Option(None, "--type", "-t", help="Database type ('postgres', 'mongodb', 'qdrant', etc.)")
+    db_type: Optional[str] = typer.Option(None, "--type", "-t", help="Database type ('postgres', 'mongodb', 'qdrant', 'ga4', etc.)")
 ):
     """Test database connection"""
     async def run():
@@ -112,6 +112,14 @@ def test_connection(
                     # Use a default database name if not in the URI
                     kwargs['db_name'] = "admin"
                 
+            elif detected_db_type.lower() == "ga4":
+                # Add GA4 specific parameters if needed
+                kwargs['property_id'] = settings.GA4_PROPERTY_ID if hasattr(settings, 'GA4_PROPERTY_ID') else None
+                if kwargs['property_id']:
+                    console.print(f"Using GA4 property ID: [bold]{kwargs['property_id']}[/bold]")
+                else:
+                    console.print("[yellow]Warning: No GA4 property ID found in settings.[/yellow]")
+            
             orchestrator = Orchestrator(uri, **kwargs)
             conn_ok = await orchestrator.test_connection()
             
@@ -127,7 +135,7 @@ def test_connection(
 @app.command()
 def build_index(
     db_uri: Optional[str] = typer.Option(None, "--uri", "-u", help="Database connection URI (overrides settings)"),
-    db_type: Optional[str] = typer.Option(None, "--type", "-t", help="Database type ('postgres', 'mongodb', etc.)")
+    db_type: Optional[str] = typer.Option(None, "--type", "-t", help="Database type ('postgres', 'mongodb', 'ga4', etc.)")
 ):
     """Build schema metadata index"""
     async def run():
@@ -180,7 +188,7 @@ def build_index(
 def check_schema(
     force: bool = typer.Option(False, "--force", "-f", help="Force reindexing even if no changes detected"),
     db_uri: Optional[str] = typer.Option(None, "--uri", "-u", help="Database connection URI (overrides settings)"),
-    db_type: Optional[str] = typer.Option(None, "--type", "-t", help="Database type ('postgres', 'mongodb', etc.)"),
+    db_type: Optional[str] = typer.Option(None, "--type", "-t", help="Database type ('postgres', 'mongodb', 'ga4', etc.)"),
     debug: bool = typer.Option(False, "--debug", "-d", help="Show debug output")
 ):
     """Check for schema changes and update index if needed"""
@@ -252,7 +260,7 @@ def query(
     analyze: bool = typer.Option(False, "--analyze", "-a", help="Analyze query results"),
     orchestrate: bool = typer.Option(False, "--orchestrate", "-o", help="Use multi-step orchestrated analysis"),
     db_uri: Optional[str] = typer.Option(None, "--uri", "-u", help="Database connection URI (overrides settings)"),
-    db_type: Optional[str] = typer.Option(None, "--type", "-t", help="Database type ('postgres', 'mongodb', etc.)")
+    db_type: Optional[str] = typer.Option(None, "--type", "-t", help="Database type ('postgres', 'mongodb', 'ga4', etc.)")
 ):
     """
     Translate natural language to a database query and execute it
@@ -305,6 +313,23 @@ def query(
                 kwargs['prefer_grpc'] = settings.QDRANT_PREFER_GRPC
                 console.print(f"Using Qdrant collection: [bold]{kwargs['collection_name']}[/bold]")
             
+            elif detected_db_type.lower() == "ga4":
+                # For GA4, we need to ensure the URI is in the correct format
+                # If using a Postgres URI with GA4 db_type, override it
+                if not uri.startswith("ga4://"):
+                    # Set DB_TYPE to ga4 to ensure correct URI generation
+                    settings.DB_TYPE = "ga4"
+                    # Regenerate the URI
+                    uri = f"ga4://{settings.GA4_PROPERTY_ID}"
+                    console.print(f"Using GA4 URI: [bold]{uri}[/bold]")
+                
+                # Add GA4 specific parameters
+                kwargs['property_id'] = settings.GA4_PROPERTY_ID
+                if kwargs['property_id']:
+                    console.print(f"Using GA4 property ID: [bold]{kwargs['property_id']}[/bold]")
+                else:
+                    console.print("[yellow]Warning: No GA4 property ID found in settings.[/yellow]")
+            
             # Create orchestrator kwargs and connection kwargs separately
             orchestrator_kwargs = dict(kwargs)
             orchestrator_kwargs['db_type'] = detected_db_type
@@ -341,6 +366,8 @@ def query(
                     await run_qdrant_query(llm, question, analyze, orchestrator, detected_db_type)
                 elif detected_db_type.lower() == "slack":
                     await run_slack_query(llm, question, analyze, orchestrator, detected_db_type)
+                elif detected_db_type.lower() == "ga4":
+                    await run_ga4_query(llm, question, analyze, orchestrator, detected_db_type)
                 else:
                     console.print(f"[red]Unsupported database type: {detected_db_type}[/red]")
         
@@ -631,6 +658,65 @@ async def run_slack_query(llm, question: str, analyze: bool, orchestrator: Orche
             console.print("[yellow]No results found[/yellow]")
     except Exception as e:
         console.print(f"[red]Error executing Slack query: {str(e)}[/red]")
+        import traceback
+        console.print(traceback.format_exc())
+
+async def run_ga4_query(llm, question: str, analyze: bool, orchestrator: Orchestrator, db_type: str):
+    """Run a Google Analytics 4 query"""
+    
+    # Search schema metadata specific to this database type
+    searcher = SchemaSearcher(db_type=db_type)
+    schema_chunks = await searcher.search(question, top_k=5, db_type=db_type)
+    
+    # Create context from schema chunks
+    schema_context = "\n\n".join([chunk.get("content", "") for chunk in schema_chunks])
+    
+    # Render prompt template for GA4
+    prompt = llm.render_template("ga4_query.tpl", 
+                             schema_context=schema_context, 
+                             query=question)
+    
+    # Generate GA4 query
+    console.print("Generating GA4 query...")
+    
+    try:
+        # Generate query
+        response = await llm.generate_mongodb_query(prompt)  # Reusing the MongoDB query generator initially
+        
+        # Parse response as JSON
+        query_json = None
+        
+        # Try to extract JSON if embedded in markdown
+        if "```json" in response:
+            json_text = response.split("```json")[1].split("```")[0].strip()
+            query_json = json.loads(json_text)
+        else:
+            # Otherwise try to parse the whole response
+            query_json = json.loads(response)
+        
+        # Print the query
+        console.print(f"\n[bold cyan]GA4 Query:[/bold cyan]")
+        formatted_query = json.dumps(query_json, indent=2)
+        console.print(f"[cyan]{formatted_query}[/cyan]\n")
+        
+        # Execute query
+        console.print("Executing query...")
+        results = await orchestrator.execute(query_json)
+        
+        # Display results
+        if results:
+            display_query_results(results)
+            
+            # Analyze results if requested
+            if analyze:
+                console.print("\n[bold]Analyzing results...[/bold]")
+                analysis = await llm.analyze_results(results)
+                console.print(f"\n[bold green]Analysis:[/bold green]")
+                console.print(analysis)
+        else:
+            console.print("[yellow]No results found[/yellow]")
+    except Exception as e:
+        console.print(f"[red]Error executing GA4 query: {str(e)}[/red]")
         import traceback
         console.print(traceback.format_exc())
 
@@ -966,8 +1052,7 @@ async def slack_refresh(args):
     mcp_url = config.get("slack", {}).get("mcp_url", "http://localhost:8500")
     
     # Create orchestrator with Slack adapter
-    from ..db.orchestrator import Orchestrator
-    
+    from agent.db.db_orchestrator import Orchestrator
     print("Refreshing Slack schema...")
     
     try:
@@ -1010,7 +1095,7 @@ async def main():
     )
     query_parser.add_argument(
         '--type', '-t', 
-        choices=['postgres', 'mongodb', 'mongo', 'qdrant', 'slack'], 
+        choices=['postgres', 'mongodb', 'mongo', 'qdrant', 'slack', 'ga4'], 
         default=None,
         help='Specify database type to query'
     )

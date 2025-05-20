@@ -74,12 +74,27 @@ class GA4Adapter(DBAdapter):
             The GA4 property ID
         """
         try:
+            # Import settings to access GA4 configuration if needed
+            from ...config.settings import Settings
+            settings = Settings()
+            
             # Remove the ga4:// prefix
             if conn_uri.startswith("ga4://"):
-                return conn_uri[6:]
+                property_id = conn_uri[6:]
+                logger.info(f"Extracted property ID from URI: {property_id}")
+                return property_id
             
-            # If not in expected format, log warning and return as is
+            # If not in expected format, log warning and try fallbacks
             logger.warning(f"GA4 URI not in expected format (ga4://property_id): {conn_uri}")
+            
+            # Fallback 1: Try to extract property ID from the settings
+            if hasattr(settings, 'GA4_PROPERTY_ID') and settings.GA4_PROPERTY_ID:
+                property_id = str(settings.GA4_PROPERTY_ID)
+                logger.info(f"Using property ID from settings: {property_id}")
+                return property_id
+            
+            # Fallback 2: Just return the URI as is (last resort)
+            logger.error(f"Unable to determine GA4 property ID, using URI as fallback: {conn_uri}")
             return conn_uri
             
         except Exception as e:
@@ -388,8 +403,8 @@ class GA4Adapter(DBAdapter):
         documents = []
         
         try:
-            # Format property ID for GA4 API
-            property_id = f"properties/{self.property_id}"
+            # Format property ID for GA4 API with /metadata suffix
+            property_id = f"properties/{self.property_id}/metadata"
             
             # Fetch metadata
             metadata = self.client.get_metadata(name=property_id)
@@ -495,8 +510,8 @@ class GA4Adapter(DBAdapter):
             True if connection successful, False otherwise
         """
         try:
-            # Format property ID for GA4 API
-            property_id = f"properties/{self.property_id}"
+            # Format property ID for GA4 API with /metadata suffix
+            property_id = f"properties/{self.property_id}/metadata"
             
             # Try to get property metadata
             self.client.get_metadata(name=property_id)

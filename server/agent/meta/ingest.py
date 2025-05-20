@@ -360,11 +360,21 @@ async def ensure_index_exists(db_type: Optional[str] = None, conn_uri: Optional[
     # Normalize database type
     db_type = db_type.lower()
     
+    # Set the database type in settings to ensure correct connection URI generation
+    if db_type != settings.DB_TYPE.lower():
+        logger.info(f"Updating DB_TYPE in settings from {settings.DB_TYPE} to {db_type}")
+        settings.DB_TYPE = db_type
+    
     # Check if index exists
     searcher = SchemaSearcher(db_type=db_type)
     if searcher.load_index_for_type(db_type):
         logger.info(f"FAISS index for {db_type} loaded successfully")
         return True
+    
+    # When building a new index, use the correctly configured connection URI for the db_type
+    if not conn_uri:
+        conn_uri = settings.connection_uri
+        logger.info(f"Using connection URI for {db_type}: {conn_uri}")
     
     # Build new index
     logger.info(f"Building new FAISS index for {db_type}")
