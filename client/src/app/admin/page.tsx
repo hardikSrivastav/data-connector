@@ -26,21 +26,13 @@ export default function AdminLoginPage() {
     e.preventDefault();
     setIsLoading(true);
 
-    // Hardcode credentials for testing
-    const testCredentials = {
-      email: "admin@ceneca.ai",
-      password: "adminPassword"
-    };
-
-    console.log('Attempting login with hardcoded credentials:', testCredentials);
-
     try {
       const response = await fetch('/api/admin/login', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify(testCredentials), // Use hardcoded credentials for testing
+        body: JSON.stringify(formData), // Use hardcoded credentials for testing
       });
 
       console.log('Login response status:', response.status);
