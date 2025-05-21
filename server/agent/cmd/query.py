@@ -6,6 +6,7 @@ import os
 import sys
 import time
 import uuid
+import urllib.parse
 from typing import Optional, Dict, Any, List
 import logging
 from rich.console import Console
@@ -44,6 +45,321 @@ console = Console()
 
 # Create typer app
 app = typer.Typer(help="Data Connector CLI")
+
+# Create auth sub-app
+auth_app = typer.Typer(help="Authentication commands")
+app.add_typer(auth_app, name="auth")
+
+@auth_app.command("test")
+def auth_test():
+    """Test authentication configuration"""
+    async def run():
+        settings = Settings()
+        
+        console.print(f"[bold]Authentication Configuration:[/bold]")
+        console.print(f"Auth Enabled: {'[green]Yes[/green]' if settings.AUTH_ENABLED else '[red]No[/red]'}")
+        console.print(f"Auth Protocol: {settings.AUTH_PROTOCOL or '[dim]Not configured[/dim]'}")
+        
+        if settings.AUTH_PROTOCOL == 'oidc':
+            console.print(f"\n[bold]OIDC Configuration:[/bold]")
+            console.print(f"Provider: {settings.OIDC_PROVIDER or '[dim]Not configured[/dim]'}")
+            console.print(f"Client ID: {settings.OIDC_CLIENT_ID or '[dim]Not configured[/dim]'}")
+            console.print(f"Client Secret: {'[green]Configured[/green]' if settings.OIDC_CLIENT_SECRET else '[red]Not configured[/red]'}")
+            console.print(f"Issuer: {settings.OIDC_ISSUER or '[dim]Not configured[/dim]'}")
+            console.print(f"Discovery URL: {settings.OIDC_DISCOVERY_URL or '[dim]Not configured[/dim]'}")
+            console.print(f"Redirect URI: {settings.OIDC_REDIRECT_URI or '[dim]Not configured[/dim]'}")
+            
+            # Show scopes
+            if settings.OIDC_SCOPES:
+                console.print(f"Scopes: {', '.join(settings.OIDC_SCOPES)}")
+            else:
+                console.print(f"Scopes: [dim]None configured[/dim]")
+            
+            # Show claims mapping
+            if settings.OIDC_CLAIMS_MAPPING:
+                console.print(f"\n[bold]Claims Mapping:[/bold]")
+                for claim, attr in settings.OIDC_CLAIMS_MAPPING.items():
+                    console.print(f"  {claim} → {attr}")
+        
+        # Show role mappings if any
+        if settings.ROLE_MAPPINGS:
+            console.print(f"\n[bold]Role Mappings:[/bold]")
+            for group, role in settings.ROLE_MAPPINGS.items():
+                console.print(f"  {group} → {role}")
+        
+        # Overall status
+        console.print(f"\n[bold]Authentication Status:[/bold]")
+        if settings.is_auth_enabled:
+            console.print(f"[green]Authentication is properly configured and enabled[/green]")
+        else:
+            console.print(f"[yellow]Authentication is not fully configured or is disabled[/yellow]")
+            
+            # Provide guidance on what's missing
+            if not settings.AUTH_ENABLED:
+                console.print("  • Authentication is disabled in config")
+            elif settings.AUTH_PROTOCOL == 'oidc':
+                if not settings.OIDC_PROVIDER:
+                    console.print("  • OIDC provider is not configured")
+                if not settings.OIDC_CLIENT_ID:
+                    console.print("  • OIDC client ID is not configured")
+                if not settings.OIDC_CLIENT_SECRET:
+                    console.print("  • OIDC client secret is not configured")
+                if not settings.OIDC_ISSUER:
+                    console.print("  • OIDC issuer is not configured")
+                if not settings.OIDC_REDIRECT_URI:
+                    console.print("  • OIDC redirect URI is not configured")
+    
+    asyncio.run(run())
+
+@auth_app.command("login")
+def auth_login():
+    """Login using configured authentication provider"""
+    async def run():
+        settings = Settings()
+        
+        # Verify that auth is properly configured
+        if not settings.AUTH_ENABLED:
+            console.print("[red]Authentication is not enabled in config.[/red]")
+            console.print("Please set 'enabled: true' in the sso section of auth-config.yaml")
+            return
+        
+        if settings.AUTH_PROTOCOL == 'oidc':
+            # Check that all required OIDC settings are present
+            missing_settings = []
+            if not settings.OIDC_PROVIDER:
+                missing_settings.append("OIDC provider")
+            if not settings.OIDC_CLIENT_ID:
+                missing_settings.append("OIDC client ID")
+            if not settings.OIDC_CLIENT_SECRET:
+                missing_settings.append("OIDC client secret")
+            if not settings.OIDC_ISSUER:
+                missing_settings.append("OIDC issuer")
+            if not settings.OIDC_REDIRECT_URI:
+                missing_settings.append("OIDC redirect URI")
+                
+            if missing_settings:
+                console.print("[red]Authentication is not fully configured.[/red]")
+                console.print("The following settings are missing:")
+                for setting in missing_settings:
+                    console.print(f"  • {setting}")
+                return
+            
+            # Generate a session ID for the auth flow
+            session_id = secrets.token_urlsafe(16)
+            
+            # Define the redirect URI - this should match what's configured in auth-config.yaml
+            redirect_uri = settings.OIDC_REDIRECT_URI
+            
+            # Set up the OIDC authorization parameters
+            auth_params = {
+                "client_id": settings.OIDC_CLIENT_ID,
+                "response_type": "code",
+                "scope": " ".join(settings.OIDC_SCOPES),
+                "redirect_uri": redirect_uri,
+                "state": session_id,
+                "nonce": secrets.token_urlsafe(8)
+            }
+            
+            # Construct the authorization URL based on the discovery URL
+            auth_url = None
+            
+            if settings.OIDC_DISCOVERY_URL:
+                try:
+                    # Fetch the OpenID configuration
+                    discovery_response = requests.get(settings.OIDC_DISCOVERY_URL)
+                    discovery_response.raise_for_status()
+                    
+                    discovery_data = discovery_response.json()
+                    auth_endpoint = discovery_data.get("authorization_endpoint")
+                    
+                    if not auth_endpoint:
+                        console.print("[red]Could not find authorization endpoint in OIDC discovery document.[/red]")
+                        return
+                    
+                    # Build the authorization URL with the parameters
+                    auth_url = f"{auth_endpoint}?{urllib.parse.urlencode(auth_params)}"
+                    
+                except Exception as e:
+                    console.print(f"[red]Error fetching OIDC discovery document: {str(e)}[/red]")
+                    return
+            else:
+                # Construct the URL directly from the issuer
+                auth_url = f"{settings.OIDC_ISSUER}/protocol/openid-connect/auth?{urllib.parse.urlencode(auth_params)}"
+            
+            # Set up a local HTTP server to handle the redirect
+            callback_port = int(urlparse(redirect_uri).port or 8000)
+            callback_host = urlparse(redirect_uri).hostname or "localhost"
+            
+            # Create a temporary directory to store auth tokens
+            token_dir = os.path.join(settings.get_app_dir(), "tokens")
+            os.makedirs(token_dir, exist_ok=True)
+            token_file = os.path.join(token_dir, f"oidc_token_{session_id}.json")
+            
+            # Set up a function to handle the callback
+            async def handle_callback(request):
+                code = request.query.get("code")
+                state = request.query.get("state")
+                
+                if not code or state != session_id:
+                    return web.Response(text="Authentication failed. Invalid state parameter.", content_type="text/html")
+                
+                # Exchange the code for tokens
+                token_params = {
+                    "grant_type": "authorization_code",
+                    "code": code,
+                    "redirect_uri": redirect_uri,
+                    "client_id": settings.OIDC_CLIENT_ID,
+                    "client_secret": settings.OIDC_CLIENT_SECRET
+                }
+                
+                try:
+                    # Get the token endpoint from discovery if available
+                    token_endpoint = None
+                    if settings.OIDC_DISCOVERY_URL:
+                        discovery_response = requests.get(settings.OIDC_DISCOVERY_URL)
+                        discovery_response.raise_for_status()
+                        
+                        discovery_data = discovery_response.json()
+                        token_endpoint = discovery_data.get("token_endpoint")
+                        
+                    if not token_endpoint:
+                        # Fallback to constructing from issuer
+                        token_endpoint = f"{settings.OIDC_ISSUER}/protocol/openid-connect/token"
+                    
+                    # Exchange the code for tokens
+                    token_response = requests.post(token_endpoint, data=token_params)
+                    token_response.raise_for_status()
+                    
+                    token_data = token_response.json()
+                    
+                    # Save the tokens
+                    with open(token_file, "w") as f:
+                        json.dump(token_data, f, indent=2)
+                    
+                    # Get user info if possible
+                    user_info = None
+                    access_token = token_data.get("access_token")
+                    
+                    if access_token:
+                        # Try to get user info endpoint from discovery
+                        userinfo_endpoint = None
+                        if settings.OIDC_DISCOVERY_URL:
+                            discovery_data = discovery_response.json()
+                            userinfo_endpoint = discovery_data.get("userinfo_endpoint")
+                            
+                        if userinfo_endpoint:
+                            userinfo_response = requests.get(
+                                userinfo_endpoint,
+                                headers={"Authorization": f"Bearer {access_token}"}
+                            )
+                            if userinfo_response.status_code == 200:
+                                user_info = userinfo_response.json()
+                    
+                    # Return a simple HTML response to the user
+                    success_html = """
+                    <!DOCTYPE html>
+                    <html>
+                    <head>
+                        <title>Authentication Successful</title>
+                        <style>
+                            body { font-family: Arial, sans-serif; text-align: center; padding: 50px; }
+                            .success { color: green; }
+                            .info { margin-top: 20px; text-align: left; display: inline-block; }
+                        </style>
+                    </head>
+                    <body>
+                        <h1 class="success">Authentication Successful!</h1>
+                        <p>You have successfully authenticated with Data Connector.</p>
+                        <p>You can close this window and return to the command line.</p>
+                    </body>
+                    </html>
+                    """
+                    
+                    # Signal the waiting thread that auth is complete
+                    auth_event.set()
+                    
+                    return web.Response(text=success_html, content_type="text/html")
+                    
+                except Exception as e:
+                    error_message = f"Error exchanging code for tokens: {str(e)}"
+                    console.print(f"[red]{error_message}[/red]")
+                    return web.Response(text=f"<h1>Authentication Error</h1><p>{error_message}</p>", content_type="text/html")
+            
+            # We need aiohttp for this - check if it's available
+            try:
+                from aiohttp import web
+            except ImportError:
+                console.print("[red]The aiohttp package is required for authentication.[/red]")
+                console.print("Please install it with: pip install aiohttp")
+                return
+            
+            # Create an event to signal when auth is complete
+            auth_event = asyncio.Event()
+            
+            # Start the web server
+            app = web.Application()
+            app.router.add_get(urlparse(redirect_uri).path, handle_callback)
+            
+            runner = web.AppRunner(app)
+            await runner.setup()
+            site = web.TCPSite(runner, callback_host, callback_port)
+            
+            try:
+                await site.start()
+                
+                # Open the browser
+                console.print("\n" + "="*60)
+                console.print(f"Opening browser for authentication...")
+                console.print(f"If your browser doesn't open automatically, please visit:")
+                console.print(f"\n{auth_url}\n")
+                console.print("="*60 + "\n")
+                
+                try:
+                    webbrowser.open(auth_url)
+                except Exception as e:
+                    console.print(f"Failed to open browser: {e}")
+                    console.print(f"Please manually visit the URL above to complete authentication")
+                
+                # Wait for the auth to complete or timeout
+                console.print("Waiting for authentication to complete in the browser...")
+                
+                try:
+                    # Wait with a timeout
+                    await asyncio.wait_for(auth_event.wait(), timeout=300)  # 5-minute timeout
+                    
+                    # Check if the token file exists
+                    if os.path.exists(token_file):
+                        with open(token_file, "r") as f:
+                            token_data = json.load(f)
+                        
+                        # Display success message
+                        console.print("\n[green]Authentication successful![/green]")
+                        
+                        # Show token expiry
+                        if "expires_in" in token_data:
+                            expires_in = token_data["expires_in"]
+                            console.print(f"Token will expire in {expires_in} seconds")
+                        
+                        # Show scopes
+                        if "scope" in token_data:
+                            scopes = token_data["scope"].split()
+                            console.print(f"Granted scopes: {', '.join(scopes)}")
+                        
+                        console.print("\nYou are now authenticated and can use protected resources.")
+                    else:
+                        console.print("\n[red]Authentication failed: Token file not created[/red]")
+                
+                except asyncio.TimeoutError:
+                    console.print("\n[red]Authentication timed out after 5 minutes[/red]")
+                
+            finally:
+                # Clean up
+                await runner.cleanup()
+        else:
+            console.print(f"[red]Unsupported authentication protocol: {settings.AUTH_PROTOCOL}[/red]")
+            console.print("Currently only 'oidc' is supported")
+    
+    asyncio.run(run())
 
 @app.command()
 def test_connection(
@@ -1126,6 +1442,16 @@ async def main():
         help='Config sub-command to run'
     )
     
+    # Create parser for auth commands
+    auth_parser = subparsers.add_parser('auth', help='Authentication operations')
+    auth_parser.add_argument(
+        'auth_command',
+        choices=['test', 'login', 'logout'],
+        default='test',
+        nargs='?',
+        help='Authentication sub-command to run'
+    )
+    
     # Create parser for db commands 
     db_parser = subparsers.add_parser('db', help='Database operations')
     db_parser.add_argument(
@@ -1160,6 +1486,15 @@ async def main():
         await run_config(args)
     elif args.command == 'db':
         await run_db(args)
+    elif args.command == 'auth':
+        if args.auth_command == 'test':
+            await auth_test()
+        elif args.auth_command == 'login':
+            await auth_login()
+        elif args.auth_command == 'logout':
+            console.print("[yellow]Auth logout not yet implemented[/yellow]")
+        else:
+            auth_parser.print_help()
     # Add support for slack subcommands
     elif args.command == "slack":
         if args.slack_command == "auth":
@@ -1200,6 +1535,12 @@ if __name__ == "__main__":
                     pass
     
     create_init_files()
-    print("Running Typer app...")
-    app()
-    print("Typer app completed")
+    
+    # Try to run with typer app first, fall back to argparse if needed
+    try:
+        print("Running Typer app...")
+        app()
+        print("Typer app completed")
+    except Exception as e:
+        print(f"Typer app failed: {str(e)}. Falling back to argparse.")
+        asyncio.run(main())
