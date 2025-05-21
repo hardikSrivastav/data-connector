@@ -1,6 +1,7 @@
 const User = require('../models/User');
 const Waitlist = require('../models/Waitlist');
 const { sequelize } = require('../config/database');
+const emailService = require('../utils/emailService');
 
 /**
  * Register a new user for the waitlist
@@ -45,6 +46,29 @@ exports.register = async (req, res) => {
     }, { transaction });
     
     await transaction.commit();
+    
+    // Send emails after successful registration
+    try {
+      // Send thank you email to user
+      await emailService.sendThankYouEmail({
+        name,
+        email,
+        company
+      });
+      
+      // Send notification email to admin
+      await emailService.sendAdminNotificationEmail(
+        {
+          name,
+          email,
+          company
+        },
+        waitlistEntry.position
+      );
+    } catch (emailError) {
+      // Log the error but don't fail the registration process
+      console.error('Error sending emails:', emailError);
+    }
     
     return res.status(201).json({
       success: true,

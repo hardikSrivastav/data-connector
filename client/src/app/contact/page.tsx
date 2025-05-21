@@ -44,7 +44,7 @@ export default function ContactPage() {
     try {
       // Send email using EmailJS or similar service
       const templateParams = {
-        to_email: "hardik.y.srivastava@gmail.com",
+        to_email: "hardik@ceneca.ai",
         from_name: formData.name,
         from_email: formData.email,
         company: formData.company,
@@ -54,7 +54,7 @@ export default function ContactPage() {
       
       // This is a fallback that will open the user's mail client
       // In production, you should implement a server-side email sending solution
-      const mailtoLink = `mailto:hardik.y.srivastava@gmail.com?subject=Contact from ${formData.name} (${formData.company})&body=${encodeURIComponent(`Name: ${formData.name}\nEmail: ${formData.email}\nCompany: ${formData.company}\n\nMessage:\n${formData.message}`)}`;
+      const mailtoLink = `mailto:hardik@ceneca.ai?subject=Contact from ${formData.name} (${formData.company})&body=${encodeURIComponent(`Name: ${formData.name}\nEmail: ${formData.email}\nCompany: ${formData.company}\n\nMessage:\n${formData.message}`)}`;
       
       // Open the mailto link in a new tab
       window.open(mailtoLink, '_blank');
@@ -121,7 +121,7 @@ export default function ContactPage() {
                         We'll respond within 24 hours
                       </p>
                       <Button 
-                        onClick={() => window.open('mailto:hardik.y.srivastava@gmail.com')}
+                        onClick={() => window.open('mailto:hardik@ceneca.ai')}
                         className="w-full h-10 text-base text-zinc-900 border border-zinc-900 hover:text-white hover:bg-[#7b35b8] transition-all duration-300 font-baskerville"
                       >
                         Send Email
