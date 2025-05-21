@@ -6,8 +6,8 @@ cd "$(dirname "$0")"
 # Build local Docker images
 echo "Building Docker images locally..."
 if [ -f "Dockerfile" ] && [ -f "Dockerfile.mcp" ]; then
-  docker build -t ceneca/agent:latest -f Dockerfile .
-  docker build -t ceneca/slack-mcp:latest -f Dockerfile.mcp .
+  docker build -t hardiksriv/agent:latest -f Dockerfile .
+  docker build -t hardiksriv/slack-mcp:latest -f Dockerfile.mcp .
 else
   echo "Dockerfiles not found. Skipping build step."
   echo "Make sure you have the required images available."
