@@ -1,0 +1,27 @@
+sso:
+  # Common settings
+  enabled: true
+  default_protocol: "oidc"
+  
+  # OIDC Configuration for Okta
+  oidc:
+    provider: "${OIDC_PROVIDER}"
+    client_id: "${OIDC_CLIENT_ID}"
+    client_secret: "${OIDC_CLIENT_SECRET}"
+    # Replace these with your actual Okta domain
+    issuer: "${OIDC_ISSUER}"
+    discovery_url: "${OIDC_DISCOVERY_URL}"
+    redirect_uri: "https://${DOMAIN_NAME}/authorization-code/callback"
+    scopes: ["openid", "email", "profile", "groups"]
+    # Map Okta claims to user attributes
+    claims_mapping:
+      email: "email"
+      name: "name"
+      groups: "groups"
+
+# Role mappings from IdP groups to Ceneca roles
+# Replace these with your actual group names and desired roles
+role_mappings:
+  "${ROLE_GROUP_1}": "${ROLE_VALUE_1}"
+  "${ROLE_GROUP_2}": "${ROLE_VALUE_2}"
+  "${ROLE_GROUP_3}": "${ROLE_VALUE_3}" 
