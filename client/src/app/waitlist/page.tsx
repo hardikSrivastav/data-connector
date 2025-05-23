@@ -27,6 +27,7 @@ import { useSearchParams } from "next/navigation";
 declare global {
   interface Window {
     rdt?: (command: string, ...args: any[]) => void;
+    lintrk?: (command: string, ...args: any[]) => void;
   }
 }
 
@@ -60,6 +61,12 @@ function WaitlistForm() {
           conversion_id: 'waitlist_signup'
         });
         console.log('Reddit Pixel: Waitlist conversion tracked');
+      }
+      
+      // Track LinkedIn Insight Tag conversion
+      if (window.lintrk) {
+        window.lintrk('track', { conversion_id: 'waitlist_signup' });
+        console.log('LinkedIn Insight Tag: Conversion tracked');
       }
 
       // Also track server-side for reliability (works even with ad blockers)
