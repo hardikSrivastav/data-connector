@@ -8,8 +8,10 @@ import "@fontsource/libre-baskerville/400.css";
 import "@fontsource/libre-baskerville/700.css";
 import { RootSEO } from "@/components/seo/root-seo";
 import { reportWebVitals } from "@/components/seo/web-vitals";
-import AnalyticsProvider from "@/components/analytics-provider";
 import Script from "next/script";
+
+// Note: The AnalyticsProvider is temporarily commented out due to import issues
+// import AnalyticsProvider from "@/components/analytics-provider";
 
 export const metadata: Metadata = {
   title: {
@@ -82,27 +84,27 @@ export default function RootLayout({
           }}
         />
         
-        {/* Reddit Pixel */}
+        {/* Reddit Pixel with Debug Mode */}
         <Script
           id="reddit-pixel"
           strategy="afterInteractive"
           dangerouslySetInnerHTML={{
             __html: `
-              !function(w,d){if(!w.rdt){var p=w.rdt=function(){p.sendEvent?p.sendEvent.apply(p,arguments):p.callQueue.push(arguments)};p.callQueue=[];var t=d.createElement("script");t.src="https://www.redditstatic.com/ads/pixel.js",t.async=!0;var s=d.getElementsByTagName("script")[0];s.parentNode.insertBefore(t,s)}}(window,document);rdt('init','a2_h1mt1445rtou');rdt('track', 'PageVisit');
+              !function(w,d){if(!w.rdt){var p=w.rdt=function(){p.sendEvent?p.sendEvent.apply(p,arguments):p.callQueue.push(arguments)};p.callQueue=[];var t=d.createElement("script");t.src="https://www.redditstatic.com/ads/pixel.js",t.async=!0;var s=d.getElementsByTagName("script")[0];s.parentNode.insertBefore(t,s)}}(window,document);rdt('init','a2_h1mt1445rtou', {useDecimalCurrencyValues: true, debug: true});rdt('track', 'PageVisit');
+              console.log('Reddit Pixel: Initialized with debug mode');
             `,
           }}
         />
       </head>
       <body className="text-base md:text-lg">
         <RootSEO />
-        <AnalyticsProvider>
-          <Navbar />
-          <main className="relative min-h-screen">
-            {children}
-          </main>
-          <Footer />
-          <Toaster position="bottom-right" />
-        </AnalyticsProvider>
+        {/* Temporarily removing AnalyticsProvider due to import issues */}
+        <Navbar />
+        <main className="relative min-h-screen">
+          {children}
+        </main>
+        <Footer />
+        <Toaster position="bottom-right" />
       </body>
     </html>
   );
