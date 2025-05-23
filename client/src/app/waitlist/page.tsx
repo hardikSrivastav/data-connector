@@ -23,6 +23,13 @@ import PaymentModal from "@/components/waitlist/PaymentModal";
 import { registerForWaitlist, UserData, checkWaitlistStatus } from "@/lib/api";
 import { useSearchParams } from "next/navigation";
 
+// Extend Window interface to include Reddit Pixel
+declare global {
+  interface Window {
+    rdt?: (command: string, ...args: any[]) => void;
+  }
+}
+
 function WaitlistForm() {
   const [isSubmitted, setIsSubmitted] = useState(false);
   const [isPaymentModalOpen, setIsPaymentModalOpen] = useState(false);
@@ -46,6 +53,12 @@ function WaitlistForm() {
     // Listen for payment success event
     const handlePaymentSuccess = () => {
       setIsSubmitted(true);
+      
+      // Track Reddit Pixel conversion
+      if (window.rdt) {
+        window.rdt('track', 'SignUp');
+        console.log('Reddit Pixel: Waitlist conversion tracked');
+      }
     };
     
     window.addEventListener('payment_success', handlePaymentSuccess);
