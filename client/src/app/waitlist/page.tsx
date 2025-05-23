@@ -54,11 +54,51 @@ function WaitlistForm() {
     const handlePaymentSuccess = () => {
       setIsSubmitted(true);
       
-      // Track Reddit Pixel conversion
+      // Track Reddit Pixel conversion with proper format (client-side)
       if (window.rdt) {
-        window.rdt('track', 'SignUp');
+        window.rdt('track', 'SignUp', {
+          conversion_id: 'waitlist_signup'
+        });
         console.log('Reddit Pixel: Waitlist conversion tracked');
       }
+
+      // Also track server-side for reliability (works even with ad blockers)
+      fetch('/api/conversions/reddit', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          eventType: 'SignUp', // Standard event
+          testMode: process.env.NODE_ENV !== 'production' // Use test mode in development
+        }),
+      })
+      .then(response => response.json())
+      .then(data => {
+        if (data.success) {
+          console.log('Server-side Reddit conversion tracked successfully');
+        } else {
+          console.error('Failed to track server-side Reddit conversion', data.error);
+        }
+      })
+      .catch(error => {
+        console.error('Error calling Reddit conversion API:', error);
+      });
+
+      // You can also send a custom event if needed
+      /*
+      fetch('/api/conversions/reddit', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          eventType: 'Custom', 
+          customEventName: 'waitlist_signup',
+          testMode: process.env.NODE_ENV !== 'production'
+        }),
+      });
+      */
     };
     
     window.addEventListener('payment_success', handlePaymentSuccess);
