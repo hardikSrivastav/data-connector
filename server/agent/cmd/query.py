@@ -462,6 +462,45 @@ def test_connection(
                 else:
                     console.print("[yellow]Warning: No GA4 property ID found in settings.[/yellow]")
             
+            elif detected_db_type.lower() == "shopify":
+                # Special handling for Shopify - check if credentials exist
+                from pathlib import Path
+                credentials_file = os.path.join(str(Path.home()), ".data-connector", "shopify_credentials.json")
+                
+                if not os.path.exists(credentials_file):
+                    console.print("[red]❌ No Shopify credentials found[/red]")
+                    console.print("\n💡 [bold]To get started with Shopify:[/bold]")
+                    console.print("1. Run: [bold]python -m agent.cmd.query authenticate shopify --shop your-store[/bold]")
+                    console.print("2. Complete the OAuth flow in your browser")
+                    console.print("3. Then test the connection again")
+                    console.print(f"\nCredentials will be saved to: [dim]{credentials_file}[/dim]")
+                    return
+                
+                try:
+                    with open(credentials_file, 'r') as f:
+                        credentials = json.load(f)
+                    
+                    shops = credentials.get('shops', {})
+                    if not shops:
+                        console.print("[red]❌ No Shopify shops found in credentials[/red]")
+                        console.print("\n💡 [bold]To authenticate:[/bold]")
+                        console.print("Run: [bold]python -m agent.cmd.query authenticate shopify --shop your-store[/bold]")
+                        return
+                    
+                    shop_count = len(shops)
+                    console.print(f"Found {shop_count} Shopify shop(s) in credentials")
+                    
+                    # Show available shops
+                    for shop_domain, shop_data in shops.items():
+                        shop_name = shop_data.get('shop_info', {}).get('name', shop_domain)
+                        console.print(f"  • [cyan]{shop_name}[/cyan] ([dim]{shop_domain}[/dim])")
+                    
+                except Exception as e:
+                    console.print(f"[red]❌ Error reading Shopify credentials: {e}[/red]")
+                    console.print("\n💡 [bold]To fix this:[/bold]")
+                    console.print("Run: [bold]python -m agent.cmd.query authenticate shopify --shop your-store[/bold]")
+                    return
+            
             # Add db_type to kwargs
             kwargs['db_type'] = detected_db_type
             
@@ -472,8 +511,36 @@ def test_connection(
                 console.print("[green]Connection successful![/green]")
             else:
                 console.print("[red]Connection failed![/red]")
+                
+                # Provide specific guidance for Shopify
+                if detected_db_type.lower() == "shopify":
+                    console.print("\n🔧 [bold]Shopify Connection Troubleshooting:[/bold]")
+                    console.print("1. Verify your shop domain is correct")
+                    console.print("2. Check if your access token is still valid")
+                    console.print("3. Re-authenticate: [bold]python -m agent.cmd.query authenticate shopify --shop your-store[/bold]")
+                    console.print("4. Ensure the Shopify app has the required permissions")
         except Exception as e:
-            console.print(f"[red]Connection error: {str(e)}[/red]")
+            error_msg = str(e)
+            console.print(f"[red]Connection error: {error_msg}[/red]")
+            
+            # Provide specific guidance for Shopify errors
+            if detected_db_type.lower() == "shopify":
+                if "credentials file not found" in error_msg.lower():
+                    console.print("\n💡 [bold]Shopify Authentication Required:[/bold]")
+                    console.print("Run: [bold]python -m agent.cmd.query authenticate shopify --shop your-store[/bold]")
+                elif "not authenticated" in error_msg.lower():
+                    console.print("\n💡 [bold]Shopify Re-authentication Required:[/bold]")
+                    console.print("Your credentials may be expired. Re-authenticate with:")
+                    console.print("[bold]python -m agent.cmd.query authenticate shopify --shop your-store[/bold]")
+                elif "401" in error_msg or "unauthorized" in error_msg.lower():
+                    console.print("\n💡 [bold]Shopify Authorization Error:[/bold]")
+                    console.print("Your access token is invalid. Re-authenticate with:")
+                    console.print("[bold]python -m agent.cmd.query authenticate shopify --shop your-store[/bold]")
+                else:
+                    console.print("\n💡 [bold]General Shopify Troubleshooting:[/bold]")
+                    console.print("1. Verify your shop domain is correct")
+                    console.print("2. Re-authenticate: [bold]python -m agent.cmd.query authenticate shopify --shop your-store[/bold]")
+                    console.print("3. Check if the client app is running: [bold]cd client && npm run dev[/bold]")
     
     asyncio.run(run())
 
@@ -711,6 +778,8 @@ def query(
                     await run_qdrant_query(llm, question, analyze, orchestrator, detected_db_type)
                 elif detected_db_type.lower() == "slack":
                     await run_slack_query(llm, question, analyze, orchestrator, detected_db_type)
+                elif detected_db_type.lower() == "shopify":
+                    await run_shopify_query(llm, question, analyze, orchestrator, detected_db_type)
                 elif detected_db_type.lower() == "ga4":
                     await run_ga4_query(llm, question, analyze, orchestrator, detected_db_type)
                 else:
@@ -1003,53 +1072,6 @@ async def run_slack_query(llm, question: str, analyze: bool, orchestrator: Orche
             console.print("[yellow]No results found[/yellow]")
     except Exception as e:
         console.print(f"[red]Error executing Slack query: {str(e)}[/red]")
-        import traceback
-        console.print(traceback.format_exc())
-
-async def run_shopify_query(llm, question: str, analyze: bool, orchestrator: Orchestrator, db_type: str):
-    """Run a Shopify query"""
-    
-    # Search schema metadata specific to this database type
-    searcher = SchemaSearcher(db_type=db_type)
-    schema_chunks = await searcher.search(question, top_k=5, db_type=db_type)
-    
-    # Create context from schema chunks
-    schema_context = "\n\n".join([chunk.get("content", "") for chunk in schema_chunks])
-    
-    # Generate Shopify query using the adapter's natural language processing
-    console.print("Generating Shopify API query...")
-    
-    try:
-        # Use the adapter's llm_to_query method
-        query = await orchestrator.llm_to_query(question, schema_chunks=schema_chunks)
-        
-        # Print the query
-        console.print(f"\n[bold cyan]Shopify Query:[/bold cyan]")
-        formatted_query = json.dumps(query, indent=2)
-        console.print(f"[cyan]{formatted_query}[/cyan]\n")
-        
-        # Execute query
-        console.print("Executing Shopify API query...")
-        results = await orchestrator.execute(query)
-        
-        # Display results
-        if results:
-            # Format Shopify results for display
-            console.print(f"\n[bold]Retrieved {len(results)} items from Shopify:[/bold]")
-            
-            # Display in table format
-            display_query_results(results)
-            
-            # Analyze results if requested
-            if analyze:
-                console.print("\n[bold]Analyzing results...[/bold]")
-                analysis = await llm.analyze_results(results, is_ecommerce=True)
-                console.print(f"\n[bold green]Analysis:[/bold green]")
-                console.print(Panel(Markdown(analysis)))
-        else:
-            console.print("[yellow]No results found[/yellow]")
-    except Exception as e:
-        console.print(f"[red]Error executing Shopify query: {str(e)}[/red]")
         import traceback
         console.print(traceback.format_exc())
 
@@ -1522,9 +1544,11 @@ async def slack_refresh(args):
     
 async def shopify_auth(args):
     """
-    Authenticate with Shopify using OAuth flow
+    Authenticate with Shopify using OAuth flow with automatic credential polling
     """
     from agent.config.settings import Settings
+    from pathlib import Path
+    import time
     
     settings = Settings()
     app_url = settings.SHOPIFY_APP_URL
@@ -1567,19 +1591,83 @@ async def shopify_auth(args):
         "read_merchant_managed_fulfillment_orders", "read_third_party_fulfillment_orders"
     ]
     
+    # Determine environment and redirect URI based on app_url
+    redirect_uri = None
+    if "localhost" in app_url or "127.0.0.1" in app_url:
+        # Development environment
+        redirect_uri = f"{app_url}/shopify/callback"
+        console.print(f"[dim]Using development environment[/dim]")
+    else:
+        # Production environment - always use ceneca.ai for production
+        redirect_uri = "https://ceneca.ai/shopify/callback"
+        console.print(f"[dim]Using production environment[/dim]")
+    
+    console.print(f"Redirect URI: [dim]{redirect_uri}[/dim]")
+    
     # Create Shopify OAuth authorization URL
     from urllib.parse import urlencode
     
     oauth_params = {
         'client_id': client_id,
         'scope': ','.join(scopes),
-        'redirect_uri': f"{app_url}/shopify/callback",
+        'redirect_uri': redirect_uri,
         'state': session_id
     }
     
     auth_url = f"https://{shop_domain}/admin/oauth/authorize?{urlencode(oauth_params)}"
     
-    # Open browser
+    # Set up credentials file path
+    credentials_file = os.path.join(str(Path.home()), ".data-connector", "shopify_credentials.json")
+    
+    def check_credentials_exist():
+        """Check if credentials exist for the shop"""
+        try:
+            console.print(f"[dim]🔍 Checking for credentials file: {credentials_file}[/dim]")
+            
+            if not os.path.exists(credentials_file):
+                console.print(f"[dim]❌ Credentials file does not exist[/dim]")
+                return False
+            
+            console.print(f"[dim]✅ Credentials file exists, reading...[/dim]")
+            
+            with open(credentials_file, 'r') as f:
+                credentials = json.load(f)
+            
+            console.print(f"[dim]📖 Loaded credentials with shops: {list(credentials.get('shops', {}).keys())}[/dim]")
+            
+            shops = credentials.get('shops', {})
+            has_shop = shop_domain in shops
+            has_token = shops.get(shop_domain, {}).get('access_token') if has_shop else False
+            
+            console.print(f"[dim]🔍 Looking for shop: {shop_domain}[/dim]")
+            console.print(f"[dim]✅ Has shop: {has_shop}, Has token: {bool(has_token)}[/dim]")
+            
+            return has_shop and has_token
+        except Exception as e:
+            console.print(f"[dim]❌ Error checking credentials: {e}[/dim]")
+            logger.debug(f"Error checking credentials: {e}")
+            return False
+    
+    # Check if already authenticated
+    if check_credentials_exist():
+        console.print(f"[green]✅ Already authenticated with {shop_domain}![/green]")
+        
+        # Test the existing connection
+        try:
+            from agent.db.adapters.shopify import ShopifyAdapter
+            adapter = ShopifyAdapter(app_url, shop_domain=shop_domain)
+            if await adapter.test_connection():
+                console.print("[green]✅ Connection test successful![/green]")
+                console.print("You can run Shopify queries using: [bold]python -m agent.cmd.query --type shopify \"your question\"[/bold]")
+                return True
+            else:
+                console.print("[yellow]⚠️ Existing credentials found but connection test failed. Re-authenticating...[/yellow]")
+                # Continue with re-authentication
+        except Exception as e:
+            console.print(f"[yellow]⚠️ Error testing existing credentials: {e}. Re-authenticating...[/yellow]")
+            # Continue with re-authentication
+    
+    # Start OAuth flow
     console.print("\n" + "="*60)
     console.print(f"Opening browser for Shopify authentication...")
     console.print(f"If your browser doesn't open automatically, please visit:")
@@ -1592,39 +1680,66 @@ async def shopify_auth(args):
         console.print(f"[red]Failed to open browser: {e}[/red]")
         console.print(f"Please manually visit the URL above to complete authentication")
     
-    # For now, we'll use a simple manual flow
-    # In a full implementation, you'd poll the Remix app for completion
-    console.print("After completing authentication in your browser:")
-    console.print("1. Complete the app installation in Shopify")
-    console.print("2. You'll be redirected to the Ceneca app")
-    console.print("3. Your credentials will be automatically saved")
+    # Show instructions to user
+    console.print("📋 [bold]Complete these steps in your browser:[/bold]")
+    console.print("1. Authorize the Ceneca app in Shopify")
+    console.print("2. Wait for the success page to appear")
+    console.print("3. Return to this terminal\n")
     
-    # Manual token input for development/testing
-    console.print("\nFor testing, you can manually enter your access token:")
-    manual_token = input("Enter access token (or press Enter to skip): ").strip()
+    # Poll for credentials to be saved by the OAuth callback
+    console.print("🔄 Waiting for OAuth completion...")
     
-    if manual_token:
-        try:
-            # Import and use the Shopify adapter directly
-            from agent.db.adapters.shopify import ShopifyAdapter
+    max_attempts = 60  # 5 minutes (5 second intervals)
+    
+    with Progress(
+        SpinnerColumn(),
+        TextColumn("[bold blue]Waiting for authentication..."),
+        transient=False,
+    ) as progress:
+        task = progress.add_task("Authenticating...", total=max_attempts)
+        
+        for attempt in range(max_attempts):
+            await asyncio.sleep(5)  # Check every 5 seconds
+            progress.update(task, advance=1)
             
-            adapter = ShopifyAdapter("https://ceneca.ai", shop_domain=shop_domain)
-            success = await adapter.authenticate_shop(shop_domain, manual_token)
+            if check_credentials_exist():
+                progress.update(task, completed=max_attempts)
+                console.print(f"\n[green]✅ Authentication successful![/green]")
+                console.print(f"Credentials saved for shop: [bold]{shop_domain}[/bold]")
+                
+                # Verify the connection works
+                try:
+                    from agent.db.adapters.shopify import ShopifyAdapter
+                    adapter = ShopifyAdapter(app_url, shop_domain=shop_domain)
+                    if await adapter.test_connection():
+                        console.print("[green]✅ Connection test successful![/green]")
+                        console.print("\n🎉 [bold green]You're all set![/bold green]")
+                        console.print("Run Shopify queries using: [bold]python -m agent.cmd.query --type shopify \"your question\"[/bold]")
+                        return True
+                    else:
+                        console.print("[yellow]⚠️ Credentials saved but connection test failed[/yellow]")
+                        return False
+                except Exception as e:
+                    console.print(f"[yellow]⚠️ Credentials saved but connection test failed: {e}[/yellow]")
+                    return False
             
-            if success:
-                console.print(f"\n[green]Authentication successful![/green]")
-                console.print(f"Credentials saved for shop: {shop_domain}")
-                console.print("You can now run Shopify queries using: [bold]python -m agent.cmd.query --type shopify \"your question\"[/bold]")
-                return True
-            else:
-                console.print("[red]Authentication failed. Please check your access token.[/red]")
-                return False
-        except Exception as e:
-            console.print(f"[red]Error during authentication: {e}[/red]")
-            return False
+            # Show progress every 20 seconds
+            if attempt > 0 and attempt % 4 == 0:
+                elapsed = (attempt + 1) * 5
+                remaining = (max_attempts - attempt - 1) * 5
+                console.print(f"[dim]Still waiting... ({elapsed}s elapsed, {remaining}s remaining)[/dim]")
     
-    console.print("\nAuthentication flow initiated. Complete the process in your browser.")
-    return True
+    # Timeout
+    console.print("\n[red]❌ Authentication timed out after 5 minutes[/red]")
+    console.print("\n🔧 [bold]Troubleshooting:[/bold]")
+    console.print("1. Make sure the client app is running: [bold]cd client && npm run dev[/bold]")
+    console.print("2. Check that your Shopify app redirect URIs include:")
+    console.print(f"   • [cyan]{redirect_uri}[/cyan]")
+    console.print("3. Ensure you completed the OAuth flow in the browser")
+    console.print("4. Check the browser console for any errors")
+    console.print(f"5. Verify credentials file location: [dim]{credentials_file}[/dim]")
+    
+    return False
 
 async def main():
     parser = argparse.ArgumentParser(description='Data Connector CLI')

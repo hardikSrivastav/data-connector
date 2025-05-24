@@ -82,7 +82,7 @@ class Settings(BaseSettings):
     SLACK_URI: Optional[str] = yaml_config.get('slack', {}).get('uri', os.getenv('SLACK_URI', SLACK_MCP_URL))
     
     # Shopify Integration Settings
-    SHOPIFY_APP_URL: Optional[str] = yaml_config.get('shopify', {}).get('app_url', os.getenv('SHOPIFY_APP_URL', 'https://ceneca.ai'))
+    SHOPIFY_APP_URL: Optional[str] = yaml_config.get('shopify', {}).get('app_url', os.getenv('SHOPIFY_APP_URL', 'http://localhost:3000'))
     SHOPIFY_API_VERSION: Optional[str] = yaml_config.get('shopify', {}).get('api_version', os.getenv('SHOPIFY_API_VERSION', '2025-04'))
     SHOPIFY_APP_CLIENT_ID: Optional[str] = yaml_config.get('shopify', {}).get('client_id', os.getenv('SHOPIFY_APP_CLIENT_ID'))
     SHOPIFY_APP_CLIENT_SECRET: Optional[str] = yaml_config.get('shopify', {}).get('client_secret', os.getenv('SHOPIFY_APP_CLIENT_SECRET'))
