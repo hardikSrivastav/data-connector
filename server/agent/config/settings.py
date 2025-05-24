@@ -81,6 +81,14 @@ class Settings(BaseSettings):
     SLACK_UPDATE_FREQUENCY: int = yaml_config.get('slack', {}).get('update_frequency', int(os.getenv('SLACK_UPDATE_FREQUENCY', 6)))
     SLACK_URI: Optional[str] = yaml_config.get('slack', {}).get('uri', os.getenv('SLACK_URI', SLACK_MCP_URL))
     
+    # Shopify Integration Settings
+    SHOPIFY_APP_URL: Optional[str] = yaml_config.get('shopify', {}).get('app_url', os.getenv('SHOPIFY_APP_URL', 'https://ceneca.ai'))
+    SHOPIFY_API_VERSION: Optional[str] = yaml_config.get('shopify', {}).get('api_version', os.getenv('SHOPIFY_API_VERSION', '2025-04'))
+    SHOPIFY_APP_CLIENT_ID: Optional[str] = yaml_config.get('shopify', {}).get('client_id', os.getenv('SHOPIFY_APP_CLIENT_ID'))
+    SHOPIFY_APP_CLIENT_SECRET: Optional[str] = yaml_config.get('shopify', {}).get('client_secret', os.getenv('SHOPIFY_APP_CLIENT_SECRET'))
+    SHOPIFY_WEBHOOK_SECRET: Optional[str] = yaml_config.get('shopify', {}).get('webhook_secret', os.getenv('SHOPIFY_WEBHOOK_SECRET'))
+    SHOPIFY_URI: Optional[str] = yaml_config.get('shopify', {}).get('uri', os.getenv('SHOPIFY_URI', SHOPIFY_APP_URL))
+    
     # Vector Embedding Settings
     VECTOR_EMBEDDING_PROVIDER: str = yaml_config.get('vector_db', {}).get('embedding', {}).get('provider', os.getenv('VECTOR_EMBEDDING_PROVIDER', 'openai'))
     VECTOR_EMBEDDING_MODEL: Optional[str] = yaml_config.get('vector_db', {}).get('embedding', {}).get('model', os.getenv('VECTOR_EMBEDDING_MODEL', 'text-embedding-ada-002'))
@@ -241,6 +249,9 @@ class Settings(BaseSettings):
         elif self.DB_TYPE.lower() == "slack" and self.SLACK_URI:
             logger.info(f"Using SLACK_URI: {self.SLACK_URI}")
             return self.SLACK_URI
+        elif self.DB_TYPE.lower() == "shopify" and self.SHOPIFY_URI:
+            logger.info(f"Using SHOPIFY_URI: {self.SHOPIFY_URI}")
+            return self.SHOPIFY_URI
         elif self.DB_TYPE.lower() == "ga4" and self.GA4_KEY_FILE:
             ga4_uri = f"ga4://{self.GA4_PROPERTY_ID}"
             logger.info(f"Using GA4 URI: {ga4_uri}")

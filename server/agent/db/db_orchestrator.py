@@ -57,8 +57,8 @@ class Orchestrator:
         if not db_type:
             # For HTTP and HTTPS URLs, we can't infer the DB type
             if parsed_uri.scheme in ['http', 'https']:
-                # Try to get from kwargs or fall back to default
-                db_type = kwargs.get('db_type', 'postgres')
+                # Default to postgres if no explicit type provided
+                db_type = 'postgres'
                 logger.warning(f"HTTP(S) URI provided without explicit db_type, assuming {db_type}")
             else:
                 # Use the scheme as the database type

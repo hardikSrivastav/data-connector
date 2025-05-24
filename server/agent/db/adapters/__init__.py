@@ -11,6 +11,7 @@ from .postgres import PostgresAdapter
 from .mongo import MongoAdapter
 from .qdrant import QdrantAdapter, EmbeddingProvider
 from .slack import SlackAdapter
+from .shopify import ShopifyAdapter
 from .ga4 import GA4Adapter
 
 # Configure logging
@@ -24,7 +25,8 @@ ADAPTER_REGISTRY: Dict[str, Type[DBAdapter]] = {
     "mongo": MongoAdapter,
     "qdrant": QdrantAdapter,
     "slack": SlackAdapter,
+    "shopify": ShopifyAdapter,
     "ga4": GA4Adapter,
 }
 
-__all__ = ['DBAdapter', 'PostgresAdapter', 'MongoAdapter', 'QdrantAdapter', 'EmbeddingProvider', 'SlackAdapter', 'GA4Adapter'] 
+__all__ = ['DBAdapter', 'PostgresAdapter', 'MongoAdapter', 'QdrantAdapter', 'EmbeddingProvider', 'SlackAdapter', 'ShopifyAdapter', 'GA4Adapter'] 

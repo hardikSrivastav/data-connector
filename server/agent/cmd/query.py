@@ -362,9 +362,35 @@ def auth_login():
     asyncio.run(run())
 
 @app.command()
+def authenticate(
+    db_type: str = typer.Argument(..., help="Database type to authenticate with ('slack', 'shopify', 'ga4', etc.)"),
+    shop: Optional[str] = typer.Option(None, "--shop", help="Shop domain for Shopify (e.g., mystore.myshopify.com)")
+):
+    """Authenticate with a specific database/service type"""
+    async def run():
+        if db_type.lower() == "slack":
+            # Use existing Slack auth
+            class Args:
+                pass
+            args = Args()
+            await slack_auth(args)
+        elif db_type.lower() == "shopify":
+            # Use Shopify auth
+            class Args:
+                def __init__(self):
+                    self.shop = shop
+            args = Args()
+            await shopify_auth(args)
+        else:
+            console.print(f"[red]Authentication not yet implemented for {db_type}[/red]")
+            console.print("Supported types: slack, shopify")
+    
+    asyncio.run(run())
+
+@app.command()
 def test_connection(
     db_uri: Optional[str] = typer.Option(None, "--uri", "-u", help="Database connection URI (overrides settings)"),
-    db_type: Optional[str] = typer.Option(None, "--type", "-t", help="Database type ('postgres', 'mongodb', 'qdrant', 'ga4', etc.)")
+    db_type: Optional[str] = typer.Option(None, "--type", "-t", help="Database type ('postgres', 'mongodb', 'qdrant', 'shopify', 'ga4', etc.)")
 ):
     """Test database connection"""
     async def run():
@@ -435,6 +461,9 @@ def test_connection(
                     console.print(f"Using GA4 property ID: [bold]{kwargs['property_id']}[/bold]")
                 else:
                     console.print("[yellow]Warning: No GA4 property ID found in settings.[/yellow]")
+            
+            # Add db_type to kwargs
+            kwargs['db_type'] = detected_db_type
             
             orchestrator = Orchestrator(uri, **kwargs)
             conn_ok = await orchestrator.test_connection()
@@ -977,6 +1006,100 @@ async def run_slack_query(llm, question: str, analyze: bool, orchestrator: Orche
         import traceback
         console.print(traceback.format_exc())
 
+async def run_shopify_query(llm, question: str, analyze: bool, orchestrator: Orchestrator, db_type: str):
+    """Run a Shopify query"""
+    
+    # Search schema metadata specific to this database type
+    searcher = SchemaSearcher(db_type=db_type)
+    schema_chunks = await searcher.search(question, top_k=5, db_type=db_type)
+    
+    # Create context from schema chunks
+    schema_context = "\n\n".join([chunk.get("content", "") for chunk in schema_chunks])
+    
+    # Generate Shopify query using the adapter's natural language processing
+    console.print("Generating Shopify API query...")
+    
+    try:
+        # Use the adapter's llm_to_query method
+        query = await orchestrator.llm_to_query(question, schema_chunks=schema_chunks)
+        
+        # Print the query
+        console.print(f"\n[bold cyan]Shopify Query:[/bold cyan]")
+        formatted_query = json.dumps(query, indent=2)
+        console.print(f"[cyan]{formatted_query}[/cyan]\n")
+        
+        # Execute query
+        console.print("Executing Shopify API query...")
+        results = await orchestrator.execute(query)
+        
+        # Display results
+        if results:
+            # Format Shopify results for display
+            console.print(f"\n[bold]Retrieved {len(results)} items from Shopify:[/bold]")
+            
+            # Display in table format
+            display_query_results(results)
+            
+            # Analyze results if requested
+            if analyze:
+                console.print("\n[bold]Analyzing results...[/bold]")
+                analysis = await llm.analyze_results(results, is_ecommerce=True)
+                console.print(f"\n[bold green]Analysis:[/bold green]")
+                console.print(Panel(Markdown(analysis)))
+        else:
+            console.print("[yellow]No results found[/yellow]")
+    except Exception as e:
+        console.print(f"[red]Error executing Shopify query: {str(e)}[/red]")
+        import traceback
+        console.print(traceback.format_exc())
+
+async def run_shopify_query(llm, question: str, analyze: bool, orchestrator: Orchestrator, db_type: str):
+    """Run a Shopify query"""
+    
+    # Search schema metadata specific to this database type
+    searcher = SchemaSearcher(db_type=db_type)
+    schema_chunks = await searcher.search(question, top_k=5, db_type=db_type)
+    
+    # Create context from schema chunks
+    schema_context = "\n\n".join([chunk.get("content", "") for chunk in schema_chunks])
+    
+    # Generate Shopify query using the adapter's natural language processing
+    console.print("Generating Shopify API query...")
+    
+    try:
+        # Use the adapter's llm_to_query method
+        query = await orchestrator.llm_to_query(question, schema_chunks=schema_chunks)
+        
+        # Print the query
+        console.print(f"\n[bold cyan]Shopify Query:[/bold cyan]")
+        formatted_query = json.dumps(query, indent=2)
+        console.print(f"[cyan]{formatted_query}[/cyan]\n")
+        
+        # Execute query
+        console.print("Executing Shopify API query...")
+        results = await orchestrator.execute(query)
+        
+        # Display results
+        if results:
+            # Format Shopify results for display
+            console.print(f"\n[bold]Retrieved {len(results)} items from Shopify:[/bold]")
+            
+            # Display in table format
+            display_query_results(results)
+            
+            # Analyze results if requested
+            if analyze:
+                console.print("\n[bold]Analyzing results...[/bold]")
+                analysis = await llm.analyze_results(results, is_ecommerce=True)
+                console.print(f"\n[bold green]Analysis:[/bold green]")
+                console.print(Panel(Markdown(analysis)))
+        else:
+            console.print("[yellow]No results found[/yellow]")
+    except Exception as e:
+        console.print(f"[red]Error executing Shopify query: {str(e)}[/red]")
+        import traceback
+        console.print(traceback.format_exc())
+
 async def run_ga4_query(llm, question: str, analyze: bool, orchestrator: Orchestrator, db_type: str):
     """Run a Google Analytics 4 query"""
     
@@ -1396,6 +1519,112 @@ async def slack_refresh(args):
     except Exception as e:
         print(f"Error refreshing Slack schema: {e}")
         return False
+    
+async def shopify_auth(args):
+    """
+    Authenticate with Shopify using OAuth flow
+    """
+    from agent.config.settings import Settings
+    
+    settings = Settings()
+    app_url = settings.SHOPIFY_APP_URL
+    client_id = settings.SHOPIFY_APP_CLIENT_ID
+    
+    if not client_id:
+        console.print("[red]ERROR: SHOPIFY_APP_CLIENT_ID not configured.[/red]")
+        console.print("Please set SHOPIFY_APP_CLIENT_ID in your environment or config file.")
+        return False
+    
+    # Get shop domain from args or prompt user
+    shop_domain = args.shop if hasattr(args, 'shop') and args.shop else None
+    
+    if not shop_domain:
+        shop_domain = input("Enter your Shopify shop domain (e.g., mystore.myshopify.com): ").strip()
+    
+    if not shop_domain:
+        console.print("[red]Shop domain is required for authentication.[/red]")
+        return False
+    
+    # Ensure .myshopify.com suffix
+    if not shop_domain.endswith('.myshopify.com'):
+        if '.' not in shop_domain:
+            shop_domain = f"{shop_domain}.myshopify.com"
+    
+    console.print(f"Authenticating with Shopify shop: [bold]{shop_domain}[/bold]")
+    
+    # Generate a session ID for tracking this auth flow
+    session_id = secrets.token_urlsafe(16)
+    console.print(f"Generated session ID: {session_id}")
+    
+    # Define required scopes (matching our TOML configuration)
+    scopes = [
+        "read_orders", "read_products", "read_customers", "read_inventory",
+        "read_locations", "read_price_rules", "read_discounts", "read_analytics",
+        "read_reports", "read_checkouts", "read_draft_orders", "read_fulfillments",
+        "read_gift_cards", "read_marketing_events", "read_order_edits",
+        "read_payment_terms", "read_shipping", "read_themes", "read_translations",
+        "read_all_orders", "read_assigned_fulfillment_orders",
+        "read_merchant_managed_fulfillment_orders", "read_third_party_fulfillment_orders"
+    ]
+    
+    # Create Shopify OAuth authorization URL
+    from urllib.parse import urlencode
+    
+    oauth_params = {
+        'client_id': client_id,
+        'scope': ','.join(scopes),
+        'redirect_uri': f"{app_url}/shopify/callback",
+        'state': session_id
+    }
+    
+    auth_url = f"https://{shop_domain}/admin/oauth/authorize?{urlencode(oauth_params)}"
+    
+    # Open browser
+    console.print("\n" + "="*60)
+    console.print(f"Opening browser for Shopify authentication...")
+    console.print(f"If your browser doesn't open automatically, please visit:")
+    console.print(f"\n{auth_url}\n")
+    console.print("="*60 + "\n")
+    
+    try:
+        webbrowser.open(auth_url)
+    except Exception as e:
+        console.print(f"[red]Failed to open browser: {e}[/red]")
+        console.print(f"Please manually visit the URL above to complete authentication")
+    
+    # For now, we'll use a simple manual flow
+    # In a full implementation, you'd poll the Remix app for completion
+    console.print("After completing authentication in your browser:")
+    console.print("1. Complete the app installation in Shopify")
+    console.print("2. You'll be redirected to the Ceneca app")
+    console.print("3. Your credentials will be automatically saved")
+    
+    # Manual token input for development/testing
+    console.print("\nFor testing, you can manually enter your access token:")
+    manual_token = input("Enter access token (or press Enter to skip): ").strip()
+    
+    if manual_token:
+        try:
+            # Import and use the Shopify adapter directly
+            from agent.db.adapters.shopify import ShopifyAdapter
+            
+            adapter = ShopifyAdapter("https://ceneca.ai", shop_domain=shop_domain)
+            success = await adapter.authenticate_shop(shop_domain, manual_token)
+            
+            if success:
+                console.print(f"\n[green]Authentication successful![/green]")
+                console.print(f"Credentials saved for shop: {shop_domain}")
+                console.print("You can now run Shopify queries using: [bold]python -m agent.cmd.query --type shopify \"your question\"[/bold]")
+                return True
+            else:
+                console.print("[red]Authentication failed. Please check your access token.[/red]")
+                return False
+        except Exception as e:
+            console.print(f"[red]Error during authentication: {e}[/red]")
+            return False
+    
+    console.print("\nAuthentication flow initiated. Complete the process in your browser.")
+    return True
 
 async def main():
     parser = argparse.ArgumentParser(description='Data Connector CLI')
@@ -1411,7 +1640,7 @@ async def main():
     )
     query_parser.add_argument(
         '--type', '-t', 
-        choices=['postgres', 'mongodb', 'mongo', 'qdrant', 'slack', 'ga4'], 
+        choices=['postgres', 'mongodb', 'mongo', 'qdrant', 'slack', 'shopify', 'ga4'], 
         default=None,
         help='Specify database type to query'
     )
@@ -1505,6 +1734,7 @@ async def main():
             await slack_refresh(args)
         else:
             slack_parser.print_help()
+
     else:
         parser.print_help()
 
