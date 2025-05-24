@@ -13,6 +13,17 @@ import Script from "next/script";
 // Note: The AnalyticsProvider is temporarily commented out due to import issues
 // import AnalyticsProvider from "@/components/analytics-provider";
 
+// Extend Window interface for analytics
+declare global {
+  interface Window {
+    rdt?: (command: string, ...args: any[]) => void;
+    lintrk?: (command: string, ...args: any[]) => void;
+    _linkedin_partner_id?: string;
+    _linkedin_data_partner_ids?: string[];
+    twq?: (command: string, ...args: any[]) => void;
+  }
+}
+
 export const metadata: Metadata = {
   title: {
     default: siteConfig.name,
@@ -96,30 +107,95 @@ export default function RootLayout({
           }}
         />
         
-        {/* LinkedIn Insight Tag */}
+        {/* LinkedIn Insight Tag - Production Ready (Server Component Compatible) */}
         <Script
           id="linkedin-insight"
           strategy="afterInteractive"
           dangerouslySetInnerHTML={{
             __html: `
-              _linkedin_partner_id = "8435009";
-              window._linkedin_data_partner_ids = window._linkedin_data_partner_ids || [];
-              window._linkedin_data_partner_ids.push(_linkedin_partner_id);
-              
-              (function(l) {
-                if (!l){window.lintrk = function(a,b){window.lintrk.q.push([a,b])};
-                window.lintrk.q=[]}
-                var s = document.getElementsByTagName("script")[0];
-                var b = document.createElement("script");
-                b.type = "text/javascript";b.async = true;
-                b.src = "https://snap.licdn.com/li.lms-analytics/insight.min.js";
-                s.parentNode.insertBefore(b, s);
-              })(window.lintrk);
-              
-              console.log('LinkedIn Insight Tag: Initialized');
+              (function() {
+                try {
+                  // Set partner ID
+                  window._linkedin_partner_id = "8435009";
+                  window._linkedin_data_partner_ids = window._linkedin_data_partner_ids || [];
+                  window._linkedin_data_partner_ids.push(window._linkedin_partner_id);
+                  
+                  // Initialize lintrk function if not already loaded
+                  if (!window.lintrk) {
+                    window.lintrk = function(a, b) {
+                      window.lintrk.q.push([a, b]);
+                    };
+                    window.lintrk.q = [];
+                  }
+                  
+                  // Load LinkedIn script with improved error handling
+                  (function() {
+                    var s = document.getElementsByTagName("script")[0];
+                    var b = document.createElement("script");
+                    b.type = "text/javascript";
+                    b.async = true;
+                    b.src = "https://snap.licdn.com/li.lms-analytics/insight.min.js";
+                    
+                    // Add timeout to detect script load failures
+                    var loadTimeout = setTimeout(function() {
+                      console.warn('LinkedIn Insight Tag: Script load timeout after 10 seconds');
+                    }, 10000);
+                    
+                    b.onerror = function() {
+                      clearTimeout(loadTimeout);
+                      console.warn('LinkedIn Insight Tag: Failed to load script - network error');
+                    };
+                    
+                    b.onload = function() {
+                      clearTimeout(loadTimeout);
+                      console.log('LinkedIn Insight Tag: Script loaded successfully');
+                      
+                      // Wait a bit for script to initialize, then track page view
+                      setTimeout(function() {
+                        if (window.lintrk) {
+                          window.lintrk('track', { conversion_id: null });
+                          console.log('LinkedIn Insight Tag: Page view tracked');
+                        } else {
+                          console.warn('LinkedIn Insight Tag: lintrk function not available after load');
+                        }
+                      }, 100);
+                    };
+                    
+                    s.parentNode.insertBefore(b, s);
+                  })();
+                  
+                  console.log('LinkedIn Insight Tag: Initialized with partner ID 8435009');
+                } catch (error) {
+                  console.error('LinkedIn Insight Tag: Initialization error:', error);
+                }
+              })();
             `,
           }}
         />
+        
+                 {/* Twitter Conversion Tracking Script */}
+         <Script
+           id="twitter-conversion"
+           strategy="afterInteractive"
+           dangerouslySetInnerHTML={{
+             __html: `
+               (function() {
+                 try {
+                   !function(e,t,n,s,u,a){e.twq||(s=e.twq=function(){s.exe?s.exe.apply(s,arguments):s.queue.push(arguments);
+                   },s.version='1.1',s.queue=[],u=t.createElement(n),u.async=!0,u.src='https://static.ads-twitter.com/uwt.js',
+                   a=t.getElementsByTagName(n)[0],a.parentNode.insertBefore(u,a))}(window,document,'script');
+                   
+                   // Configure Twitter tracking
+                   twq('config','pto3a');
+                   
+                   console.log('Twitter Conversion Tracking: Initialized with pixel ID pto3a');
+                 } catch (error) {
+                   console.error('Twitter Conversion Tracking: Initialization error:', error);
+                 }
+               })();
+             `,
+           }}
+         />
       </head>
       <body className="text-base md:text-lg">
         {/* LinkedIn Insight Tag noscript fallback */}

@@ -28,6 +28,7 @@ declare global {
   interface Window {
     rdt?: (command: string, ...args: any[]) => void;
     lintrk?: (command: string, ...args: any[]) => void;
+    twq?: (command: string, ...args: any[]) => void;
   }
 }
 
@@ -67,6 +68,14 @@ function WaitlistForm() {
       if (window.lintrk) {
         window.lintrk('track', { conversion_id: 'waitlist_signup' });
         console.log('LinkedIn Insight Tag: Conversion tracked');
+      }
+
+      // Track Twitter conversion
+      if (window.twq) {
+        window.twq('event', 'tw-pto3a-pto3c', {
+          email_address: formData.email || null // Pass the user's email address
+        });
+        console.log('Twitter Conversion: Waitlist signup tracked');
       }
 
       // Also track server-side for reliability (works even with ad blockers)
