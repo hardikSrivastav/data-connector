@@ -86,6 +86,7 @@ class Settings(BaseSettings):
     SHOPIFY_API_VERSION: Optional[str] = yaml_config.get('shopify', {}).get('api_version', os.getenv('SHOPIFY_API_VERSION', '2025-04'))
     SHOPIFY_APP_CLIENT_ID: Optional[str] = yaml_config.get('shopify', {}).get('client_id', os.getenv('SHOPIFY_APP_CLIENT_ID'))
     SHOPIFY_APP_CLIENT_SECRET: Optional[str] = yaml_config.get('shopify', {}).get('client_secret', os.getenv('SHOPIFY_APP_CLIENT_SECRET'))
+    SHOPIFY_REDIRECT_URI: Optional[str] = yaml_config.get('shopify', {}).get('redirect_uri', os.getenv('SHOPIFY_REDIRECT_URI'))
     SHOPIFY_WEBHOOK_SECRET: Optional[str] = yaml_config.get('shopify', {}).get('webhook_secret', os.getenv('SHOPIFY_WEBHOOK_SECRET'))
     SHOPIFY_URI: Optional[str] = yaml_config.get('shopify', {}).get('uri', os.getenv('SHOPIFY_URI', SHOPIFY_APP_URL))
     
