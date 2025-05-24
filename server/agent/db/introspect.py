@@ -220,7 +220,7 @@ async def get_schema_metadata(conn_uri: Optional[str] = None, db_type: Optional[
     # Use provided URI or fall back to settings
     uri = conn_uri or settings.connection_uri
     
-    # Determine database type with special handling for HTTP-based URIs
+    # Determine database type from arguments, then URI if not provided
     if not db_type:
         parsed_uri = urlparse(uri)
         
@@ -244,9 +244,9 @@ async def get_schema_metadata(conn_uri: Optional[str] = None, db_type: Optional[
             await pool.close()
     else:
         # For all other database types, use the orchestrator
-        from ..db.orchestrator import Orchestrator
+        from ..db.db_orchestrator import Orchestrator
         
-        # Pass db_type explicitly to help with HTTP-based URIs
+        # Always pass the explicitly determined db_type to the orchestrator
         kwargs['db_type'] = db_type
         
         # Create orchestrator with the appropriate adapter

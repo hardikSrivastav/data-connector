@@ -1,5 +1,5 @@
 from pydantic import validator, BaseSettings
-from typing import Optional, List
+from typing import Optional, List, Dict, Any
 import os
 from dotenv import load_dotenv
 from pathlib import Path
@@ -10,16 +10,17 @@ logger = logging.getLogger(__name__)
 
 # Import the config loader
 try:
-    from .config_loader import load_config, get_database_uri, get_default_database_type
+    from .config_loader import load_config, get_database_uri, get_default_database_type, load_auth_config
 except ImportError:
     # If we can't import directly, try the absolute import
     try:
-        from agent.config.config_loader import load_config, get_database_uri, get_default_database_type
+        from agent.config.config_loader import load_config, get_database_uri, get_default_database_type, load_auth_config
     except ImportError:
         # Define stubs for when the module can't be imported
         def load_config(): return {}
         def get_database_uri(db_type): return None
         def get_default_database_type(): return "postgres"
+        def load_auth_config(): return {}
 
 # Load environment variables from .env file if present
 load_dotenv()
@@ -27,6 +28,10 @@ load_dotenv()
 # Load YAML configuration
 yaml_config = load_config()
 logger.info(f"Loaded YAML config: {yaml_config}")
+
+# Load auth configuration
+auth_config = load_auth_config()
+logger.info(f"Loaded auth config: {auth_config}")
 
 # Set default database type
 default_db = get_default_database_type()
@@ -76,6 +81,15 @@ class Settings(BaseSettings):
     SLACK_UPDATE_FREQUENCY: int = yaml_config.get('slack', {}).get('update_frequency', int(os.getenv('SLACK_UPDATE_FREQUENCY', 6)))
     SLACK_URI: Optional[str] = yaml_config.get('slack', {}).get('uri', os.getenv('SLACK_URI', SLACK_MCP_URL))
     
+    # Shopify Integration Settings
+    SHOPIFY_APP_URL: Optional[str] = yaml_config.get('shopify', {}).get('app_url', os.getenv('SHOPIFY_APP_URL', 'https://ceneca.ai'))
+    SHOPIFY_API_VERSION: Optional[str] = yaml_config.get('shopify', {}).get('api_version', os.getenv('SHOPIFY_API_VERSION', '2025-04'))
+    SHOPIFY_APP_CLIENT_ID: Optional[str] = yaml_config.get('shopify', {}).get('client_id', os.getenv('SHOPIFY_APP_CLIENT_ID'))
+    SHOPIFY_APP_CLIENT_SECRET: Optional[str] = yaml_config.get('shopify', {}).get('client_secret', os.getenv('SHOPIFY_APP_CLIENT_SECRET'))
+    SHOPIFY_REDIRECT_URI: Optional[str] = yaml_config.get('shopify', {}).get('redirect_uri', os.getenv('SHOPIFY_REDIRECT_URI'))
+    SHOPIFY_WEBHOOK_SECRET: Optional[str] = yaml_config.get('shopify', {}).get('webhook_secret', os.getenv('SHOPIFY_WEBHOOK_SECRET'))
+    SHOPIFY_URI: Optional[str] = yaml_config.get('shopify', {}).get('uri', os.getenv('SHOPIFY_URI', SHOPIFY_APP_URL))
+    
     # Vector Embedding Settings
     VECTOR_EMBEDDING_PROVIDER: str = yaml_config.get('vector_db', {}).get('embedding', {}).get('provider', os.getenv('VECTOR_EMBEDDING_PROVIDER', 'openai'))
     VECTOR_EMBEDDING_MODEL: Optional[str] = yaml_config.get('vector_db', {}).get('embedding', {}).get('model', os.getenv('VECTOR_EMBEDDING_MODEL', 'text-embedding-ada-002'))
@@ -87,13 +101,22 @@ class Settings(BaseSettings):
     # Debug/Override Settings
     DB_DSN_OVERRIDE: Optional[str] = os.getenv('DB_DSN_OVERRIDE')
     
-    # Authentication Settings (for future SSO integration)
-    AUTH_ENABLED: bool = False
-    AUTH_PROVIDER: Optional[str] = None  # "azure", "okta", "keycloak", etc.
-    AUTH_CLIENT_ID: Optional[str] = None
-    AUTH_CLIENT_SECRET: Optional[str] = None
-    AUTH_ISSUER_URL: Optional[str] = None
-    AUTH_AUDIENCE: Optional[str] = None
+    # Authentication Settings (from auth-config.yaml)
+    AUTH_ENABLED: bool = auth_config.get('sso', {}).get('enabled', False)
+    AUTH_PROTOCOL: Optional[str] = auth_config.get('sso', {}).get('default_protocol', 'oidc')
+    
+    # OIDC Settings (from auth-config.yaml)
+    OIDC_PROVIDER: Optional[str] = auth_config.get('sso', {}).get('oidc', {}).get('provider')
+    OIDC_CLIENT_ID: Optional[str] = auth_config.get('sso', {}).get('oidc', {}).get('client_id')
+    OIDC_CLIENT_SECRET: Optional[str] = auth_config.get('sso', {}).get('oidc', {}).get('client_secret')
+    OIDC_ISSUER: Optional[str] = auth_config.get('sso', {}).get('oidc', {}).get('issuer')
+    OIDC_DISCOVERY_URL: Optional[str] = auth_config.get('sso', {}).get('oidc', {}).get('discovery_url')
+    OIDC_REDIRECT_URI: Optional[str] = auth_config.get('sso', {}).get('oidc', {}).get('redirect_uri')
+    OIDC_SCOPES: List[str] = auth_config.get('sso', {}).get('oidc', {}).get('scopes', ["openid", "email", "profile"])
+    OIDC_CLAIMS_MAPPING: Dict[str, str] = auth_config.get('sso', {}).get('oidc', {}).get('claims_mapping', {})
+    
+    # Role mappings (from auth-config.yaml)
+    ROLE_MAPPINGS: Dict[str, str] = auth_config.get('role_mappings', {})
     
     # Network Security (for future VPN integration)
     ALLOWED_CIDR_BLOCKS: Optional[str] = None  # Comma-separated list of allowed IP ranges
@@ -161,6 +184,20 @@ class Settings(BaseSettings):
         return str(app_dir)
     
     @property
+    def is_auth_enabled(self) -> bool:
+        """Check if authentication is properly configured and enabled"""
+        if not self.AUTH_ENABLED:
+            return False
+            
+        if self.AUTH_PROTOCOL == 'oidc':
+            # Check if required OIDC settings are present
+            return bool(self.OIDC_PROVIDER and self.OIDC_CLIENT_ID and self.OIDC_CLIENT_SECRET and 
+                        self.OIDC_ISSUER and self.OIDC_REDIRECT_URI)
+        
+        # Default to disabled if protocol not recognized
+        return False
+    
+    @property
     def db_dsn(self) -> str:
         """
         Constructs the PostgreSQL connection string from settings
@@ -213,6 +250,9 @@ class Settings(BaseSettings):
         elif self.DB_TYPE.lower() == "slack" and self.SLACK_URI:
             logger.info(f"Using SLACK_URI: {self.SLACK_URI}")
             return self.SLACK_URI
+        elif self.DB_TYPE.lower() == "shopify" and self.SHOPIFY_URI:
+            logger.info(f"Using SHOPIFY_URI: {self.SHOPIFY_URI}")
+            return self.SHOPIFY_URI
         elif self.DB_TYPE.lower() == "ga4" and self.GA4_KEY_FILE:
             ga4_uri = f"ga4://{self.GA4_PROPERTY_ID}"
             logger.info(f"Using GA4 URI: {ga4_uri}")

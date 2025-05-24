@@ -6,6 +6,7 @@ import os
 import sys
 import time
 import uuid
+import urllib.parse
 from typing import Optional, Dict, Any, List
 import logging
 from rich.console import Console
@@ -33,7 +34,7 @@ from agent.tools.state_manager import StateManager
 from agent.config.settings import Settings
 from agent.config.config_loader import load_config, load_config_with_defaults
 from agent.performance import ensure_schema_index_updated
-from agent.db.orchestrator import Orchestrator
+from agent.db.db_orchestrator import Orchestrator
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
@@ -45,10 +46,351 @@ console = Console()
 # Create typer app
 app = typer.Typer(help="Data Connector CLI")
 
+# Create auth sub-app
+auth_app = typer.Typer(help="Authentication commands")
+app.add_typer(auth_app, name="auth")
+
+@auth_app.command("test")
+def auth_test():
+    """Test authentication configuration"""
+    async def run():
+        settings = Settings()
+        
+        console.print(f"[bold]Authentication Configuration:[/bold]")
+        console.print(f"Auth Enabled: {'[green]Yes[/green]' if settings.AUTH_ENABLED else '[red]No[/red]'}")
+        console.print(f"Auth Protocol: {settings.AUTH_PROTOCOL or '[dim]Not configured[/dim]'}")
+        
+        if settings.AUTH_PROTOCOL == 'oidc':
+            console.print(f"\n[bold]OIDC Configuration:[/bold]")
+            console.print(f"Provider: {settings.OIDC_PROVIDER or '[dim]Not configured[/dim]'}")
+            console.print(f"Client ID: {settings.OIDC_CLIENT_ID or '[dim]Not configured[/dim]'}")
+            console.print(f"Client Secret: {'[green]Configured[/green]' if settings.OIDC_CLIENT_SECRET else '[red]Not configured[/red]'}")
+            console.print(f"Issuer: {settings.OIDC_ISSUER or '[dim]Not configured[/dim]'}")
+            console.print(f"Discovery URL: {settings.OIDC_DISCOVERY_URL or '[dim]Not configured[/dim]'}")
+            console.print(f"Redirect URI: {settings.OIDC_REDIRECT_URI or '[dim]Not configured[/dim]'}")
+            
+            # Show scopes
+            if settings.OIDC_SCOPES:
+                console.print(f"Scopes: {', '.join(settings.OIDC_SCOPES)}")
+            else:
+                console.print(f"Scopes: [dim]None configured[/dim]")
+            
+            # Show claims mapping
+            if settings.OIDC_CLAIMS_MAPPING:
+                console.print(f"\n[bold]Claims Mapping:[/bold]")
+                for claim, attr in settings.OIDC_CLAIMS_MAPPING.items():
+                    console.print(f"  {claim} → {attr}")
+        
+        # Show role mappings if any
+        if settings.ROLE_MAPPINGS:
+            console.print(f"\n[bold]Role Mappings:[/bold]")
+            for group, role in settings.ROLE_MAPPINGS.items():
+                console.print(f"  {group} → {role}")
+        
+        # Overall status
+        console.print(f"\n[bold]Authentication Status:[/bold]")
+        if settings.is_auth_enabled:
+            console.print(f"[green]Authentication is properly configured and enabled[/green]")
+        else:
+            console.print(f"[yellow]Authentication is not fully configured or is disabled[/yellow]")
+            
+            # Provide guidance on what's missing
+            if not settings.AUTH_ENABLED:
+                console.print("  • Authentication is disabled in config")
+            elif settings.AUTH_PROTOCOL == 'oidc':
+                if not settings.OIDC_PROVIDER:
+                    console.print("  • OIDC provider is not configured")
+                if not settings.OIDC_CLIENT_ID:
+                    console.print("  • OIDC client ID is not configured")
+                if not settings.OIDC_CLIENT_SECRET:
+                    console.print("  • OIDC client secret is not configured")
+                if not settings.OIDC_ISSUER:
+                    console.print("  • OIDC issuer is not configured")
+                if not settings.OIDC_REDIRECT_URI:
+                    console.print("  • OIDC redirect URI is not configured")
+    
+    asyncio.run(run())
+
+@auth_app.command("login")
+def auth_login():
+    """Login using configured authentication provider"""
+    async def run():
+        settings = Settings()
+        
+        # Verify that auth is properly configured
+        if not settings.AUTH_ENABLED:
+            console.print("[red]Authentication is not enabled in config.[/red]")
+            console.print("Please set 'enabled: true' in the sso section of auth-config.yaml")
+            return
+        
+        if settings.AUTH_PROTOCOL == 'oidc':
+            # Check that all required OIDC settings are present
+            missing_settings = []
+            if not settings.OIDC_PROVIDER:
+                missing_settings.append("OIDC provider")
+            if not settings.OIDC_CLIENT_ID:
+                missing_settings.append("OIDC client ID")
+            if not settings.OIDC_CLIENT_SECRET:
+                missing_settings.append("OIDC client secret")
+            if not settings.OIDC_ISSUER:
+                missing_settings.append("OIDC issuer")
+            if not settings.OIDC_REDIRECT_URI:
+                missing_settings.append("OIDC redirect URI")
+                
+            if missing_settings:
+                console.print("[red]Authentication is not fully configured.[/red]")
+                console.print("The following settings are missing:")
+                for setting in missing_settings:
+                    console.print(f"  • {setting}")
+                return
+            
+            # Generate a session ID for the auth flow
+            session_id = secrets.token_urlsafe(16)
+            
+            # Define the redirect URI - this should match what's configured in auth-config.yaml
+            redirect_uri = settings.OIDC_REDIRECT_URI
+            
+            # Set up the OIDC authorization parameters
+            auth_params = {
+                "client_id": settings.OIDC_CLIENT_ID,
+                "response_type": "code",
+                "scope": " ".join(settings.OIDC_SCOPES),
+                "redirect_uri": redirect_uri,
+                "state": session_id,
+                "nonce": secrets.token_urlsafe(8)
+            }
+            
+            # Construct the authorization URL based on the discovery URL
+            auth_url = None
+            
+            if settings.OIDC_DISCOVERY_URL:
+                try:
+                    # Fetch the OpenID configuration
+                    discovery_response = requests.get(settings.OIDC_DISCOVERY_URL)
+                    discovery_response.raise_for_status()
+                    
+                    discovery_data = discovery_response.json()
+                    auth_endpoint = discovery_data.get("authorization_endpoint")
+                    
+                    if not auth_endpoint:
+                        console.print("[red]Could not find authorization endpoint in OIDC discovery document.[/red]")
+                        return
+                    
+                    # Build the authorization URL with the parameters
+                    auth_url = f"{auth_endpoint}?{urllib.parse.urlencode(auth_params)}"
+                    
+                except Exception as e:
+                    console.print(f"[red]Error fetching OIDC discovery document: {str(e)}[/red]")
+                    return
+            else:
+                # Construct the URL directly from the issuer
+                auth_url = f"{settings.OIDC_ISSUER}/protocol/openid-connect/auth?{urllib.parse.urlencode(auth_params)}"
+            
+            # Set up a local HTTP server to handle the redirect
+            callback_port = int(urlparse(redirect_uri).port or 8000)
+            callback_host = urlparse(redirect_uri).hostname or "localhost"
+            
+            # Create a temporary directory to store auth tokens
+            token_dir = os.path.join(settings.get_app_dir(), "tokens")
+            os.makedirs(token_dir, exist_ok=True)
+            token_file = os.path.join(token_dir, f"oidc_token_{session_id}.json")
+            
+            # Set up a function to handle the callback
+            async def handle_callback(request):
+                code = request.query.get("code")
+                state = request.query.get("state")
+                
+                if not code or state != session_id:
+                    return web.Response(text="Authentication failed. Invalid state parameter.", content_type="text/html")
+                
+                # Exchange the code for tokens
+                token_params = {
+                    "grant_type": "authorization_code",
+                    "code": code,
+                    "redirect_uri": redirect_uri,
+                    "client_id": settings.OIDC_CLIENT_ID,
+                    "client_secret": settings.OIDC_CLIENT_SECRET
+                }
+                
+                try:
+                    # Get the token endpoint from discovery if available
+                    token_endpoint = None
+                    if settings.OIDC_DISCOVERY_URL:
+                        discovery_response = requests.get(settings.OIDC_DISCOVERY_URL)
+                        discovery_response.raise_for_status()
+                        
+                        discovery_data = discovery_response.json()
+                        token_endpoint = discovery_data.get("token_endpoint")
+                        
+                    if not token_endpoint:
+                        # Fallback to constructing from issuer
+                        token_endpoint = f"{settings.OIDC_ISSUER}/protocol/openid-connect/token"
+                    
+                    # Exchange the code for tokens
+                    token_response = requests.post(token_endpoint, data=token_params)
+                    token_response.raise_for_status()
+                    
+                    token_data = token_response.json()
+                    
+                    # Save the tokens
+                    with open(token_file, "w") as f:
+                        json.dump(token_data, f, indent=2)
+                    
+                    # Get user info if possible
+                    user_info = None
+                    access_token = token_data.get("access_token")
+                    
+                    if access_token:
+                        # Try to get user info endpoint from discovery
+                        userinfo_endpoint = None
+                        if settings.OIDC_DISCOVERY_URL:
+                            discovery_data = discovery_response.json()
+                            userinfo_endpoint = discovery_data.get("userinfo_endpoint")
+                            
+                        if userinfo_endpoint:
+                            userinfo_response = requests.get(
+                                userinfo_endpoint,
+                                headers={"Authorization": f"Bearer {access_token}"}
+                            )
+                            if userinfo_response.status_code == 200:
+                                user_info = userinfo_response.json()
+                    
+                    # Return a simple HTML response to the user
+                    success_html = """
+                    <!DOCTYPE html>
+                    <html>
+                    <head>
+                        <title>Authentication Successful</title>
+                        <style>
+                            body { font-family: Arial, sans-serif; text-align: center; padding: 50px; }
+                            .success { color: green; }
+                            .info { margin-top: 20px; text-align: left; display: inline-block; }
+                        </style>
+                    </head>
+                    <body>
+                        <h1 class="success">Authentication Successful!</h1>
+                        <p>You have successfully authenticated with Data Connector.</p>
+                        <p>You can close this window and return to the command line.</p>
+                    </body>
+                    </html>
+                    """
+                    
+                    # Signal the waiting thread that auth is complete
+                    auth_event.set()
+                    
+                    return web.Response(text=success_html, content_type="text/html")
+                    
+                except Exception as e:
+                    error_message = f"Error exchanging code for tokens: {str(e)}"
+                    console.print(f"[red]{error_message}[/red]")
+                    return web.Response(text=f"<h1>Authentication Error</h1><p>{error_message}</p>", content_type="text/html")
+            
+            # We need aiohttp for this - check if it's available
+            try:
+                from aiohttp import web
+            except ImportError:
+                console.print("[red]The aiohttp package is required for authentication.[/red]")
+                console.print("Please install it with: pip install aiohttp")
+                return
+            
+            # Create an event to signal when auth is complete
+            auth_event = asyncio.Event()
+            
+            # Start the web server
+            app = web.Application()
+            app.router.add_get(urlparse(redirect_uri).path, handle_callback)
+            
+            runner = web.AppRunner(app)
+            await runner.setup()
+            site = web.TCPSite(runner, callback_host, callback_port)
+            
+            try:
+                await site.start()
+                
+                # Open the browser
+                console.print("\n" + "="*60)
+                console.print(f"Opening browser for authentication...")
+                console.print(f"If your browser doesn't open automatically, please visit:")
+                console.print(f"\n{auth_url}\n")
+                console.print("="*60 + "\n")
+                
+                try:
+                    webbrowser.open(auth_url)
+                except Exception as e:
+                    console.print(f"Failed to open browser: {e}")
+                    console.print(f"Please manually visit the URL above to complete authentication")
+                
+                # Wait for the auth to complete or timeout
+                console.print("Waiting for authentication to complete in the browser...")
+                
+                try:
+                    # Wait with a timeout
+                    await asyncio.wait_for(auth_event.wait(), timeout=300)  # 5-minute timeout
+                    
+                    # Check if the token file exists
+                    if os.path.exists(token_file):
+                        with open(token_file, "r") as f:
+                            token_data = json.load(f)
+                        
+                        # Display success message
+                        console.print("\n[green]Authentication successful![/green]")
+                        
+                        # Show token expiry
+                        if "expires_in" in token_data:
+                            expires_in = token_data["expires_in"]
+                            console.print(f"Token will expire in {expires_in} seconds")
+                        
+                        # Show scopes
+                        if "scope" in token_data:
+                            scopes = token_data["scope"].split()
+                            console.print(f"Granted scopes: {', '.join(scopes)}")
+                        
+                        console.print("\nYou are now authenticated and can use protected resources.")
+                    else:
+                        console.print("\n[red]Authentication failed: Token file not created[/red]")
+                
+                except asyncio.TimeoutError:
+                    console.print("\n[red]Authentication timed out after 5 minutes[/red]")
+                
+            finally:
+                # Clean up
+                await runner.cleanup()
+        else:
+            console.print(f"[red]Unsupported authentication protocol: {settings.AUTH_PROTOCOL}[/red]")
+            console.print("Currently only 'oidc' is supported")
+    
+    asyncio.run(run())
+
+@app.command()
+def authenticate(
+    db_type: str = typer.Argument(..., help="Database type to authenticate with ('slack', 'shopify', 'ga4', etc.)"),
+    shop: Optional[str] = typer.Option(None, "--shop", help="Shop domain for Shopify (e.g., mystore.myshopify.com)")
+):
+    """Authenticate with a specific database/service type"""
+    async def run():
+        if db_type.lower() == "slack":
+            # Use existing Slack auth
+            class Args:
+                pass
+            args = Args()
+            await slack_auth(args)
+        elif db_type.lower() == "shopify":
+            # Use Shopify auth
+            class Args:
+                def __init__(self):
+                    self.shop = shop
+            args = Args()
+            await shopify_auth(args)
+        else:
+            console.print(f"[red]Authentication not yet implemented for {db_type}[/red]")
+            console.print("Supported types: slack, shopify")
+    
+    asyncio.run(run())
+
 @app.command()
 def test_connection(
     db_uri: Optional[str] = typer.Option(None, "--uri", "-u", help="Database connection URI (overrides settings)"),
-    db_type: Optional[str] = typer.Option(None, "--type", "-t", help="Database type ('postgres', 'mongodb', 'qdrant', etc.)")
+    db_type: Optional[str] = typer.Option(None, "--type", "-t", help="Database type ('postgres', 'mongodb', 'qdrant', 'shopify', 'ga4', etc.)")
 ):
     """Test database connection"""
     async def run():
@@ -112,6 +454,17 @@ def test_connection(
                     # Use a default database name if not in the URI
                     kwargs['db_name'] = "admin"
                 
+            elif detected_db_type.lower() == "ga4":
+                # Add GA4 specific parameters if needed
+                kwargs['property_id'] = settings.GA4_PROPERTY_ID if hasattr(settings, 'GA4_PROPERTY_ID') else None
+                if kwargs['property_id']:
+                    console.print(f"Using GA4 property ID: [bold]{kwargs['property_id']}[/bold]")
+                else:
+                    console.print("[yellow]Warning: No GA4 property ID found in settings.[/yellow]")
+            
+            # Add db_type to kwargs
+            kwargs['db_type'] = detected_db_type
+            
             orchestrator = Orchestrator(uri, **kwargs)
             conn_ok = await orchestrator.test_connection()
             
@@ -127,7 +480,7 @@ def test_connection(
 @app.command()
 def build_index(
     db_uri: Optional[str] = typer.Option(None, "--uri", "-u", help="Database connection URI (overrides settings)"),
-    db_type: Optional[str] = typer.Option(None, "--type", "-t", help="Database type ('postgres', 'mongodb', etc.)")
+    db_type: Optional[str] = typer.Option(None, "--type", "-t", help="Database type ('postgres', 'mongodb', 'ga4', etc.)")
 ):
     """Build schema metadata index"""
     async def run():
@@ -180,7 +533,7 @@ def build_index(
 def check_schema(
     force: bool = typer.Option(False, "--force", "-f", help="Force reindexing even if no changes detected"),
     db_uri: Optional[str] = typer.Option(None, "--uri", "-u", help="Database connection URI (overrides settings)"),
-    db_type: Optional[str] = typer.Option(None, "--type", "-t", help="Database type ('postgres', 'mongodb', etc.)"),
+    db_type: Optional[str] = typer.Option(None, "--type", "-t", help="Database type ('postgres', 'mongodb', 'ga4', etc.)"),
     debug: bool = typer.Option(False, "--debug", "-d", help="Show debug output")
 ):
     """Check for schema changes and update index if needed"""
@@ -252,7 +605,7 @@ def query(
     analyze: bool = typer.Option(False, "--analyze", "-a", help="Analyze query results"),
     orchestrate: bool = typer.Option(False, "--orchestrate", "-o", help="Use multi-step orchestrated analysis"),
     db_uri: Optional[str] = typer.Option(None, "--uri", "-u", help="Database connection URI (overrides settings)"),
-    db_type: Optional[str] = typer.Option(None, "--type", "-t", help="Database type ('postgres', 'mongodb', etc.)")
+    db_type: Optional[str] = typer.Option(None, "--type", "-t", help="Database type ('postgres', 'mongodb', 'ga4', etc.)")
 ):
     """
     Translate natural language to a database query and execute it
@@ -305,6 +658,23 @@ def query(
                 kwargs['prefer_grpc'] = settings.QDRANT_PREFER_GRPC
                 console.print(f"Using Qdrant collection: [bold]{kwargs['collection_name']}[/bold]")
             
+            elif detected_db_type.lower() == "ga4":
+                # For GA4, we need to ensure the URI is in the correct format
+                # If using a Postgres URI with GA4 db_type, override it
+                if not uri.startswith("ga4://"):
+                    # Set DB_TYPE to ga4 to ensure correct URI generation
+                    settings.DB_TYPE = "ga4"
+                    # Regenerate the URI
+                    uri = f"ga4://{settings.GA4_PROPERTY_ID}"
+                    console.print(f"Using GA4 URI: [bold]{uri}[/bold]")
+                
+                # Add GA4 specific parameters
+                kwargs['property_id'] = settings.GA4_PROPERTY_ID
+                if kwargs['property_id']:
+                    console.print(f"Using GA4 property ID: [bold]{kwargs['property_id']}[/bold]")
+                else:
+                    console.print("[yellow]Warning: No GA4 property ID found in settings.[/yellow]")
+            
             # Create orchestrator kwargs and connection kwargs separately
             orchestrator_kwargs = dict(kwargs)
             orchestrator_kwargs['db_type'] = detected_db_type
@@ -341,6 +711,8 @@ def query(
                     await run_qdrant_query(llm, question, analyze, orchestrator, detected_db_type)
                 elif detected_db_type.lower() == "slack":
                     await run_slack_query(llm, question, analyze, orchestrator, detected_db_type)
+                elif detected_db_type.lower() == "ga4":
+                    await run_ga4_query(llm, question, analyze, orchestrator, detected_db_type)
                 else:
                     console.print(f"[red]Unsupported database type: {detected_db_type}[/red]")
         
@@ -631,6 +1003,159 @@ async def run_slack_query(llm, question: str, analyze: bool, orchestrator: Orche
             console.print("[yellow]No results found[/yellow]")
     except Exception as e:
         console.print(f"[red]Error executing Slack query: {str(e)}[/red]")
+        import traceback
+        console.print(traceback.format_exc())
+
+async def run_shopify_query(llm, question: str, analyze: bool, orchestrator: Orchestrator, db_type: str):
+    """Run a Shopify query"""
+    
+    # Search schema metadata specific to this database type
+    searcher = SchemaSearcher(db_type=db_type)
+    schema_chunks = await searcher.search(question, top_k=5, db_type=db_type)
+    
+    # Create context from schema chunks
+    schema_context = "\n\n".join([chunk.get("content", "") for chunk in schema_chunks])
+    
+    # Generate Shopify query using the adapter's natural language processing
+    console.print("Generating Shopify API query...")
+    
+    try:
+        # Use the adapter's llm_to_query method
+        query = await orchestrator.llm_to_query(question, schema_chunks=schema_chunks)
+        
+        # Print the query
+        console.print(f"\n[bold cyan]Shopify Query:[/bold cyan]")
+        formatted_query = json.dumps(query, indent=2)
+        console.print(f"[cyan]{formatted_query}[/cyan]\n")
+        
+        # Execute query
+        console.print("Executing Shopify API query...")
+        results = await orchestrator.execute(query)
+        
+        # Display results
+        if results:
+            # Format Shopify results for display
+            console.print(f"\n[bold]Retrieved {len(results)} items from Shopify:[/bold]")
+            
+            # Display in table format
+            display_query_results(results)
+            
+            # Analyze results if requested
+            if analyze:
+                console.print("\n[bold]Analyzing results...[/bold]")
+                analysis = await llm.analyze_results(results, is_ecommerce=True)
+                console.print(f"\n[bold green]Analysis:[/bold green]")
+                console.print(Panel(Markdown(analysis)))
+        else:
+            console.print("[yellow]No results found[/yellow]")
+    except Exception as e:
+        console.print(f"[red]Error executing Shopify query: {str(e)}[/red]")
+        import traceback
+        console.print(traceback.format_exc())
+
+async def run_shopify_query(llm, question: str, analyze: bool, orchestrator: Orchestrator, db_type: str):
+    """Run a Shopify query"""
+    
+    # Search schema metadata specific to this database type
+    searcher = SchemaSearcher(db_type=db_type)
+    schema_chunks = await searcher.search(question, top_k=5, db_type=db_type)
+    
+    # Create context from schema chunks
+    schema_context = "\n\n".join([chunk.get("content", "") for chunk in schema_chunks])
+    
+    # Generate Shopify query using the adapter's natural language processing
+    console.print("Generating Shopify API query...")
+    
+    try:
+        # Use the adapter's llm_to_query method
+        query = await orchestrator.llm_to_query(question, schema_chunks=schema_chunks)
+        
+        # Print the query
+        console.print(f"\n[bold cyan]Shopify Query:[/bold cyan]")
+        formatted_query = json.dumps(query, indent=2)
+        console.print(f"[cyan]{formatted_query}[/cyan]\n")
+        
+        # Execute query
+        console.print("Executing Shopify API query...")
+        results = await orchestrator.execute(query)
+        
+        # Display results
+        if results:
+            # Format Shopify results for display
+            console.print(f"\n[bold]Retrieved {len(results)} items from Shopify:[/bold]")
+            
+            # Display in table format
+            display_query_results(results)
+            
+            # Analyze results if requested
+            if analyze:
+                console.print("\n[bold]Analyzing results...[/bold]")
+                analysis = await llm.analyze_results(results, is_ecommerce=True)
+                console.print(f"\n[bold green]Analysis:[/bold green]")
+                console.print(Panel(Markdown(analysis)))
+        else:
+            console.print("[yellow]No results found[/yellow]")
+    except Exception as e:
+        console.print(f"[red]Error executing Shopify query: {str(e)}[/red]")
+        import traceback
+        console.print(traceback.format_exc())
+
+async def run_ga4_query(llm, question: str, analyze: bool, orchestrator: Orchestrator, db_type: str):
+    """Run a Google Analytics 4 query"""
+    
+    # Search schema metadata specific to this database type
+    searcher = SchemaSearcher(db_type=db_type)
+    schema_chunks = await searcher.search(question, top_k=5, db_type=db_type)
+    
+    # Create context from schema chunks
+    schema_context = "\n\n".join([chunk.get("content", "") for chunk in schema_chunks])
+    
+    # Render prompt template for GA4
+    prompt = llm.render_template("ga4_query.tpl", 
+                             schema_context=schema_context, 
+                             query=question)
+    
+    # Generate GA4 query
+    console.print("Generating GA4 query...")
+    
+    try:
+        # Generate query
+        response = await llm.generate_mongodb_query(prompt)  # Reusing the MongoDB query generator initially
+        
+        # Parse response as JSON
+        query_json = None
+        
+        # Try to extract JSON if embedded in markdown
+        if "```json" in response:
+            json_text = response.split("```json")[1].split("```")[0].strip()
+            query_json = json.loads(json_text)
+        else:
+            # Otherwise try to parse the whole response
+            query_json = json.loads(response)
+        
+        # Print the query
+        console.print(f"\n[bold cyan]GA4 Query:[/bold cyan]")
+        formatted_query = json.dumps(query_json, indent=2)
+        console.print(f"[cyan]{formatted_query}[/cyan]\n")
+        
+        # Execute query
+        console.print("Executing query...")
+        results = await orchestrator.execute(query_json)
+        
+        # Display results
+        if results:
+            display_query_results(results)
+            
+            # Analyze results if requested
+            if analyze:
+                console.print("\n[bold]Analyzing results...[/bold]")
+                analysis = await llm.analyze_results(results)
+                console.print(f"\n[bold green]Analysis:[/bold green]")
+                console.print(analysis)
+        else:
+            console.print("[yellow]No results found[/yellow]")
+    except Exception as e:
+        console.print(f"[red]Error executing GA4 query: {str(e)}[/red]")
         import traceback
         console.print(traceback.format_exc())
 
@@ -966,8 +1491,7 @@ async def slack_refresh(args):
     mcp_url = config.get("slack", {}).get("mcp_url", "http://localhost:8500")
     
     # Create orchestrator with Slack adapter
-    from ..db.orchestrator import Orchestrator
-    
+    from agent.db.db_orchestrator import Orchestrator
     print("Refreshing Slack schema...")
     
     try:
@@ -995,6 +1519,112 @@ async def slack_refresh(args):
     except Exception as e:
         print(f"Error refreshing Slack schema: {e}")
         return False
+    
+async def shopify_auth(args):
+    """
+    Authenticate with Shopify using OAuth flow
+    """
+    from agent.config.settings import Settings
+    
+    settings = Settings()
+    app_url = settings.SHOPIFY_APP_URL
+    client_id = settings.SHOPIFY_APP_CLIENT_ID
+    
+    if not client_id:
+        console.print("[red]ERROR: SHOPIFY_APP_CLIENT_ID not configured.[/red]")
+        console.print("Please set SHOPIFY_APP_CLIENT_ID in your environment or config file.")
+        return False
+    
+    # Get shop domain from args or prompt user
+    shop_domain = args.shop if hasattr(args, 'shop') and args.shop else None
+    
+    if not shop_domain:
+        shop_domain = input("Enter your Shopify shop domain (e.g., mystore.myshopify.com): ").strip()
+    
+    if not shop_domain:
+        console.print("[red]Shop domain is required for authentication.[/red]")
+        return False
+    
+    # Ensure .myshopify.com suffix
+    if not shop_domain.endswith('.myshopify.com'):
+        if '.' not in shop_domain:
+            shop_domain = f"{shop_domain}.myshopify.com"
+    
+    console.print(f"Authenticating with Shopify shop: [bold]{shop_domain}[/bold]")
+    
+    # Generate a session ID for tracking this auth flow
+    session_id = secrets.token_urlsafe(16)
+    console.print(f"Generated session ID: {session_id}")
+    
+    # Define required scopes (matching our TOML configuration)
+    scopes = [
+        "read_orders", "read_products", "read_customers", "read_inventory",
+        "read_locations", "read_price_rules", "read_discounts", "read_analytics",
+        "read_reports", "read_checkouts", "read_draft_orders", "read_fulfillments",
+        "read_gift_cards", "read_marketing_events", "read_order_edits",
+        "read_payment_terms", "read_shipping", "read_themes", "read_translations",
+        "read_all_orders", "read_assigned_fulfillment_orders",
+        "read_merchant_managed_fulfillment_orders", "read_third_party_fulfillment_orders"
+    ]
+    
+    # Create Shopify OAuth authorization URL
+    from urllib.parse import urlencode
+    
+    oauth_params = {
+        'client_id': client_id,
+        'scope': ','.join(scopes),
+        'redirect_uri': f"{app_url}/shopify/callback",
+        'state': session_id
+    }
+    
+    auth_url = f"https://{shop_domain}/admin/oauth/authorize?{urlencode(oauth_params)}"
+    
+    # Open browser
+    console.print("\n" + "="*60)
+    console.print(f"Opening browser for Shopify authentication...")
+    console.print(f"If your browser doesn't open automatically, please visit:")
+    console.print(f"\n{auth_url}\n")
+    console.print("="*60 + "\n")
+    
+    try:
+        webbrowser.open(auth_url)
+    except Exception as e:
+        console.print(f"[red]Failed to open browser: {e}[/red]")
+        console.print(f"Please manually visit the URL above to complete authentication")
+    
+    # For now, we'll use a simple manual flow
+    # In a full implementation, you'd poll the Remix app for completion
+    console.print("After completing authentication in your browser:")
+    console.print("1. Complete the app installation in Shopify")
+    console.print("2. You'll be redirected to the Ceneca app")
+    console.print("3. Your credentials will be automatically saved")
+    
+    # Manual token input for development/testing
+    console.print("\nFor testing, you can manually enter your access token:")
+    manual_token = input("Enter access token (or press Enter to skip): ").strip()
+    
+    if manual_token:
+        try:
+            # Import and use the Shopify adapter directly
+            from agent.db.adapters.shopify import ShopifyAdapter
+            
+            adapter = ShopifyAdapter("https://ceneca.ai", shop_domain=shop_domain)
+            success = await adapter.authenticate_shop(shop_domain, manual_token)
+            
+            if success:
+                console.print(f"\n[green]Authentication successful![/green]")
+                console.print(f"Credentials saved for shop: {shop_domain}")
+                console.print("You can now run Shopify queries using: [bold]python -m agent.cmd.query --type shopify \"your question\"[/bold]")
+                return True
+            else:
+                console.print("[red]Authentication failed. Please check your access token.[/red]")
+                return False
+        except Exception as e:
+            console.print(f"[red]Error during authentication: {e}[/red]")
+            return False
+    
+    console.print("\nAuthentication flow initiated. Complete the process in your browser.")
+    return True
 
 async def main():
     parser = argparse.ArgumentParser(description='Data Connector CLI')
@@ -1010,7 +1640,7 @@ async def main():
     )
     query_parser.add_argument(
         '--type', '-t', 
-        choices=['postgres', 'mongodb', 'mongo', 'qdrant', 'slack'], 
+        choices=['postgres', 'mongodb', 'mongo', 'qdrant', 'slack', 'shopify', 'ga4'], 
         default=None,
         help='Specify database type to query'
     )
@@ -1039,6 +1669,16 @@ async def main():
         'config_command', 
         choices=['show', 'set'], 
         help='Config sub-command to run'
+    )
+    
+    # Create parser for auth commands
+    auth_parser = subparsers.add_parser('auth', help='Authentication operations')
+    auth_parser.add_argument(
+        'auth_command',
+        choices=['test', 'login', 'logout'],
+        default='test',
+        nargs='?',
+        help='Authentication sub-command to run'
     )
     
     # Create parser for db commands 
@@ -1075,6 +1715,15 @@ async def main():
         await run_config(args)
     elif args.command == 'db':
         await run_db(args)
+    elif args.command == 'auth':
+        if args.auth_command == 'test':
+            await auth_test()
+        elif args.auth_command == 'login':
+            await auth_login()
+        elif args.auth_command == 'logout':
+            console.print("[yellow]Auth logout not yet implemented[/yellow]")
+        else:
+            auth_parser.print_help()
     # Add support for slack subcommands
     elif args.command == "slack":
         if args.slack_command == "auth":
@@ -1085,6 +1734,7 @@ async def main():
             await slack_refresh(args)
         else:
             slack_parser.print_help()
+
     else:
         parser.print_help()
 
@@ -1115,6 +1765,12 @@ if __name__ == "__main__":
                     pass
     
     create_init_files()
-    print("Running Typer app...")
-    app()
-    print("Typer app completed")
+    
+    # Try to run with typer app first, fall back to argparse if needed
+    try:
+        print("Running Typer app...")
+        app()
+        print("Typer app completed")
+    except Exception as e:
+        print(f"Typer app failed: {str(e)}. Falling back to argparse.")
+        asyncio.run(main())

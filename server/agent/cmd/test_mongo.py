@@ -18,7 +18,7 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.syntax import Syntax
 
-from agent.db.orchestrator import Orchestrator
+from agent.db.db_orchestrator import Orchestrator
 from agent.db.adapters.mongo import MongoAdapter
 
 # Configure logging
