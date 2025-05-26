@@ -16,6 +16,7 @@ services:
     volumes:
       - .:/app
       - /app/node_modules
+      - ~/.data-connector:/root/.data-connector
     environment:
       - NODE_ENV=${NODE_ENV:-development}
       - NEXT_PUBLIC_API_URL=http://waitlist-backend:3001/api

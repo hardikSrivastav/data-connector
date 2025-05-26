@@ -1655,16 +1655,12 @@ async def shopify_auth(args):
     session_id = secrets.token_urlsafe(16)
     console.print(f"Generated session ID: {session_id}")
     
-    # Define required scopes (matching our TOML configuration)
-    scopes = [
-        "read_orders", "read_products", "read_customers", "read_inventory",
-        "read_locations", "read_price_rules", "read_discounts", "read_analytics",
-        "read_reports", "read_checkouts", "read_draft_orders", "read_fulfillments",
-        "read_gift_cards", "read_marketing_events", "read_order_edits",
-        "read_payment_terms", "read_shipping", "read_themes", "read_translations",
-        "read_all_orders", "read_assigned_fulfillment_orders",
-        "read_merchant_managed_fulfillment_orders", "read_third_party_fulfillment_orders"
-    ]
+    # Get scopes from TOML file instead of hardcoding them
+    from agent.db.adapters.shopify import ShopifyAdapter
+    adapter = ShopifyAdapter("https://ceneca.ai")
+    scopes = adapter._parse_shopify_app_toml()
+    
+    console.print(f"[dim]Requesting {len(scopes)} scopes from shopify.app.toml[/dim]")
     
     # Determine environment and redirect URI based on app_url
     redirect_uri = None
