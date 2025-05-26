@@ -792,6 +792,81 @@ def query(
 
     asyncio.run(run())
 
+@app.command()
+def shopify_scopes(
+    shop: Optional[str] = typer.Option(None, "--shop", help="Shop domain to check scopes for")
+):
+    """Show Shopify scope information - requested vs granted"""
+    async def run():
+        try:
+            from agent.db.adapters.shopify import ShopifyAdapter
+            
+            # Initialize adapter
+            adapter = ShopifyAdapter("https://ceneca.ai", shop_domain=shop)
+            
+            if not adapter.access_token:
+                console.print("[red]❌ No Shopify credentials found[/red]")
+                console.print("\n💡 [bold]To authenticate:[/bold]")
+                console.print("Run: [bold]python -m agent.cmd.query authenticate shopify --shop your-store[/bold]")
+                return
+            
+            # Get scope information
+            scope_info = adapter.get_available_scopes()
+            
+            console.print(f"\n[bold]Shopify Scope Information for: {adapter.shop_domain}[/bold]")
+            console.print("="*60)
+            
+            # Show granted scopes
+            granted_scopes = scope_info['granted']
+            console.print(f"\n[bold green]✅ Granted Scopes ({len(granted_scopes)}):[/bold green]")
+            if granted_scopes:
+                for scope in sorted(granted_scopes):
+                    console.print(f"  • [green]{scope}[/green]")
+            else:
+                console.print("  [dim]None[/dim]")
+            
+            # Show missing scopes
+            missing_scopes = scope_info['missing']
+            if missing_scopes:
+                console.print(f"\n[bold red]❌ Missing Scopes ({len(missing_scopes)}):[/bold red]")
+                for scope in sorted(missing_scopes):
+                    console.print(f"  • [red]{scope}[/red]")
+                
+                console.print(f"\n[yellow]⚠️ {len(missing_scopes)} scopes were requested but not granted by the merchant.[/yellow]")
+                console.print("These scopes may be needed for full functionality.")
+            else:
+                console.print(f"\n[bold green]🎉 All requested scopes have been granted![/bold green]")
+            
+            # Show all requested scopes
+            requested_scopes = scope_info['requested']
+            console.print(f"\n[bold blue]📋 All Requested Scopes ({len(requested_scopes)}):[/bold blue]")
+            if requested_scopes:
+                for scope in sorted(requested_scopes):
+                    status = "[green]✅[/green]" if scope in granted_scopes else "[red]❌[/red]"
+                    console.print(f"  {status} {scope}")
+            else:
+                console.print("  [dim]None found in shopify.app.toml[/dim]")
+            
+            # Show summary
+            console.print(f"\n[bold]Summary:[/bold]")
+            console.print(f"  • Requested: {len(requested_scopes)} scopes")
+            console.print(f"  • Granted: {len(granted_scopes)} scopes")
+            console.print(f"  • Missing: {len(missing_scopes)} scopes")
+            
+            if missing_scopes:
+                console.print(f"\n[bold yellow]💡 To request missing scopes:[/bold yellow]")
+                console.print("1. Update your Shopify app configuration")
+                console.print("2. Re-authenticate: [bold]python -m agent.cmd.query authenticate shopify --shop your-store[/bold]")
+                console.print("3. The merchant will need to approve the new scopes")
+            
+        except Exception as e:
+            console.print(f"[red]Error: {str(e)}[/red]")
+            import traceback
+            console.print(traceback.format_exc())
+    
+    asyncio.run(run())
+
+
 async def run_orchestrated_analysis(llm, question: str, orchestrator: Orchestrator, db_type: str):
     """Run a multi-step orchestrated analysis"""
     

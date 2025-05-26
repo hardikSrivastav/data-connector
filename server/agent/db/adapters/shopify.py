@@ -7,6 +7,7 @@ import logging
 import os
 import requests
 import asyncio
+import re
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Dict, List, Any, Optional, Tuple, Union
@@ -58,10 +59,87 @@ class ShopifyAdapter(DBAdapter):
         self.access_token = None
         self.token_expires_at = None
         self.shop_info = None
+        self.granted_scopes = []
+        self.requested_scopes = []
         
         # Load existing credentials
         self._load_credentials()
         
+    def _parse_shopify_app_toml(self) -> List[str]:
+        """
+        Parse shopify.app.toml file to extract all defined scopes
+        
+        Returns:
+            List of scopes defined in the TOML file
+        """
+        try:
+            # Look for the TOML file in various possible locations
+            possible_paths = [
+                # From server/agent directory
+                os.path.join(os.path.dirname(__file__), "..", "..", "..", "..", "ceneca-shopify", "shopify.app.toml"),
+                # From project root
+                os.path.join(os.getcwd(), "ceneca-shopify", "shopify.app.toml"),
+                os.path.join(os.getcwd(), "..", "ceneca-shopify", "shopify.app.toml"),
+                # Absolute path attempts
+                "/Users/hardiksrivastav/Projects/data-connector/ceneca-shopify/shopify.app.toml",
+            ]
+            
+            toml_content = ""
+            toml_path = ""
+            
+            for file_path in possible_paths:
+                if os.path.exists(file_path):
+                    with open(file_path, 'r') as f:
+                        toml_content = f.read()
+                    toml_path = file_path
+                    break
+            
+            if not toml_content:
+                logger.warning("shopify.app.toml not found, using fallback scopes")
+                # Fallback to the scopes we know from the TOML file
+                return [
+                    'read_orders', 'read_products', 'read_customers', 'read_inventory',
+                    'read_locations', 'read_price_rules', 'read_discounts', 'read_analytics',
+                    'read_reports', 'read_checkouts', 'read_draft_orders', 'read_fulfillments',
+                    'read_gift_cards', 'read_marketing_events', 'read_order_edits',
+                    'read_payment_terms', 'read_shipping', 'read_themes', 'read_translations',
+                    'read_all_orders', 'read_assigned_fulfillment_orders',
+                    'read_merchant_managed_fulfillment_orders', 'read_third_party_fulfillment_orders',
+                    'write_assigned_fulfillment_orders', 'write_merchant_managed_fulfillment_orders',
+                    'write_third_party_fulfillment_orders'
+                ]
+            
+            logger.info(f"Found shopify.app.toml at: {toml_path}")
+            
+            # Simple TOML parsing for scopes section
+            # Look for the scopes = """ ... """ block
+            scopes_match = re.search(r'scopes\s*=\s*"""\s*([\s\S]*?)\s*"""', toml_content)
+            
+            if not scopes_match:
+                logger.warning("No scopes section found in TOML file")
+                return []
+            
+            scopes_text = scopes_match.group(1)
+            
+            # Parse the scopes - they're comma-separated and may span multiple lines
+            scopes = []
+            for line in scopes_text.split('\n'):
+                line = line.strip()
+                if line and not line.startswith('#'):
+                    # Remove comments and split by comma
+                    line = line.split('#')[0].strip()
+                    if line.endswith(','):
+                        line = line[:-1]
+                    if line:
+                        scopes.append(line.strip())
+            
+            logger.info(f"Parsed {len(scopes)} scopes from TOML file: {scopes}")
+            return scopes
+            
+        except Exception as e:
+            logger.error(f"Error parsing shopify.app.toml: {str(e)}")
+            return []
+    
     def _load_credentials(self) -> bool:
         """Load stored Shopify credentials if available"""
         try:
@@ -93,6 +171,22 @@ class ShopifyAdapter(DBAdapter):
             self.access_token = shop_data.get('access_token')
             self.shop_info = shop_data.get('shop_info', {})
             
+            # Handle both old and new credential formats
+            if 'granted_scopes' in shop_data and 'requested_scopes' in shop_data:
+                # New format with separate granted and requested scopes
+                self.granted_scopes = shop_data.get('granted_scopes', [])
+                self.requested_scopes = shop_data.get('requested_scopes', [])
+                logger.info(f"Loaded credentials with {len(self.granted_scopes)} granted scopes and {len(self.requested_scopes)} requested scopes")
+            else:
+                # Old format - treat existing scopes as granted scopes
+                self.granted_scopes = shop_data.get('scopes', [])
+                # Try to get requested scopes from TOML file
+                self.requested_scopes = self._parse_shopify_app_toml()
+                logger.info(f"Loaded legacy credentials, upgrading format")
+                
+                # Update the credentials file with the new format
+                self._upgrade_credentials_format(credentials)
+            
             logger.info(f"Loaded credentials for shop: {self.shop_domain}")
             return True
                 
@@ -100,7 +194,50 @@ class ShopifyAdapter(DBAdapter):
             logger.error(f"Error loading Shopify credentials: {str(e)}")
             return False
     
-    def _save_credentials(self, shop_domain: str, access_token: str, shop_info: Dict = None):
+    def _upgrade_credentials_format(self, credentials: Dict):
+        """Upgrade old credential format to new format with granted/requested scopes"""
+        try:
+            updated = False
+            for shop_domain, shop_data in credentials['shops'].items():
+                if 'granted_scopes' not in shop_data or 'requested_scopes' not in shop_data:
+                    # Upgrade this shop's credentials
+                    old_scopes = shop_data.get('scopes', [])
+                    requested_scopes = self._parse_shopify_app_toml()
+                    
+                    shop_data['granted_scopes'] = old_scopes
+                    shop_data['requested_scopes'] = requested_scopes
+                    shop_data['scopes'] = requested_scopes  # Use requested scopes as main scopes
+                    
+                    updated = True
+                    logger.info(f"Upgraded credentials format for shop: {shop_domain}")
+            
+            if updated:
+                # Save the updated credentials
+                with open(self.credentials_file, 'w') as f:
+                    json.dump(credentials, f, indent=2)
+                logger.info("Saved upgraded credentials file")
+                
+        except Exception as e:
+            logger.error(f"Error upgrading credentials format: {str(e)}")
+    
+    def get_available_scopes(self) -> Dict[str, List[str]]:
+        """
+        Get information about available scopes
+        
+        Returns:
+            Dictionary with 'granted', 'requested', and 'missing' scope lists
+        """
+        requested_scopes = self.requested_scopes or self._parse_shopify_app_toml()
+        granted_scopes = self.granted_scopes or []
+        missing_scopes = [scope for scope in requested_scopes if scope not in granted_scopes]
+        
+        return {
+            'granted': granted_scopes,
+            'requested': requested_scopes,
+            'missing': missing_scopes
+        }
+    
+    def _save_credentials(self, shop_domain: str, access_token: str, shop_info: Dict = None, granted_scopes: List[str] = None):
         """Save Shopify credentials securely"""
         try:
             # Ensure the directory exists
@@ -114,11 +251,18 @@ class ShopifyAdapter(DBAdapter):
             
             if 'shops' not in credentials:
                 credentials['shops'] = {}
+            
+            # Get requested scopes from TOML file
+            requested_scopes = self._parse_shopify_app_toml()
+            granted_scopes = granted_scopes or []
                 
-            # Save shop credentials
+            # Save shop credentials with new format
             credentials['shops'][shop_domain] = {
                 'access_token': access_token,
                 'shop_info': shop_info or {},
+                'scopes': requested_scopes,  # Use requested scopes as main scopes
+                'granted_scopes': granted_scopes,
+                'requested_scopes': requested_scopes,
                 'last_updated': datetime.now().isoformat(),
                 'api_version': self.api_version
             }
