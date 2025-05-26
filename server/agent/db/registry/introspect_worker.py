@@ -559,6 +559,144 @@ async def introspect_slack(source_id: str, uri: str, version: str = "1.0.0"):
         logger.error(f"Error introspecting Slack {source_id}: {str(e)}")
         raise
 
+async def introspect_shopify(source_id: str, uri: str, version: str = "1.0.0"):
+    """
+    Introspect Shopify API and store its schema in the registry
+    
+    Args:
+        source_id: Unique identifier for this data source
+        uri: Shopify app URL or shop domain
+        version: Version for this data source
+    """
+    logger.info(f"Introspecting Shopify API: {source_id}")
+    
+    # Register the data source
+    upsert_data_source(source_id, uri, "shopify", version)
+    
+    try:
+        # Import the Shopify adapter
+        from ..adapters.shopify import ShopifyAdapter
+        
+        # Create adapter instance
+        adapter = ShopifyAdapter(uri)
+        
+        # Get schema documents from the adapter
+        schema_docs = await adapter.introspect_schema()
+        
+        logger.info(f"Retrieved {len(schema_docs)} schema documents from Shopify")
+        
+        # Process each schema document
+        for doc in schema_docs:
+            doc_id = doc.get("id", "")
+            content = doc.get("content", "")
+            
+            if doc_id == "shopify_orders_schema":
+                # Store orders schema
+                orders_meta = {
+                    "raw_content": content,
+                    "type": "orders",
+                    "fields": {
+                        "id": {"data_type": "integer", "primary_key": True},
+                        "customer_id": {"data_type": "integer"},
+                        "total_price": {"data_type": "decimal"},
+                        "financial_status": {"data_type": "string"},
+                        "fulfillment_status": {"data_type": "string"},
+                        "created_at": {"data_type": "timestamp"},
+                        "updated_at": {"data_type": "timestamp"},
+                        "line_items": {"data_type": "json"},
+                        "shipping_address": {"data_type": "json"},
+                        "billing_address": {"data_type": "json"},
+                        "taxes": {"data_type": "json"},
+                        "discounts": {"data_type": "json"}
+                    }
+                }
+                upsert_table_meta(source_id, "orders", orders_meta, version)
+                logger.info(f"  - Added orders schema")
+                
+            elif doc_id == "shopify_products_schema":
+                # Store products schema
+                products_meta = {
+                    "raw_content": content,
+                    "type": "products",
+                    "fields": {
+                        "id": {"data_type": "integer", "primary_key": True},
+                        "title": {"data_type": "string"},
+                        "description": {"data_type": "text"},
+                        "vendor": {"data_type": "string"},
+                        "product_type": {"data_type": "string"},
+                        "handle": {"data_type": "string"},
+                        "status": {"data_type": "string"},
+                        "variants": {"data_type": "json"},
+                        "options": {"data_type": "json"},
+                        "images": {"data_type": "json"},
+                        "tags": {"data_type": "string"},
+                        "price": {"data_type": "decimal"}
+                    }
+                }
+                upsert_table_meta(source_id, "products", products_meta, version)
+                logger.info(f"  - Added products schema")
+                
+            elif doc_id == "shopify_customers_schema":
+                # Store customers schema
+                customers_meta = {
+                    "raw_content": content,
+                    "type": "customers",
+                    "fields": {
+                        "id": {"data_type": "integer", "primary_key": True},
+                        "first_name": {"data_type": "string"},
+                        "last_name": {"data_type": "string"},
+                        "email": {"data_type": "string"},
+                        "phone": {"data_type": "string"},
+                        "addresses": {"data_type": "json"},
+                        "orders_count": {"data_type": "integer"},
+                        "total_spent": {"data_type": "decimal"},
+                        "created_at": {"data_type": "timestamp"},
+                        "updated_at": {"data_type": "timestamp"},
+                        "tags": {"data_type": "string"}
+                    }
+                }
+                upsert_table_meta(source_id, "customers", customers_meta, version)
+                logger.info(f"  - Added customers schema")
+                
+            elif doc_id == "shopify_inventory_schema":
+                # Store inventory schema
+                inventory_meta = {
+                    "raw_content": content,
+                    "type": "inventory",
+                    "fields": {
+                        "inventory_item_id": {"data_type": "integer", "primary_key": True},
+                        "location_id": {"data_type": "integer", "primary_key": True},
+                        "available": {"data_type": "integer"},
+                        "updated_at": {"data_type": "timestamp"}
+                    }
+                }
+                upsert_table_meta(source_id, "inventory_levels", inventory_meta, version)
+                logger.info(f"  - Added inventory schema")
+                
+            elif doc_id == "shopify_checkouts_schema":
+                # Store checkouts schema
+                checkouts_meta = {
+                    "raw_content": content,
+                    "type": "checkouts",
+                    "fields": {
+                        "id": {"data_type": "integer", "primary_key": True},
+                        "email": {"data_type": "string"},
+                        "total_price": {"data_type": "decimal"},
+                        "line_items": {"data_type": "json"},
+                        "created_at": {"data_type": "timestamp"},
+                        "updated_at": {"data_type": "timestamp"},
+                        "customer": {"data_type": "json"}
+                    }
+                }
+                upsert_table_meta(source_id, "checkouts", checkouts_meta, version)
+                logger.info(f"  - Added checkouts schema")
+        
+        logger.info(f"Shopify introspection for {source_id} completed successfully")
+    
+    except Exception as e:
+        logger.error(f"Error introspecting Shopify {source_id}: {str(e)}")
+        raise
+
 async def run_introspection(
     data_sources: List[Dict[str, str]]
 ):
@@ -592,6 +730,8 @@ async def run_introspection(
             tasks.append(introspect_qdrant(source_id, uri, version))
         elif source_type == "slack":
             tasks.append(introspect_slack(source_id, uri, version))
+        elif source_type == "shopify":
+            tasks.append(introspect_shopify(source_id, uri, version))
         else:
             logger.warning(f"Unsupported data source type: {source_type}")
     
@@ -639,6 +779,14 @@ if __name__ == "__main__":
                     "id": "slack_main",
                     "uri": config["slack"]["uri"],
                     "type": "slack",
+                    "version": "1.0.0"
+                })
+                
+            if "shopify" in config and "uri" in config["shopify"]:
+                data_sources.append({
+                    "id": "shopify_main",
+                    "uri": config["shopify"]["uri"],
+                    "type": "shopify",
                     "version": "1.0.0"
                 })
                 

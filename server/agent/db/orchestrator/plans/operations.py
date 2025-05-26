@@ -355,6 +355,77 @@ class SlackOperation(Operation):
         return True
 
 
+@register_operation("shopify")
+class ShopifyOperation(Operation):
+    """Operation for Shopify e-commerce data source"""
+    
+    def __init__(
+        self, 
+        id: str = None, 
+        source_id: str = None, 
+        endpoint: str = None,
+        query_params: Dict[str, Any] = None,
+        api_method: str = "GET",
+        limit: int = 100,
+        depends_on: List[str] = None,
+        metadata: Dict[str, Any] = None
+    ):
+        """
+        Initialize a Shopify operation
+        
+        Args:
+            id: Unique identifier for this operation
+            source_id: ID of the data source this operation targets
+            endpoint: Shopify API endpoint (e.g., 'orders', 'products', 'customers')
+            query_params: Query parameters for the API request
+            api_method: HTTP method (GET, POST, etc.)
+            limit: Maximum number of records to return
+            depends_on: List of operation IDs this operation depends on
+            metadata: Additional metadata for this operation
+        """
+        super().__init__(id, source_id, depends_on, metadata)
+        self.endpoint = endpoint or "orders"
+        self.query_params = query_params or {}
+        self.api_method = api_method
+        self.limit = limit
+    
+    def get_adapter_params(self) -> Dict[str, Any]:
+        """Get parameters for the database adapter"""
+        return {
+            "endpoint": self.endpoint,
+            "params": self.query_params,
+            "method": self.api_method,
+            "limit": self.limit
+        }
+    
+    def validate(self, schema_registry=None) -> bool:
+        """
+        Validate this Shopify operation
+        
+        Args:
+            schema_registry: Schema registry client
+            
+        Returns:
+            True if valid, False otherwise
+        """
+        # Call parent validation first
+        if not super().validate(schema_registry):
+            return False
+        
+        # Check if we have a valid endpoint
+        valid_endpoints = [
+            "orders", "products", "customers", "inventory_levels", 
+            "checkouts", "variants", "collections", "locations",
+            "fulfillments", "transactions", "discounts", "price_rules"
+        ]
+        
+        if self.endpoint not in valid_endpoints:
+            logger.warning(f"Shopify operation {self.id} has potentially invalid endpoint: {self.endpoint}")
+            # Don't fail validation for unknown endpoints as Shopify API may have new ones
+        
+        return True
+
+
 def initialize_operations(db_types: List[str]) -> None:
     """
     Initialize operation classes for all database types

@@ -574,16 +574,28 @@ class ShopifyAdapter(DBAdapter):
         Execute Shopify API query and return results
         
         Args:
-            query: Query object from llm_to_query
+            query: Query object from llm_to_query or orchestrator parameters
             
         Returns:
             List of results from Shopify API
         """
         try:
-            if isinstance(query, dict) and query.get("type") == "shopify_api":
-                query_info = query["query"]
-                endpoint = query_info["endpoint"]
-                params = query_info.get("params", {})
+            # Handle orchestrator-style parameters
+            if isinstance(query, dict):
+                if query.get("type") == "shopify_api":
+                    # Legacy format from llm_to_query
+                    query_info = query["query"]
+                    endpoint = query_info["endpoint"]
+                    params = query_info.get("params", {})
+                elif "endpoint" in query:
+                    # New orchestrator format
+                    endpoint = query.get("endpoint", "orders")
+                    params = query.get("params", {})
+                    # Handle limit parameter
+                    if "limit" in query:
+                        params["limit"] = query["limit"]
+                else:
+                    raise ValueError("Invalid query format for Shopify adapter")
                 
                 # Make API request
                 response = await self._make_api_request(endpoint, params=params)
@@ -600,13 +612,60 @@ class ShopifyAdapter(DBAdapter):
                 else:
                     # Return the whole response if structure is unknown
                     return [response] if isinstance(response, dict) else response
-                    
             else:
                 raise ValueError("Invalid query format for Shopify adapter")
                 
         except Exception as e:
             logger.error(f"Error executing Shopify query: {str(e)}")
             return [{"error": str(e)}]
+    
+    async def execute_query(self, query: Dict[str, Any]) -> List[Dict]:
+        """
+        Execute a query with orchestrator-compatible interface
+        
+        Args:
+            query: Query parameters from orchestrator
+            
+        Returns:
+            List of results from Shopify API
+        """
+        return await self.execute(query)
+    
+    async def validate_query(self, query: Dict[str, Any]) -> bool:
+        """
+        Validate a query without executing it
+        
+        Args:
+            query: Query parameters to validate
+            
+        Returns:
+            True if query is valid, False otherwise
+        """
+        try:
+            # Basic validation
+            if not isinstance(query, dict):
+                return False
+            
+            # Check for required fields
+            endpoint = query.get("endpoint")
+            if not endpoint:
+                return False
+            
+            # Validate endpoint
+            valid_endpoints = [
+                "orders", "products", "customers", "inventory_levels", 
+                "checkouts", "variants", "collections", "locations",
+                "fulfillments", "transactions", "discounts", "price_rules"
+            ]
+            
+            if endpoint not in valid_endpoints:
+                logger.warning(f"Unknown Shopify endpoint: {endpoint}")
+                # Don't fail validation for unknown endpoints
+            
+            return True
+        except Exception as e:
+            logger.error(f"Error validating Shopify query: {str(e)}")
+            return False
     
     async def introspect_schema(self) -> List[Dict[str, str]]:
         """

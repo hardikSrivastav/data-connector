@@ -226,7 +226,29 @@ class SchemaRegistryClient:
                 "visitor": ["ga4"],
                 "traffic": ["ga4"],
                 "user": ["postgres", "ga4"],
-                "conversion": ["ga4"]
+                "conversion": ["ga4"],
+                # Shopify-specific keywords
+                "order": ["shopify"],
+                "product": ["shopify", "postgres"],
+                "customer": ["shopify", "postgres"],
+                "inventory": ["shopify"],
+                "checkout": ["shopify"],
+                "cart": ["shopify"],
+                "purchase": ["shopify"],
+                "sale": ["shopify"],
+                "revenue": ["shopify"],
+                "ecommerce": ["shopify"],
+                "e-commerce": ["shopify"],
+                "shopify": ["shopify"],
+                "store": ["shopify"],
+                "merchant": ["shopify"],
+                "variant": ["shopify"],
+                "fulfillment": ["shopify"],
+                "shipping": ["shopify"],
+                "billing": ["shopify"],
+                "payment": ["shopify"],
+                "discount": ["shopify"],
+                "coupon": ["shopify"]
             }
             
             # Check for keyword matches

@@ -46,6 +46,7 @@ class DatabaseClassifier:
             "mongodb": ["document", "collection", "json", "nosql", "unstructured"],
             "qdrant": ["similar", "vector", "embedding", "semantic", "similarity", "neural"],
             "slack": ["message", "channel", "chat", "conversation", "slack", "communication"],
+            "shopify": ["order", "product", "customer", "inventory", "checkout", "cart", "purchase", "sale", "revenue", "ecommerce", "e-commerce", "shopify", "store", "merchant", "variant", "fulfillment", "shipping", "billing", "payment", "discount", "coupon", "abandoned cart"],
         }
         
         # Extend with keywords for any new database types from config
@@ -74,7 +75,7 @@ class DatabaseClassifier:
         except Exception as e:
             logger.warning(f"Failed to load config.yaml: {e}")
             # Fall back to default database types
-            default_types = ["postgres", "mongodb", "qdrant", "slack"]
+            default_types = ["postgres", "mongodb", "qdrant", "slack", "shopify"]
             logger.info(f"Using default database types: {default_types}")
             return default_types
     
@@ -135,7 +136,9 @@ class DatabaseClassifier:
                         logger.info(f"==== Schema results for {db_type} ====")
                         for i, result in enumerate(schema_results):
                             # Print basic metadata
-                            logger.info(f"  Result {i+1}: Score {result.get('score', 0):.4f}")
+                            distance = result.get('distance', 0)
+                            score = 1.0 / (1.0 + distance)  # Convert distance to score (lower distance = higher score)
+                            logger.info(f"  Result {i+1}: Distance {distance:.4f}, Score {score:.4f}")
                             
                             # Print table info if available
                             if 'table_name' in result:
@@ -165,8 +168,8 @@ class DatabaseClassifier:
                                     logger.info(f"  Content preview: {preview}")
                         
                         # Calculate a relevance score based on the search results
-                        # Simple approach: average the scores of the top results
-                        total_score = sum(result.get("score", 0) for result in schema_results)
+                        # Convert distances to scores (lower distance = higher score)
+                        total_score = sum(1.0 / (1.0 + result.get("distance", 0)) for result in schema_results)
                         avg_score = total_score / len(schema_results) if schema_results else 0
                         relevance_scores[db_type] = avg_score
                         

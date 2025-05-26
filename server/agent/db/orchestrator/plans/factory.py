@@ -100,6 +100,18 @@ def create_operation(
                     depends_on=depends_on,
                     metadata=metadata
                 )
+            elif db_type == "shopify":
+                # Shopify operation parameters
+                return operation_class(
+                    id=id,
+                    source_id=source_id,
+                    endpoint=params.get("endpoint", "orders"),
+                    query_params=params.get("query_params", {}),
+                    api_method=params.get("method", "GET"),
+                    limit=params.get("limit", 100),
+                    depends_on=depends_on,
+                    metadata=metadata
+                )
             
             # For other registered database types, use default approach
             return operation_class(
@@ -183,6 +195,8 @@ def create_plan_from_dict(plan_dict: Dict[str, Any]) -> QueryPlan:
                 db_type = "qdrant"
             elif "Slack" in op_type:
                 db_type = "slack"
+            elif "Shopify" in op_type:
+                db_type = "shopify"
         
         # Get params based on the operation type
         params = {}
@@ -210,6 +224,13 @@ def create_plan_from_dict(plan_dict: Dict[str, Any]) -> QueryPlan:
                 "channel": op_dict.get("channel", ""),
                 "query": op_dict.get("query", ""),
                 "time_range": op_dict.get("time_range", {}),
+                "limit": op_dict.get("limit", 100)
+            }
+        elif db_type == "shopify":
+            params = {
+                "endpoint": op_dict.get("endpoint", "orders"),
+                "query_params": op_dict.get("query_params", {}),
+                "method": op_dict.get("api_method", "GET"),
                 "limit": op_dict.get("limit", 100)
             }
         else:

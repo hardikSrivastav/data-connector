@@ -81,6 +81,17 @@ def get_data_sources():
                 "version": "1.0.0"
             })
     
+    # Shopify
+    if 'shopify' in yaml_config:
+        shopify_uri = yaml_config.get('shopify', {}).get('uri')
+        if shopify_uri:
+            sources.append({
+                "id": "shopify_main",
+                "uri": shopify_uri,
+                "type": "shopify",
+                "version": "1.0.0"
+            })
+    
     return sources
 
 def get_docker_data_sources():
@@ -137,6 +148,17 @@ def get_docker_data_sources():
             "type": "qdrant",
             "version": "1.0.0"
         })
+    
+    # Shopify
+    if 'shopify' in yaml_config:
+        shopify_uri = yaml_config.get('shopify', {}).get('uri')
+        if shopify_uri:
+            sources.append({
+                "id": "shopify_main",
+                "uri": shopify_uri,
+                "type": "shopify",
+                "version": "1.0.0"
+            })
     
     return sources
 

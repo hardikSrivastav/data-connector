@@ -18,7 +18,7 @@ from datetime import datetime
 
 from ...llm.client import get_llm_client
 from ..registry.integrations import registry_client
-from ..adapters import mongo, postgres, qdrant, slack
+from ..adapters import mongo, postgres, qdrant, slack, shopify
 from ..adapters.base import DBAdapter
 from .result_aggregator import ResultAggregator, JoinType, AggregationFunction
 from .plans.base import QueryPlan, Operation, OperationStatus
@@ -107,6 +107,8 @@ class ImplementationAgent:
             return qdrant.QdrantAdapter(connection_info)
         elif source_type.lower() == "slack":
             return slack.SlackAdapter(connection_info)
+        elif source_type.lower() == "shopify":
+            return shopify.ShopifyAdapter(connection_info)
         else:
             raise ValueError(f"Unsupported data source type: {source_type}")
     
