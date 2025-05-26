@@ -94,7 +94,7 @@ export default function ShopifyCallbackPage() {
 
   if (loading) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-gray-50">
+      <div className="flex items-center justify-center bg-gray-50">
         <div className="text-center">
           <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto mb-4"></div>
           <p className="text-lg text-gray-600">Processing Shopify authorization...</p>
@@ -105,7 +105,7 @@ export default function ShopifyCallbackPage() {
 
   if (!response) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-gray-50">
+      <div className="flex items-center justify-center bg-gray-50">
         <div className="text-center">
           <p className="text-lg text-gray-600">Loading...</p>
         </div>
@@ -115,7 +115,7 @@ export default function ShopifyCallbackPage() {
 
   if (!response.success) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-gray-50">
+      <div className="flex items-center justify-center bg-gray-50">
         <div className="max-w-md w-full mx-auto p-6 text-center">
           <div className="bg-white rounded-lg shadow-lg p-8">
             <h1 className="text-2xl font-bold text-red-600 mb-4">❌ Authentication Failed</h1>
@@ -139,7 +139,7 @@ export default function ShopifyCallbackPage() {
   }
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gray-50">
+    <div className="flex items-center justify-center bg-gray-50">
       <div className="max-w-2xl w-full mx-auto p-6">
         <div className="bg-white rounded-lg shadow-lg p-8 text-center">
           <h1 className="text-3xl font-bold text-green-600 mb-6">🎉 Successfully Connected!</h1>
