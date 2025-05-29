@@ -76,6 +76,18 @@ class SchemaRegistryClient:
             # Return basic source info without connection details
             return source
     
+    def get_data_source(self, source_id: str) -> Optional[Dict[str, Any]]:
+        """
+        Get a specific data source by ID (alias for get_source_by_id for compatibility)
+        
+        Args:
+            source_id: ID of the data source to retrieve
+            
+        Returns:
+            Data source information, or None if not found
+        """
+        return get_data_source(source_id)
+    
     def get_all_sources(self) -> List[Dict[str, Any]]:
         """Get all data sources in the registry"""
         return list_data_sources()
@@ -103,6 +115,19 @@ class SchemaRegistryClient:
             List of table names
         """
         return list_tables(source_id)
+    
+    def get_table_schema(self, source_id: str, table_name: str) -> Optional[Dict[str, Any]]:
+        """
+        Get schema for a specific table
+        
+        Args:
+            source_id: The data source ID
+            table_name: The table name
+            
+        Returns:
+            Table schema information, or None if not found
+        """
+        return get_table_schema(source_id, table_name)
     
     def get_tables_containing_field(self, field_name: str) -> List[Tuple[str, str]]:
         """
@@ -311,6 +336,40 @@ class SchemaRegistryClient:
                     summary.append(f"    - {field_name} ({field_type}){constraints_str}")
         
         return "\n".join(summary)
+    
+    def validate_sql_query(self, source_id: str, sql_query: str) -> Dict[str, Any]:
+        """
+        Validate a SQL query against the schema registry
+        
+        Args:
+            source_id: The data source ID
+            sql_query: The SQL query to validate
+            
+        Returns:
+            Dictionary with validation results
+        """
+        try:
+            # Check if source exists
+            source = self.get_data_source(source_id)
+            if not source:
+                return {
+                    "valid": False,
+                    "errors": [f"Data source '{source_id}' not found in registry"]
+                }
+            
+            # For now, return a basic validation that just checks source existence
+            # In the future, this could parse the SQL and validate table/column references
+            return {
+                "valid": True,
+                "errors": [],
+                "warnings": []
+            }
+            
+        except Exception as e:
+            return {
+                "valid": False, 
+                "errors": [f"Validation error: {str(e)}"]
+            }
 
 
 # Singleton instance for easy import

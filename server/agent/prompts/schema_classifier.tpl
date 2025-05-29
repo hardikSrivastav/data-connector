@@ -22,6 +22,16 @@ You are a database selection expert. Your task is to analyze a user's question a
 - Strong at: message history, conversation context, channel information
 - Good for: communication analysis, team interactions, message search
 
+## shopify
+- E-commerce platform database with orders, products, customers
+- Strong at: e-commerce data, sales transactions, product catalogs, customer info
+- Good for: order management, inventory tracking, sales analytics, customer insights
+
+## ga4
+- Google Analytics 4 database with web analytics and user behavior data
+- Strong at: website analytics, user sessions, conversion tracking, traffic data
+- Good for: web traffic analysis, user behavior insights, conversion funnels, marketing metrics
+
 # User Question
 {{ user_question }}
 

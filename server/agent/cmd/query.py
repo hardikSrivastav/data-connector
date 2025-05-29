@@ -1187,7 +1187,7 @@ async def run_shopify_query(llm, question: str, analyze: bool, orchestrator: Orc
             # Analyze results if requested
             if analyze:
                 console.print("\n[bold]Analyzing results...[/bold]")
-                analysis = await llm.analyze_results(results, is_ecommerce=True)
+                analysis = await llm.analyze_results(results)
                 console.print(f"\n[bold green]Analysis:[/bold green]")
                 console.print(Panel(Markdown(analysis)))
         else:

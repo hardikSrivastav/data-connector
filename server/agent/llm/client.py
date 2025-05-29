@@ -142,7 +142,7 @@ class OpenAIClient(LLMClient):
         )
         
         # Default model name if not specified
-        self.model_name = self.settings.LLM_MODEL_NAME or "gpt-4"
+        self.model_name = self.settings.LLM_MODEL_NAME or "gpt-4o"
         logger.info(f"Initialized OpenAI client with model: {self.model_name}")
         
         # Define available tools for function calling

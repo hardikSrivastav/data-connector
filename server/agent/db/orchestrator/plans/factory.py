@@ -175,15 +175,22 @@ def create_plan_from_dict(plan_dict: Dict[str, Any]) -> QueryPlan:
         depends_on = op_dict.get("depends_on", [])
         metadata = op_dict.get("metadata", {})
         
-        # Get database type from source_id using registry client
-        try:
-            source_info = registry_client.get_data_source(source_id)
-            db_type = source_info.get("type")
-        except Exception as e:
-            logger.warning(f"Error getting source info for {source_id}: {e}")
-            db_type = None
+        # Get database type in order of preference:
+        # 1. From the operation dict directly (LLM should include this)
+        # 2. From source_id using registry client  
+        # 3. From the operation type field as fallback
+        db_type = op_dict.get("db_type")
         
-        # If db_type wasn't available from registry, try to get it from the operation type
+        if not db_type:
+            # Try to get database type from source_id using registry client
+            try:
+                source_info = registry_client.get_data_source(source_id)
+                db_type = source_info.get("type") if source_info else None
+            except Exception as e:
+                logger.warning(f"Error getting source info for {source_id}: {e}")
+                db_type = None
+        
+        # If db_type still not available, try to infer from the operation type
         if not db_type and "type" in op_dict:
             # Try to infer db_type from operation type
             op_type = op_dict.get("type", "")
@@ -201,42 +208,56 @@ def create_plan_from_dict(plan_dict: Dict[str, Any]) -> QueryPlan:
         # Get params based on the operation type
         params = {}
         if db_type == "postgres":
+            # Look for params inside the "params" object, not at top level
+            operation_params = op_dict.get("params", {})
             params = {
-                "query": op_dict.get("sql_query", ""),
-                "params": op_dict.get("params", [])
+                "query": operation_params.get("query", op_dict.get("sql_query", "")),
+                "params": operation_params.get("params", op_dict.get("params", []))
             }
         elif db_type == "mongodb":
+            # Look for params inside the "params" object first, then fall back to top level
+            operation_params = op_dict.get("params", {})
             params = {
-                "collection": op_dict.get("collection", ""),
-                "pipeline": op_dict.get("pipeline", []),
-                "query": op_dict.get("query", {}),
-                "projection": op_dict.get("projection", {})
+                "collection": operation_params.get("collection", op_dict.get("collection", "")),
+                "pipeline": operation_params.get("pipeline", op_dict.get("pipeline", [])),
+                "query": operation_params.get("query", op_dict.get("query", {})),
+                "projection": operation_params.get("projection", op_dict.get("projection", {}))
             }
         elif db_type == "qdrant":
+            # Look for params inside the "params" object first, then fall back to top level
+            operation_params = op_dict.get("params", {})
             params = {
-                "collection": op_dict.get("collection", ""),
-                "vector": op_dict.get("vector_query", []),
-                "filter": op_dict.get("filter", {}),
-                "limit": op_dict.get("top_k", 10)
+                "collection": operation_params.get("collection", op_dict.get("collection", "")),
+                "vector": operation_params.get("vector", op_dict.get("vector_query", [])),
+                "filter": operation_params.get("filter", op_dict.get("filter", {})),
+                "limit": operation_params.get("limit", op_dict.get("top_k", 10))
             }
         elif db_type == "slack":
+            # Look for params inside the "params" object first, then fall back to top level
+            operation_params = op_dict.get("params", {})
             params = {
-                "channel": op_dict.get("channel", ""),
-                "query": op_dict.get("query", ""),
-                "time_range": op_dict.get("time_range", {}),
-                "limit": op_dict.get("limit", 100)
+                "channel": operation_params.get("channel", op_dict.get("channel", "")),
+                "query": operation_params.get("query", op_dict.get("query", "")),
+                "time_range": operation_params.get("time_range", op_dict.get("time_range", {})),
+                "limit": operation_params.get("limit", op_dict.get("limit", 100))
             }
         elif db_type == "shopify":
+            # Look for params inside the "params" object first, then fall back to top level
+            operation_params = op_dict.get("params", {})
             params = {
-                "endpoint": op_dict.get("endpoint", "orders"),
-                "query_params": op_dict.get("query_params", {}),
-                "method": op_dict.get("api_method", "GET"),
-                "limit": op_dict.get("limit", 100)
+                "endpoint": operation_params.get("endpoint", op_dict.get("endpoint", "orders")),
+                "query_params": operation_params.get("query_params", op_dict.get("query_params", {})),
+                "method": operation_params.get("method", op_dict.get("api_method", "GET")),
+                "limit": operation_params.get("limit", op_dict.get("limit", 100))
             }
         else:
-            # For other types, use all available parameters
-            params = {k: v for k, v in op_dict.items() 
-                     if k not in ["id", "source_id", "depends_on", "metadata", "type"]}
+            # For other types, use params object if available, otherwise use all top-level parameters
+            operation_params = op_dict.get("params", {})
+            if operation_params:
+                params = operation_params
+            else:
+                params = {k: v for k, v in op_dict.items() 
+                         if k not in ["id", "source_id", "depends_on", "metadata", "type", "db_type"]}
         
         # Create the operation
         if db_type and source_id:
