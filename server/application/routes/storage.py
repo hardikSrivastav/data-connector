@@ -179,6 +179,13 @@ async def sync_changes(sync_request: SyncRequest):
             elif change.type == "delete":
                 if change.entityId in storage["pages"]:
                     del storage["pages"][change.entityId]
+                # Also delete all blocks belonging to this page
+                blocks_to_remove = []
+                for block_id, block_data in storage["blocks"].items():
+                    if block_data.get("pageId") == change.entityId:
+                        blocks_to_remove.append(block_id)
+                for block_id in blocks_to_remove:
+                    del storage["blocks"][block_id]
         elif change.entity == "block":
             if change.type in ["create", "update"]:
                 storage["blocks"][change.entityId] = change.data

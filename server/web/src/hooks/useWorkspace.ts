@@ -57,7 +57,7 @@ const defaultWorkspace: Workspace = {
 };
 
 export const useWorkspace = () => {
-  const { storageManager, saveWorkspace, clearCache, deleteBlock: deleteBlockFromStorage } = useStorageManager({
+  const { storageManager, saveWorkspace, clearCache, deleteBlock: deleteBlockFromStorage, deletePage: deletePageFromStorage } = useStorageManager({
     edition: 'enterprise',
     apiBaseUrl: import.meta.env.VITE_API_BASE || 'http://localhost:8787'
   });
@@ -165,13 +165,32 @@ export const useWorkspace = () => {
       const newCurrentIndex = Math.max(0, pageIndex - 1);
       setCurrentPageId(workspace.pages[newCurrentIndex]?.id || workspace.pages[0]?.id);
     }
+    
+    // Delete the page from storage properly
+    try {
+      await deletePageFromStorage(pageId);
+      console.log('Page deleted from storage:', pageId);
+    } catch (error) {
+      console.warn('Failed to delete page from storage:', error);
+    }
   };
 
   const updateBlock = async (blockId: string, updates: Partial<Block>) => {
     const updatedBlocks = currentPage.blocks.map(block =>
       block.id === blockId ? { ...block, ...updates } : block
     );
-    updatePage(currentPageId, { blocks: updatedBlocks });
+    
+    // Check if the updated block is the first H1 and sync its content to page title
+    const firstBlock = updatedBlocks.find(block => block.order === 0);
+    if (firstBlock && firstBlock.id === blockId && firstBlock.type === 'heading1' && updates.content !== undefined) {
+      // Sync the H1 content to the page title
+      updatePage(currentPageId, { 
+        blocks: updatedBlocks,
+        title: updates.content || 'Untitled'
+      });
+    } else {
+      updatePage(currentPageId, { blocks: updatedBlocks });
+    }
 
     // Save block immediately for real-time updates
     try {

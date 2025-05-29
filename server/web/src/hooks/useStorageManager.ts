@@ -297,6 +297,57 @@ export class StorageManager {
     }
   }
 
+  async deletePage(pageId: string): Promise<void> {
+    // Remove from cache
+    this.cache.delete(`page:${pageId}`);
+    
+    // Remove from IndexedDB
+    if (this.db) {
+      const transaction = this.db.transaction(['pages'], 'readwrite');
+      const objectStore = transaction.objectStore('pages');
+      await objectStore.delete(pageId);
+    }
+    
+    // Also delete all blocks belonging to this page
+    if (this.db) {
+      const transaction = this.db.transaction(['blocks'], 'readwrite');
+      const objectStore = transaction.objectStore('blocks');
+      const index = objectStore.index('pageId');
+      
+      // Get all block IDs for this page
+      const blockIds = await new Promise<IDBValidKey[]>((resolve, reject) => {
+        const request = index.getAllKeys(pageId);
+        request.onsuccess = () => resolve(request.result);
+        request.onerror = () => reject(request.error);
+      });
+      
+      for (const blockId of blockIds) {
+        await objectStore.delete(blockId);
+        this.cache.delete(`block:${blockId}`);
+      }
+    }
+    
+    // Different behavior per edition
+    if (this.config.edition === 'enterprise') {
+      const change: Change = {
+        id: `${Date.now()}-${Math.random()}`,
+        type: 'delete',
+        entity: 'page',
+        entityId: pageId,
+        data: null,
+        timestamp: new Date(),
+        userId: 'current-user'
+      };
+      
+      this.syncState.pendingChanges.push(change);
+      await this.saveTooDB('changes', change);
+      
+      if (this.syncState.isOnline) {
+        this.syncPendingChanges();
+      }
+    }
+  }
+
   private async syncPendingChanges(): Promise<void> {
     if (!this.syncState.isOnline || this.syncState.pendingChanges.length === 0 || this.config.edition === 'zero-sync') {
       return;
@@ -416,6 +467,7 @@ export const useStorageManager = (config?: Partial<EnterpriseStorageConfig>) => 
     savePage: useCallback((page: Page) => storageManager.savePage(page), [storageManager]),
     saveBlock: useCallback((block: Block, pageId: string) => storageManager.saveBlock(block, pageId), [storageManager]),
     deleteBlock: useCallback((blockId: string) => storageManager.deleteBlock(blockId), [storageManager]),
+    deletePage: useCallback((pageId: string) => storageManager.deletePage(pageId), [storageManager]),
     clearCache: useCallback(() => storageManager.clearCache(), [storageManager]),
   };
 }; 

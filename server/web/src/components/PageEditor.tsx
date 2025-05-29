@@ -1,7 +1,9 @@
 import { useState, useEffect } from 'react';
 import { Page } from '@/types';
 import { BlockEditor } from './BlockEditor';
+import { EmojiPicker } from './EmojiPicker';
 import { Input } from '@/components/ui/input';
+import { Button } from '@/components/ui/button';
 import { useBlockSelection } from '@/hooks/useBlockSelection';
 
 interface PageEditorProps {
@@ -23,6 +25,7 @@ export const PageEditor = ({
 }: PageEditorProps) => {
   const [focusedBlockId, setFocusedBlockId] = useState<string | null>(null);
   const [isGlobalDragSelecting, setIsGlobalDragSelecting] = useState(false);
+  const [showEmojiPicker, setShowEmojiPicker] = useState(false);
   const [dragSelection, setDragSelection] = useState<{
     startX: number;
     startY: number;
@@ -49,15 +52,16 @@ export const PageEditor = ({
 
   // Global drag selection handlers
   const handleGlobalMouseDown = (e: React.MouseEvent) => {
-    // Only start global drag selection if clicking on empty space (not on blocks or UI elements)
+    // Don't start drag selection if clicking on emoji picker area
     const target = e.target as HTMLElement;
     
-    // Don't start drag selection if clicking on interactive elements
+    // Don't start drag selection if clicking on interactive elements or emoji picker
     if (
       target.tagName === 'BUTTON' ||
       target.tagName === 'INPUT' ||
       target.tagName === 'TEXTAREA' ||
-      target.closest('.block-editor')
+      target.closest('.block-editor') ||
+      target.closest('.emoji-picker-container')
     ) {
       return;
     }
@@ -276,11 +280,29 @@ export const PageEditor = ({
         e.preventDefault();
         handleDeleteSelected();
       }
+      if (e.key === 'Escape' && showEmojiPicker) {
+        setShowEmojiPicker(false);
+      }
     };
 
     document.addEventListener('keydown', handleKeyDown);
     return () => document.removeEventListener('keydown', handleKeyDown);
-  }, [selectedBlocks.size]); // Add dependency to ensure latest selectedBlocks
+  }, [selectedBlocks.size, showEmojiPicker]); // Add dependency to ensure latest selectedBlocks
+
+  // Close emoji picker when clicking outside
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      const target = e.target as HTMLElement;
+      if (!target.closest('.emoji-picker-container') && showEmojiPicker) {
+        setShowEmojiPicker(false);
+      }
+    };
+
+    if (showEmojiPicker) {
+      document.addEventListener('mousedown', handleClickOutside);
+      return () => document.removeEventListener('mousedown', handleClickOutside);
+    }
+  }, [showEmojiPicker]);
 
   // Prevent text selection globally during drag operations
   useEffect(() => {
@@ -305,6 +327,16 @@ export const PageEditor = ({
     };
   }, [isDragSelecting, isGlobalDragSelecting]);
 
+  const handleEmojiSelect = (emoji: string) => {
+    onUpdatePage({ icon: emoji });
+    setShowEmojiPicker(false);
+  };
+
+  const handleRemoveEmoji = () => {
+    onUpdatePage({ icon: undefined });
+    setShowEmojiPicker(false);
+  };
+
   return (
     <div 
       className="flex-1 overflow-y-auto relative"
@@ -326,6 +358,42 @@ export const PageEditor = ({
       )}
       
       <div className="max-w-4xl mx-auto p-8 relative">
+        {/* Page Header with Emoji */}
+        <div className="mb-6 relative">
+          <div className="flex items-center gap-2 mb-4">
+            <div className="relative emoji-picker-container">
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-12 w-12 p-0 text-4xl hover:bg-gray-100 rounded-md transition-colors"
+                onClick={() => setShowEmojiPicker(!showEmojiPicker)}
+              >
+                {page.icon || '📄'}
+              </Button>
+              
+              {showEmojiPicker && (
+                <div className="relative">
+                  <EmojiPicker
+                    currentEmoji={page.icon}
+                    onEmojiSelect={handleEmojiSelect}
+                    onClose={() => setShowEmojiPicker(false)}
+                  />
+                  {page.icon && (
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="absolute top-full left-0 mt-1 text-xs text-gray-500 hover:text-gray-700"
+                      onClick={handleRemoveEmoji}
+                    >
+                      Remove
+                    </Button>
+                  )}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+
         {/* Selection indicator */}
         {selectedBlocks.size > 0 && (
           <div className="mb-4 p-2 bg-blue-50 border border-blue-200 rounded-md flex items-center justify-between text-sm">
