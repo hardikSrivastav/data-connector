@@ -175,7 +175,7 @@ export class StorageManager {
     if (this.config.edition === 'enterprise') {
       // Queue for server sync
       const change: Change = {
-        id: `${Date.now()}-${Math.random()}`,
+        id: `${Date.now()}-${Math.random().toString(36).substr(2, 9)}-${performance.now()}`,
         type: 'update',
         entity: 'workspace',
         entityId: workspace.id,
@@ -208,7 +208,7 @@ export class StorageManager {
     if (this.config.edition === 'enterprise') {
       // Queue for server sync
       const change: Change = {
-        id: `${Date.now()}-${Math.random()}`,
+        id: `${Date.now()}-${Math.random().toString(36).substr(2, 9)}-${performance.now()}`,
         type: 'update',
         entity: 'page',
         entityId: page.id,
@@ -245,7 +245,7 @@ export class StorageManager {
     // Different behavior per edition
     if (this.config.edition === 'enterprise') {
       const change: Change = {
-        id: `${Date.now()}-${Math.random()}`,
+        id: `${Date.now()}-${Math.random().toString(36).substr(2, 9)}-${performance.now()}`,
         type: 'update',
         entity: 'block',
         entityId: block.id,
@@ -279,7 +279,7 @@ export class StorageManager {
     // Different behavior per edition
     if (this.config.edition === 'enterprise') {
       const change: Change = {
-        id: `${Date.now()}-${Math.random()}`,
+        id: `${Date.now()}-${Math.random().toString(36).substr(2, 9)}-${performance.now()}`,
         type: 'delete',
         entity: 'block',
         entityId: blockId,
@@ -330,7 +330,7 @@ export class StorageManager {
     // Different behavior per edition
     if (this.config.edition === 'enterprise') {
       const change: Change = {
-        id: `${Date.now()}-${Math.random()}`,
+        id: `${Date.now()}-${Math.random().toString(36).substr(2, 9)}-${performance.now()}`,
         type: 'delete',
         entity: 'page',
         entityId: pageId,

@@ -14,7 +14,11 @@ def create_app():
     # Add CORS middleware for development
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=["http://localhost:8080"],  # Vite dev server
+        allow_origins=[
+            "http://localhost:3000",  # Web client
+            "http://localhost:8080",  # Vite dev server  
+            "http://localhost:8787",  # API self-reference
+        ],
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],
