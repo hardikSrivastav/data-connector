@@ -117,12 +117,61 @@ export const PageEditor = ({
       const currentX = e.clientX - rect.left;
       const currentY = e.clientY - rect.top;
 
-      setDragSelection(prev => prev ? {
-        ...prev,
+      const newDragSelection = {
+        ...dragSelection,
         currentX,
         currentY,
-      } : null);
+      };
+
+      setDragSelection(newDragSelection);
+
+      // Calculate which blocks intersect with the selection rectangle
+      updateBlockSelectionFromRect(newDragSelection, container);
     }
+  };
+
+  // Function to update block selection based on rectangle intersection
+  const updateBlockSelectionFromRect = (dragRect: typeof dragSelection, container: HTMLElement) => {
+    if (!dragRect) return;
+
+    // Calculate selection rectangle bounds
+    const selectionLeft = Math.min(dragRect.startX, dragRect.currentX);
+    const selectionTop = Math.min(dragRect.startY, dragRect.currentY);
+    const selectionRight = Math.max(dragRect.startX, dragRect.currentX);
+    const selectionBottom = Math.max(dragRect.startY, dragRect.currentY);
+
+    // Clear current selection first
+    clearSelection();
+
+    // Find all block elements and check for intersection
+    const blockElements = container.querySelectorAll('.block-editor');
+    const containerRect = container.getBoundingClientRect();
+
+    blockElements.forEach((blockElement) => {
+      const blockRect = blockElement.getBoundingClientRect();
+      
+      // Convert block position to container-relative coordinates
+      const blockLeft = blockRect.left - containerRect.left;
+      const blockTop = blockRect.top - containerRect.top;
+      const blockRight = blockLeft + blockRect.width;
+      const blockBottom = blockTop + blockRect.height;
+
+      // Check if block intersects with selection rectangle
+      const intersects = !(
+        blockRight < selectionLeft ||
+        blockLeft > selectionRight ||
+        blockBottom < selectionTop ||
+        blockTop > selectionBottom
+      );
+
+      if (intersects) {
+        // Get block ID from the element
+        const blockId = blockElement.querySelector('[data-block-id]')?.getAttribute('data-block-id');
+        if (blockId) {
+          selectBlock(blockId, true);
+        }
+      }
+    });
   };
 
   const handleGlobalMouseUp = () => {
@@ -154,9 +203,9 @@ export const PageEditor = ({
 
   const handleBlockMouseEnterDuringGlobalDrag = (blockId: string) => {
     return (e: React.MouseEvent) => {
-      if (isGlobalDragSelecting) {
-        selectBlock(blockId, true); // Add to selection
-      } else {
+      // During global drag selection, we use geometric intersection detection
+      // so we don't need to handle selection here anymore
+      if (!isGlobalDragSelecting) {
         handleMouseEnter(blockId, e);
       }
     };

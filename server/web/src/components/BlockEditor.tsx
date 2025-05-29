@@ -283,6 +283,7 @@ export const BlockEditor = ({
     return (
       <div
         ref={blockRef}
+        data-block-id={block.id}
         className={cn(
           "group relative py-2 cursor-pointer transition-colors -my-1",
           getSelectionClasses()
@@ -339,6 +340,7 @@ export const BlockEditor = ({
   return (
     <div
       ref={blockRef}
+      data-block-id={block.id}
       className={cn(
         "group relative cursor-pointer transition-colors -my-1",
         getSelectionClasses()
