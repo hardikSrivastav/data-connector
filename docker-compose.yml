@@ -23,6 +23,22 @@ services:
 #    depends_on:
 #      - postgres
 
+  # Ceneca Enterprise Web Client
+  web-client:
+    build:
+      context: ./server/web
+      dockerfile: Dockerfile
+    ports:
+      - "3000:3000"
+    environment:
+      - NODE_ENV=development
+      - NEXT_PUBLIC_API_URL=http://localhost:8500
+      - NEXT_PUBLIC_WS_URL=ws://localhost:8500
+    container_name: ceneca-web-client
+    restart: unless-stopped
+    networks:
+      - connector-network
+
   # MCP Slack Server
   mcp-server:
     build:

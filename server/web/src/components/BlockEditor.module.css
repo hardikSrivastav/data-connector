@@ -1,0 +1,41 @@
+/* Block Selection Styles */
+.selectedBlock {
+  background-color: #dbeafe; /* bg-blue-50 */
+  transition: background-color 0.2s ease;
+}
+
+.firstSelected {
+  border: 2px solid #93c5fd; /* ring-blue-200 */
+  border-bottom: none;
+  border-radius: 6px 6px 0 0;
+  margin-bottom: -1px;
+}
+
+.lastSelected {
+  border: 2px solid #93c5fd;
+  border-top: none;
+  border-radius: 0 0 6px 6px;
+  margin-top: -1px;
+}
+
+.middleSelected {
+  border-left: 2px solid #93c5fd;
+  border-right: 2px solid #93c5fd;
+  border-top: none;
+  border-bottom: none;
+  margin-top: -1px;
+  margin-bottom: -1px;
+}
+
+.singleSelected {
+  border: 2px solid #93c5fd;
+  border-radius: 6px;
+}
+
+/* Prevent text selection during drag selection */
+.dragSelecting {
+  user-select: none;
+  -webkit-user-select: none;
+  -moz-user-select: none;
+  -ms-user-select: none;
+} 
