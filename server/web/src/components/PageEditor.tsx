@@ -225,16 +225,6 @@ export const PageEditor = ({
             );
           })}
         </div>
-
-        {/* Add block at end */}
-        <div className="mt-4">
-          <button
-            onClick={() => handleAddBlock()}
-            className="text-gray-400 hover:text-gray-600 text-sm transition-colors"
-          >
-            Click here to continue writing...
-          </button>
-        </div>
       </div>
     </div>
   );

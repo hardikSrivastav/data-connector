@@ -54,6 +54,7 @@ export const BlockEditor = ({
   const [showTypeSelector, setShowTypeSelector] = useState(false);
   const [typeSelectorQuery, setTypeSelectorQuery] = useState('');
   const [showAddButton, setShowAddButton] = useState(false);
+  const [justCreatedFromSlash, setJustCreatedFromSlash] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const blockRef = useRef<HTMLDivElement>(null);
 
@@ -75,9 +76,30 @@ export const BlockEditor = ({
   }, [block.content, block.type]);
 
   const handleKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
-    if (e.key === 'Enter' && !e.shiftKey) {
-      e.preventDefault();
-      onAddBlock();
+    if (e.key === 'Enter') {
+      // If we just created this block from a slash command, don't create a new block yet
+      if (justCreatedFromSlash) {
+        setJustCreatedFromSlash(false);
+        return; // Allow normal Enter behavior (line break)
+      }
+      
+      // For specific block types, Enter should create a new block
+      if (['heading1', 'heading2', 'heading3', 'divider'].includes(block.type)) {
+        e.preventDefault();
+        onAddBlock();
+        return;
+      }
+      
+      // Shift+Enter creates a new block (alternative way)
+      if (e.shiftKey) {
+        e.preventDefault();
+        onAddBlock();
+        return;
+      }
+      
+      // Default behavior: allow Enter to create line breaks within the block
+      // (don't preventDefault, let the textarea handle it naturally)
+      
     } else if (e.key === 'Backspace' && block.content === '') {
       e.preventDefault();
       onDeleteBlock();
@@ -91,22 +113,77 @@ export const BlockEditor = ({
   };
 
   const handleContentChange = (content: string) => {
-    if (content.startsWith('/')) {
-      const query = content.slice(1);
-      setTypeSelectorQuery(query);
-      setShowTypeSelector(true);
+    // Reset the flag when user starts typing
+    if (justCreatedFromSlash) {
+      setJustCreatedFromSlash(false);
+    }
+    
+    // Get cursor position to detect slash command at current line
+    const textarea = textareaRef.current;
+    if (textarea) {
+      const cursorPosition = textarea.selectionStart;
+      const textBeforeCursor = content.substring(0, cursorPosition);
+      const currentLineStart = textBeforeCursor.lastIndexOf('\n') + 1;
+      const currentLine = content.substring(currentLineStart, cursorPosition);
+      
+      // Check if current line starts with '/'
+      if (currentLine.startsWith('/')) {
+        const query = currentLine.slice(1);
+        setTypeSelectorQuery(query);
+        setShowTypeSelector(true);
+      } else {
+        setShowTypeSelector(false);
+        setTypeSelectorQuery('');
+      }
     } else {
-      setShowTypeSelector(false);
-      setTypeSelectorQuery('');
+      // Fallback to original logic if we can't get cursor position
+      if (content.startsWith('/')) {
+        const query = content.slice(1);
+        setTypeSelectorQuery(query);
+        setShowTypeSelector(true);
+      } else {
+        setShowTypeSelector(false);
+        setTypeSelectorQuery('');
+      }
     }
     
     onUpdate({ content });
   };
 
   const handleTypeSelect = (type: Block['type']) => {
-    onUpdate({ type, content: '' });
+    const textarea = textareaRef.current;
+    if (textarea) {
+      const cursorPosition = textarea.selectionStart;
+      const content = block.content;
+      const textBeforeCursor = content.substring(0, cursorPosition);
+      const currentLineStart = textBeforeCursor.lastIndexOf('\n') + 1;
+      const currentLine = content.substring(currentLineStart, cursorPosition);
+      
+      if (currentLine.startsWith('/')) {
+        // Replace only the slash command on current line
+        const beforeSlashCommand = content.substring(0, currentLineStart);
+        const afterCursor = content.substring(cursorPosition);
+        const newContent = beforeSlashCommand + afterCursor;
+        
+        onUpdate({ type, content: newContent });
+      } else {
+        // Fallback to clearing content
+        onUpdate({ type, content: '' });
+      }
+    } else {
+      onUpdate({ type, content: '' });
+    }
+    
     setShowTypeSelector(false);
     setTypeSelectorQuery('');
+    setJustCreatedFromSlash(true); // Set flag to prevent immediate new block creation
+    
+    // Focus the textarea after type selection
+    setTimeout(() => {
+      if (textareaRef.current) {
+        textareaRef.current.focus();
+      }
+    }, 0);
   };
 
   const getPlaceholder = () => {
@@ -205,63 +282,7 @@ export const BlockEditor = ({
         onDragOver={onDragOver}
         onDrop={onDrop}
       >
-        <div className="flex items-center gap-2">
-          <div className="flex items-center gap-1 w-20">
-            <Button
-              variant="ghost"
-              size="sm"
-              className={cn(
-                "h-6 w-6 p-0 transition-opacity cursor-grab",
-                showAddButton ? "opacity-100" : "opacity-0"
-              )}
-              draggable
-              onDragStart={onDragStart}
-            >
-              <GripVertical className="h-4 w-4" />
-            </Button>
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={(e) => {
-                e.stopPropagation();
-                onAddBlock();
-              }}
-              className={cn(
-                "h-6 w-6 p-0 transition-opacity",
-                showAddButton ? "opacity-100" : "opacity-0"
-              )}
-            >
-              <Plus className="h-4 w-4" />
-            </Button>
-          </div>
-          <hr className="flex-1 border-gray-300" />
-        </div>
-      </div>
-    );
-  }
-
-  return (
-    <div
-      ref={blockRef}
-      className={cn(
-        "group relative cursor-pointer transition-colors -my-1",
-        getSelectionClasses()
-      )}
-      onMouseEnter={(e) => {
-        setShowAddButton(true);
-        onMouseEnter?.(e);
-      }}
-      onMouseLeave={() => setShowAddButton(false)}
-      onMouseDown={onMouseDown}
-      onMouseUp={onMouseUp}
-      onClick={(e) => onSelect?.(e)}
-      draggable
-      onDragStart={onDragStart}
-      onDragOver={onDragOver}
-      onDrop={onDrop}
-    >
-      <div className="flex items-start gap-2">
-        <div className="flex items-center gap-1 w-20 pt-1">
+        <div className="absolute left-0 top-2 flex items-center gap-1 -ml-20">
           <Button
             variant="ghost"
             size="sm"
@@ -290,38 +311,93 @@ export const BlockEditor = ({
           </Button>
         </div>
         
-        <div className="flex-1 relative">
-          {(block.type === 'bullet' || block.type === 'numbered') && (
-            <div className="absolute left-0 top-1">
-              {block.type === 'bullet' ? '•' : '1.'}
-            </div>
-          )}
-          
-          <textarea
-            ref={textareaRef}
-            value={block.content}
-            onChange={(e) => handleContentChange(e.target.value)}
-            onKeyDown={handleKeyDown}
-            onFocus={onFocus}
-            onInput={adjustTextareaHeight}
-            onClick={(e) => e.stopPropagation()}
-            placeholder={getPlaceholder()}
-            className={getClassName()}
-            rows={1}
-            style={{
-              minHeight: getMinHeight(),
-              height: 'auto'
-            }}
-          />
-          
-          {showTypeSelector && (
-            <BlockTypeSelector
-              query={typeSelectorQuery}
-              onSelect={handleTypeSelect}
-              onClose={() => setShowTypeSelector(false)}
-            />
-          )}
+        <div className="flex items-center gap-2 ml-0">
+          <hr className="flex-1 border-gray-300" />
         </div>
+      </div>
+    );
+  }
+
+  return (
+    <div
+      ref={blockRef}
+      className={cn(
+        "group relative cursor-pointer transition-colors -my-1",
+        getSelectionClasses()
+      )}
+      onMouseEnter={(e) => {
+        setShowAddButton(true);
+        onMouseEnter?.(e);
+      }}
+      onMouseLeave={() => setShowAddButton(false)}
+      onMouseDown={onMouseDown}
+      onMouseUp={onMouseUp}
+      onClick={(e) => onSelect?.(e)}
+      draggable
+      onDragStart={onDragStart}
+      onDragOver={onDragOver}
+      onDrop={onDrop}
+    >
+      <div className="absolute left-0 top-1 flex items-center gap-1 -ml-20">
+        <Button
+          variant="ghost"
+          size="sm"
+          className={cn(
+            "h-6 w-6 p-0 transition-opacity cursor-grab",
+            showAddButton ? "opacity-100" : "opacity-0"
+          )}
+          draggable
+          onDragStart={onDragStart}
+        >
+          <GripVertical className="h-4 w-4" />
+        </Button>
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={(e) => {
+            e.stopPropagation();
+            onAddBlock();
+          }}
+          className={cn(
+            "h-6 w-6 p-0 transition-opacity",
+            showAddButton ? "opacity-100" : "opacity-0"
+          )}
+        >
+          <Plus className="h-4 w-4" />
+        </Button>
+      </div>
+      
+      <div className="relative ml-0">
+        {(block.type === 'bullet' || block.type === 'numbered') && (
+          <div className="absolute left-0 top-1">
+            {block.type === 'bullet' ? '•' : '1.'}
+          </div>
+        )}
+        
+        <textarea
+          ref={textareaRef}
+          value={block.content}
+          onChange={(e) => handleContentChange(e.target.value)}
+          onKeyDown={handleKeyDown}
+          onFocus={onFocus}
+          onInput={adjustTextareaHeight}
+          onClick={(e) => e.stopPropagation()}
+          placeholder={getPlaceholder()}
+          className={getClassName()}
+          rows={1}
+          style={{
+            minHeight: getMinHeight(),
+            height: 'auto'
+          }}
+        />
+        
+        {showTypeSelector && (
+          <BlockTypeSelector
+            query={typeSelectorQuery}
+            onSelect={handleTypeSelect}
+            onClose={() => setShowTypeSelector(false)}
+          />
+        )}
       </div>
     </div>
   );
