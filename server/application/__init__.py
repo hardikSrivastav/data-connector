@@ -1,5 +1,6 @@
 from fastapi import FastAPI
-from .routes import main_router
+from fastapi.middleware.cors import CORSMiddleware
+from .routes import main_router, storage_router
 from .config import get_settings
 from .middleware import CIDRMiddleware
 
@@ -8,6 +9,15 @@ def create_app():
         title="Data Connector API",
         description="API for connecting to various data sources",
         version="0.1.0"
+    )
+    
+    # Add CORS middleware for development
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=["http://localhost:8080"],  # Vite dev server
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
     )
     
     # Authentication middleware can be added here later
@@ -21,5 +31,6 @@ def create_app():
     
     # Include routers
     app.include_router(main_router)
+    app.include_router(storage_router)
     
     return app

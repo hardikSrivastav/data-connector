@@ -2,6 +2,7 @@ export interface Block {
   id: string;
   type: 'text' | 'heading1' | 'heading2' | 'heading3' | 'bullet' | 'numbered' | 'quote' | 'divider' | 'image' | 'code';
   content: string;
+  order: number;
   isSelected?: boolean;
   properties?: {
     bold?: boolean;
