@@ -11,7 +11,7 @@ const defaultPage: Page = {
     {
       id: generateId(),
       type: 'heading1',
-      content: 'Welcome to Your Notion Clone'
+      content: 'Getting Started'
     },
     {
       id: generateId(),
@@ -60,8 +60,8 @@ export const useWorkspace = () => {
       title,
       blocks: [{
         id: generateId(),
-        type: 'text',
-        content: ''
+        type: 'heading1',
+        content: title
       }],
       createdAt: new Date(),
       updatedAt: new Date()

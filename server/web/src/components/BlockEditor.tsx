@@ -83,21 +83,39 @@ export const BlockEditor = ({
         return; // Allow normal Enter behavior (line break)
       }
       
-      // For specific block types, Enter should create a new block
+      // Define special block types that should have reversed Enter behavior
+      const specialBlockTypes = ['quote', 'code', 'bullet', 'numbered'];
+      const isSpecialBlock = specialBlockTypes.includes(block.type);
+      
+      // For headings and dividers, Enter always creates a new block
       if (['heading1', 'heading2', 'heading3', 'divider'].includes(block.type)) {
         e.preventDefault();
         onAddBlock();
         return;
       }
       
-      // Shift+Enter creates a new block (alternative way)
+      // For special block types: Enter creates new block, Shift+Enter creates line break
+      if (isSpecialBlock) {
+        if (e.shiftKey) {
+          // Shift+Enter: create line break within the special block
+          // Don't preventDefault, let textarea handle it naturally
+          return;
+        } else {
+          // Enter: exit the special block and create a new paragraph block
+          e.preventDefault();
+          onAddBlock();
+          return;
+        }
+      }
+      
+      // For regular text blocks (paragraph): Enter creates line break, Shift+Enter creates new block
       if (e.shiftKey) {
         e.preventDefault();
         onAddBlock();
         return;
       }
       
-      // Default behavior: allow Enter to create line breaks within the block
+      // Default behavior for regular blocks: allow Enter to create line breaks within the block
       // (don't preventDefault, let the textarea handle it naturally)
       
     } else if (e.key === 'Backspace' && block.content === '') {
