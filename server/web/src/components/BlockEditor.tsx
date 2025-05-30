@@ -240,18 +240,32 @@ export const BlockEditor = ({
   };
 
   const handleAIQuerySubmit = async (query: string) => {
+    console.log(`🚀 BlockEditor: handleAIQuerySubmit called`);
+    console.log(`📝 BlockEditor: Query='${query}', BlockId='${block.id}'`);
+    console.log(`📝 BlockEditor: Block content before query: '${block.content}'`);
+    
     setIsAILoading(true);
+    console.log(`⏳ BlockEditor: AI loading state set to true`);
     
     // Remove the @ command from the content while preserving line structure
     const textarea = textareaRef.current;
     if (textarea) {
+      console.log(`🔧 BlockEditor: Processing @ command removal with textarea`);
       const cursorPosition = textarea.selectionStart;
       const content = block.content;
       const textBeforeCursor = content.substring(0, cursorPosition);
       const currentLineStart = textBeforeCursor.lastIndexOf('\n') + 1;
       const currentLine = content.substring(currentLineStart, cursorPosition);
       
+      console.log(`📍 BlockEditor: Cursor analysis:`, {
+        cursorPosition,
+        currentLineStart,
+        currentLine,
+        contentLength: content.length
+      });
+      
       if (currentLine.startsWith('@')) {
+        console.log(`🎯 BlockEditor: Found @ command at line start, removing...`);
         // Calculate the exact positions to preserve content structure
         const beforeCommand = content.substring(0, currentLineStart);
         const afterCursor = content.substring(cursorPosition);
@@ -265,29 +279,45 @@ export const BlockEditor = ({
         // Reconstruct content: everything before the line + any remaining content on the line + everything after
         const newContent = beforeCommand + restOfLine + afterCurrentLine;
         
+        console.log(`🔧 BlockEditor: Content reconstruction:`, {
+          beforeCommand_length: beforeCommand.length,
+          restOfLine_length: restOfLine.length,
+          afterCurrentLine_length: afterCurrentLine.length,
+          newContent_length: newContent.length,
+          originalContent_length: content.length
+        });
+        
         onUpdate({ content: newContent });
+        console.log(`✅ BlockEditor: Block content updated after @ command removal`);
         
         // Set cursor position to where the @ command was (beginning of the line)
         setTimeout(() => {
           if (textareaRef.current) {
             const newCursorPosition = currentLineStart;
             textareaRef.current.setSelectionRange(newCursorPosition, newCursorPosition);
+            console.log(`📍 BlockEditor: Cursor repositioned to ${newCursorPosition}`);
           }
         }, 0);
       }
     } else {
+      console.log(`🔧 BlockEditor: Processing @ command removal without textarea (fallback)`);
       // Fallback: if @ was at the beginning of the content, remove just the @ and query
       if (block.content.startsWith('@')) {
         const atCommandEnd = block.content.indexOf(' ');
         if (atCommandEnd >= 0) {
-          onUpdate({ content: block.content.substring(atCommandEnd + 1) });
+          const newContent = block.content.substring(atCommandEnd + 1);
+          onUpdate({ content: newContent });
+          console.log(`✅ BlockEditor: Fallback content update (space found at ${atCommandEnd})`);
         } else {
           // If there's no space, check for newline after the command
           const newlineIndex = block.content.indexOf('\n');
           if (newlineIndex >= 0) {
-            onUpdate({ content: block.content.substring(newlineIndex + 1) });
+            const newContent = block.content.substring(newlineIndex + 1);
+            onUpdate({ content: newContent });
+            console.log(`✅ BlockEditor: Fallback content update (newline found at ${newlineIndex})`);
           } else {
             onUpdate({ content: '' });
+            console.log(`✅ BlockEditor: Fallback content cleared (no delimiter found)`);
           }
         }
       }
@@ -296,18 +326,26 @@ export const BlockEditor = ({
     // Close the AI query selector
     setShowAIQuery(false);
     setAIQuery('');
+    console.log(`🚪 BlockEditor: AI query selector closed`);
     
     // Call the parent's AI query handler
     if (onAIQuery) {
+      console.log(`📞 BlockEditor: Calling parent onAIQuery handler...`);
+      console.log(`📞 BlockEditor: Parameters: query='${query}', blockId='${block.id}'`);
       await onAIQuery(query, block.id);
+      console.log(`✅ BlockEditor: Parent AI query handler completed`);
+    } else {
+      console.warn(`⚠️ BlockEditor: No onAIQuery handler provided!`);
     }
     
     setIsAILoading(false);
+    console.log(`⏳ BlockEditor: AI loading state set to false`);
     
     // Focus back to textarea
     setTimeout(() => {
       if (textareaRef.current) {
         textareaRef.current.focus();
+        console.log(`🎯 BlockEditor: Focus returned to textarea`);
       }
     }, 0);
   };

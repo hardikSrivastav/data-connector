@@ -142,14 +142,36 @@ export const useWorkspace = () => {
   };
 
   const updatePage = (pageId: string, updates: Partial<Page>) => {
-    setWorkspace(prev => ({
-      ...prev,
-      pages: prev.pages.map(page => 
-        page.id === pageId 
-          ? { ...page, ...updates, updatedAt: new Date() }
-          : page
-      )
-    }));
+    console.log(`📄 useWorkspace: updatePage called with pageId='${pageId}'`);
+    console.log(`📄 useWorkspace: Updates:`, {
+      hasBlocks: !!updates.blocks,
+      blocksCount: updates.blocks?.length,
+      hasTitle: !!updates.title,
+      title: updates.title,
+      otherKeys: Object.keys(updates).filter(k => k !== 'blocks' && k !== 'title')
+    });
+    
+    setWorkspace(prev => {
+      const updatedWorkspace = {
+        ...prev,
+        pages: prev.pages.map(page => 
+          page.id === pageId 
+            ? { ...page, ...updates, updatedAt: new Date() }
+            : page
+        )
+      };
+      
+      const updatedPage = updatedWorkspace.pages.find(p => p.id === pageId);
+      console.log(`📄 useWorkspace: Page after update:`, {
+        pageId: updatedPage?.id,
+        blocksCount: updatedPage?.blocks?.length,
+        title: updatedPage?.title
+      });
+      
+      return updatedWorkspace;
+    });
+    
+    console.log(`✅ useWorkspace: updatePage completed for pageId='${pageId}'`);
   };
 
   const deletePage = async (pageId: string) => {
@@ -176,19 +198,47 @@ export const useWorkspace = () => {
   };
 
   const updateBlock = async (blockId: string, updates: Partial<Block>) => {
+    console.log(`🏗️ useWorkspace: updateBlock called with blockId='${blockId}'`);
+    console.log(`🏗️ useWorkspace: Updates:`, updates);
+    console.log(`🏗️ useWorkspace: Current page blocks:`, currentPage.blocks.length);
+    
+    const existingBlock = currentPage.blocks.find(block => block.id === blockId);
+    if (!existingBlock) {
+      console.error(`❌ useWorkspace: Block with id '${blockId}' not found!`);
+      console.log(`🏗️ useWorkspace: Available block IDs:`, currentPage.blocks.map(b => b.id));
+      return;
+    }
+    
+    console.log(`🏗️ useWorkspace: Found existing block:`, {
+      id: existingBlock.id,
+      type: existingBlock.type,
+      content_length: existingBlock.content?.length || 0,
+      content_preview: existingBlock.content?.substring(0, 50) || 'No content'
+    });
+    
     const updatedBlocks = currentPage.blocks.map(block =>
       block.id === blockId ? { ...block, ...updates } : block
     );
+    
+    const updatedBlock = updatedBlocks.find(b => b.id === blockId);
+    console.log(`🏗️ useWorkspace: Block after update:`, {
+      id: updatedBlock?.id,
+      type: updatedBlock?.type,
+      content_length: updatedBlock?.content?.length || 0,
+      content_preview: updatedBlock?.content?.substring(0, 50) || 'No content'
+    });
     
     // Check if the updated block is the first H1 and sync its content to page title
     const firstBlock = updatedBlocks.find(block => block.order === 0);
     if (firstBlock && firstBlock.id === blockId && firstBlock.type === 'heading1' && updates.content !== undefined) {
       // Sync the H1 content to the page title
+      console.log(`🏗️ useWorkspace: Syncing H1 content to page title:`, updates.content);
       updatePage(currentPageId, { 
         blocks: updatedBlocks,
         title: updates.content || 'Untitled'
       });
     } else {
+      console.log(`🏗️ useWorkspace: Updating page with new blocks array`);
       updatePage(currentPageId, { blocks: updatedBlocks });
     }
 
@@ -196,11 +246,15 @@ export const useWorkspace = () => {
     try {
       const updatedBlock = updatedBlocks.find(b => b.id === blockId);
       if (updatedBlock) {
+        console.log(`🏗️ useWorkspace: Saving block to storage manager...`);
         await storageManager.saveBlock(updatedBlock, currentPageId);
+        console.log(`✅ useWorkspace: Block saved successfully`);
       }
     } catch (error) {
       console.warn('Failed to save block:', error);
     }
+    
+    console.log(`✅ useWorkspace: updateBlock completed for blockId='${blockId}'`);
   };
 
   const addBlock = (afterBlockId?: string, type: Block['type'] = 'text') => {

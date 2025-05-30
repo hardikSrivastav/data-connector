@@ -34,6 +34,7 @@ export const PageEditor = ({
     currentY: number;
   } | null>(null);
   const [agentStatus, setAgentStatus] = useState<'checking' | 'online' | 'offline'>('checking');
+  const [pendingAIUpdate, setPendingAIUpdate] = useState<{ blockId: string; content: string } | null>(null);
   
   const {
     selectedBlocks,
@@ -54,8 +55,11 @@ export const PageEditor = ({
 
   // AI Query handler - Updated to use real agent API
   const handleAIQuery = async (query: string, blockId: string) => {
+    console.log(`🎯 PageEditor: handleAIQuery called`);
+    console.log(`📝 PageEditor: Query='${query}', BlockId='${blockId}'`);
+    
     try {
-      console.log('AI Query received:', query, 'for block:', blockId);
+      console.log(`🔄 PageEditor: Calling agentClient.query...`);
       
       // Call the real agent API
       const response: AgentQueryResponse = await agentClient.query({
@@ -63,60 +67,92 @@ export const PageEditor = ({
         analyze: true // Request analysis for richer responses
       });
       
+      console.log(`✅ PageEditor: Agent response received!`);
+      console.log(`📊 PageEditor: Response structure:`, {
+        rows_count: response.rows?.length || 0,
+        sql_length: response.sql?.length || 0,
+        has_analysis: !!response.analysis
+      });
+      
       // Format the response for display
+      console.log(`🎨 PageEditor: Formatting agent response for display...`);
       const aiResponse = formatAgentResponse(response);
+      console.log(`🎨 PageEditor: Formatted response length: ${aiResponse.length} characters`);
+      console.log(`🎨 PageEditor: Formatted response preview:`, aiResponse.substring(0, 200) + '...');
       
       // Add the AI response as a new block after the current block
+      console.log(`➕ PageEditor: Adding new block after blockId='${blockId}'`);
       const newBlockId = onAddBlock(blockId);
+      console.log(`➕ PageEditor: New block created with id='${newBlockId}'`);
       
-      // Update the new block with the AI response
-      setTimeout(() => {
-        onUpdateBlock(newBlockId, {
-          content: aiResponse,
-          type: 'quote' // Style AI responses as quotes for now
-        });
-      }, 100);
+      // Store the AI response to update when the block appears in state
+      console.log(`💾 PageEditor: Storing AI response for delayed update`);
+      setPendingAIUpdate({ blockId: newBlockId, content: aiResponse });
       
     } catch (error) {
-      console.error('AI Query failed:', error);
+      console.error('❌ PageEditor: AI Query failed:', error);
+      console.error('❌ PageEditor: Error details:', {
+        query,
+        blockId,
+        error: error.message,
+        stack: error.stack
+      });
       
       // Add error message as a block
+      console.log(`⚠️ PageEditor: Adding error block after blockId='${blockId}'`);
       const newBlockId = onAddBlock(blockId);
-      setTimeout(() => {
-        onUpdateBlock(newBlockId, {
-          content: `❌ **Error:** ${error.message || 'Failed to get AI response. Please check that the agent server is running.'}`,
-          type: 'quote'
-        });
-      }, 100);
+      const errorMessage = `❌ **Error:** ${error.message || 'Failed to get AI response. Please check that the agent server is running.'}`;
+      console.log(`⚠️ PageEditor: Storing error message for delayed update`);
+      setPendingAIUpdate({ blockId: newBlockId, content: errorMessage });
     }
   };
 
   // Format agent response for display
   const formatAgentResponse = (response: AgentQueryResponse): string => {
+    console.log(`🎨 formatAgentResponse: Starting response formatting`);
+    console.log(`🎨 formatAgentResponse: Input response:`, {
+      rows_count: response.rows?.length || 0,
+      sql_length: response.sql?.length || 0,
+      has_analysis: !!response.analysis,
+      analysis_preview: response.analysis?.substring(0, 50) + '...' || 'No analysis'
+    });
+    
     let formattedResponse = '🤖 **AI Agent Response:**\n\n';
+    console.log(`🎨 formatAgentResponse: Base response header set`);
     
     // Add SQL query if available
     if (response.sql) {
-      formattedResponse += `**Generated SQL:**\n\`\`\`sql\n${response.sql}\n\`\`\`\n\n`;
+      const sqlSection = `**Generated SQL:**\n\`\`\`sql\n${response.sql}\n\`\`\`\n\n`;
+      formattedResponse += sqlSection;
+      console.log(`🎨 formatAgentResponse: Added SQL section (${response.sql.length} chars)`);
     }
     
     // Add analysis if available
     if (response.analysis) {
-      formattedResponse += `**Analysis:**\n${response.analysis}\n\n`;
+      const analysisSection = `**Analysis:**\n${response.analysis}\n\n`;
+      formattedResponse += analysisSection;
+      console.log(`🎨 formatAgentResponse: Added analysis section (${response.analysis.length} chars)`);
     }
     
     // Add data results if available
     if (response.rows && response.rows.length > 0) {
-      formattedResponse += `**Results:** Found ${response.rows.length} row(s)\n\n`;
+      console.log(`🎨 formatAgentResponse: Processing ${response.rows.length} data rows`);
+      
+      const resultsHeader = `**Results:** Found ${response.rows.length} row(s)\n\n`;
+      formattedResponse += resultsHeader;
+      console.log(`🎨 formatAgentResponse: Added results header`);
       
       // Show first few rows as a simple table
       const maxRows = Math.min(response.rows.length, 5);
+      console.log(`🎨 formatAgentResponse: Will display ${maxRows} rows (max 5)`);
+      
       if (maxRows > 0) {
         const columns = Object.keys(response.rows[0]);
+        console.log(`🎨 formatAgentResponse: Table columns:`, columns);
         
         // Create a simple markdown table
-        formattedResponse += `| ${columns.join(' | ')} |\n`;
-        formattedResponse += `| ${columns.map(() => '---').join(' | ')} |\n`;
+        let tableSection = `| ${columns.join(' | ')} |\n`;
+        tableSection += `| ${columns.map(() => '---').join(' | ')} |\n`;
         
         for (let i = 0; i < maxRows; i++) {
           const row = response.rows[i];
@@ -124,16 +160,32 @@ export const PageEditor = ({
             const value = row[col];
             return value !== null && value !== undefined ? String(value) : '';
           });
-          formattedResponse += `| ${values.join(' | ')} |\n`;
+          tableSection += `| ${values.join(' | ')} |\n`;
         }
         
+        formattedResponse += tableSection;
+        console.log(`🎨 formatAgentResponse: Added table section with ${maxRows} rows`);
+        
         if (response.rows.length > maxRows) {
-          formattedResponse += `\n... and ${response.rows.length - maxRows} more rows`;
+          const moreRowsNote = `\n... and ${response.rows.length - maxRows} more rows`;
+          formattedResponse += moreRowsNote;
+          console.log(`🎨 formatAgentResponse: Added 'more rows' note for remaining ${response.rows.length - maxRows} rows`);
         }
       }
     } else {
-      formattedResponse += '**Results:** No data returned from query.';
+      const noDataSection = '**Results:** No data returned from query.';
+      formattedResponse += noDataSection;
+      console.log(`🎨 formatAgentResponse: Added 'no data' section`);
     }
+    
+    console.log(`🎨 formatAgentResponse: Formatting complete!`);
+    console.log(`🎨 formatAgentResponse: Final response length: ${formattedResponse.length} characters`);
+    console.log(`🎨 formatAgentResponse: Final response structure:`, {
+      has_sql: formattedResponse.includes('Generated SQL:'),
+      has_analysis: formattedResponse.includes('Analysis:'),
+      has_results: formattedResponse.includes('Results:'),
+      has_table: formattedResponse.includes('|')
+    });
     
     return formattedResponse;
   };
@@ -280,7 +332,20 @@ export const PageEditor = ({
   };
 
   const handleBlockUpdate = (blockId: string, updates: any) => {
-    onUpdateBlock(blockId, updates);
+    console.log(`🔧 PageEditor: handleBlockUpdate called with blockId='${blockId}'`);
+    console.log(`🔧 PageEditor: Update data:`, {
+      blockId,
+      updates,
+      current_block_exists: !!page.blocks.find(b => b.id === blockId),
+      total_blocks: page.blocks.length
+    });
+    
+    try {
+      onUpdateBlock(blockId, updates);
+      console.log(`✅ PageEditor: onUpdateBlock call successful for blockId='${blockId}'`);
+    } catch (error) {
+      console.error(`❌ PageEditor: Error in handleBlockUpdate:`, error);
+    }
   };
 
   const handleAddBlock = (afterBlockId?: string) => {
@@ -444,6 +509,34 @@ export const PageEditor = ({
     
     return () => clearInterval(interval);
   }, []);
+
+  // Handle pending AI update
+  useEffect(() => {
+    if (pendingAIUpdate) {
+      const { blockId, content } = pendingAIUpdate;
+      console.log(`🎯 PageEditor: Checking pending AI update for blockId='${blockId}'`);
+      
+      // Check if the block now exists in the page state
+      const blockExists = page.blocks.some(block => block.id === blockId);
+      console.log(`🎯 PageEditor: Block exists in current page state: ${blockExists}`);
+      console.log(`🎯 PageEditor: Current page blocks:`, page.blocks.map(b => ({ id: b.id, content_length: b.content?.length || 0 })));
+      
+      if (blockExists) {
+        console.log(`🎯 PageEditor: Executing pending AI update for blockId='${blockId}'`);
+        console.log(`🎯 PageEditor: Content preview:`, content.substring(0, 100) + '...');
+        
+        onUpdateBlock(blockId, {
+          content: content,
+          type: 'quote' // Style AI responses as quotes for now
+        });
+        
+        console.log(`✅ PageEditor: Pending AI update completed for blockId='${blockId}'`);
+        setPendingAIUpdate(null);
+      } else {
+        console.log(`⏳ PageEditor: Block not yet available in page state, will retry on next render`);
+      }
+    }
+  }, [pendingAIUpdate, page.blocks, onUpdateBlock]);
 
   return (
     <div 
