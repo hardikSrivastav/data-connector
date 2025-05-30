@@ -5,6 +5,7 @@ import { EmojiPicker } from './EmojiPicker';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { useBlockSelection } from '@/hooks/useBlockSelection';
+import { agentClient, AgentQueryResponse } from '@/lib/agent-client';
 
 interface PageEditorProps {
   page: Page;
@@ -32,6 +33,7 @@ export const PageEditor = ({
     currentX: number;
     currentY: number;
   } | null>(null);
+  const [agentStatus, setAgentStatus] = useState<'checking' | 'online' | 'offline'>('checking');
   
   const {
     selectedBlocks,
@@ -50,16 +52,19 @@ export const PageEditor = ({
     getSelectionInfo,
   } = useBlockSelection(page.blocks);
 
-  // AI Query handler
+  // AI Query handler - Updated to use real agent API
   const handleAIQuery = async (query: string, blockId: string) => {
     try {
       console.log('AI Query received:', query, 'for block:', blockId);
       
-      // Simulate API call delay
-      await new Promise(resolve => setTimeout(resolve, 1500));
+      // Call the real agent API
+      const response: AgentQueryResponse = await agentClient.query({
+        question: query,
+        analyze: true // Request analysis for richer responses
+      });
       
-      // Placeholder response - replace with actual API call later
-      const aiResponse = generatePlaceholderResponse(query);
+      // Format the response for display
+      const aiResponse = formatAgentResponse(response);
       
       // Add the AI response as a new block after the current block
       const newBlockId = onAddBlock(blockId);
@@ -79,43 +84,58 @@ export const PageEditor = ({
       const newBlockId = onAddBlock(blockId);
       setTimeout(() => {
         onUpdateBlock(newBlockId, {
-          content: 'Sorry, I encountered an error processing your request. Please try again.',
+          content: `❌ **Error:** ${error.message || 'Failed to get AI response. Please check that the agent server is running.'}`,
           type: 'quote'
         });
       }, 100);
     }
   };
 
-  // Generate placeholder AI responses based on query content
-  const generatePlaceholderResponse = (query: string): string => {
-    const lowerQuery = query.toLowerCase();
+  // Format agent response for display
+  const formatAgentResponse = (response: AgentQueryResponse): string => {
+    let formattedResponse = '🤖 **AI Agent Response:**\n\n';
     
-    if (lowerQuery.includes('summarize') || lowerQuery.includes('summary')) {
-      return '📝 **AI Response:** Here\'s a summary of the key points: This content covers the main concepts and provides a comprehensive overview of the topic discussed above.';
+    // Add SQL query if available
+    if (response.sql) {
+      formattedResponse += `**Generated SQL:**\n\`\`\`sql\n${response.sql}\n\`\`\`\n\n`;
     }
     
-    if (lowerQuery.includes('explain') || lowerQuery.includes('what is')) {
-      return '🧠 **AI Response:** Let me explain this concept: This is a fundamental principle that involves understanding the underlying mechanisms and how they relate to the broader context.';
+    // Add analysis if available
+    if (response.analysis) {
+      formattedResponse += `**Analysis:**\n${response.analysis}\n\n`;
     }
     
-    if (lowerQuery.includes('list') || lowerQuery.includes('ideas')) {
-      return '💡 **AI Response:** Here are some ideas:\n• First innovative approach\n• Creative solution methodology\n• Alternative perspective consideration\n• Strategic implementation plan\n• Future development opportunities';
+    // Add data results if available
+    if (response.rows && response.rows.length > 0) {
+      formattedResponse += `**Results:** Found ${response.rows.length} row(s)\n\n`;
+      
+      // Show first few rows as a simple table
+      const maxRows = Math.min(response.rows.length, 5);
+      if (maxRows > 0) {
+        const columns = Object.keys(response.rows[0]);
+        
+        // Create a simple markdown table
+        formattedResponse += `| ${columns.join(' | ')} |\n`;
+        formattedResponse += `| ${columns.map(() => '---').join(' | ')} |\n`;
+        
+        for (let i = 0; i < maxRows; i++) {
+          const row = response.rows[i];
+          const values = columns.map(col => {
+            const value = row[col];
+            return value !== null && value !== undefined ? String(value) : '';
+          });
+          formattedResponse += `| ${values.join(' | ')} |\n`;
+        }
+        
+        if (response.rows.length > maxRows) {
+          formattedResponse += `\n... and ${response.rows.length - maxRows} more rows`;
+        }
+      }
+    } else {
+      formattedResponse += '**Results:** No data returned from query.';
     }
     
-    if (lowerQuery.includes('rewrite') || lowerQuery.includes('improve')) {
-      return '✨ **AI Response:** Here\'s an improved version: This enhanced text maintains the original meaning while improving clarity, flow, and readability for better comprehension.';
-    }
-    
-    if (lowerQuery.includes('outline')) {
-      return '📋 **AI Response:** Suggested outline:\n1. Introduction and overview\n2. Main concepts and principles\n3. Practical applications\n4. Examples and case studies\n5. Conclusion and next steps';
-    }
-    
-    if (lowerQuery.includes('grammar') || lowerQuery.includes('spelling') || lowerQuery.includes('fix')) {
-      return '✅ **AI Response:** Grammar and spelling have been reviewed. The text appears to be well-structured with proper grammar and spelling. Minor suggestions: Consider varying sentence length for better readability.';
-    }
-    
-    // Default response
-    return `🤖 **AI Response:** Thank you for your query: "${query}". This is a placeholder response. In the full implementation, this would be processed by an AI backend service and return a contextual response based on your specific request.`;
+    return formattedResponse;
   };
 
   // Global drag selection handlers
@@ -405,6 +425,26 @@ export const PageEditor = ({
     setShowEmojiPicker(false);
   };
 
+  // Test agent connection on mount
+  useEffect(() => {
+    const testAgentConnection = async () => {
+      try {
+        const isOnline = await agentClient.testConnection();
+        setAgentStatus(isOnline ? 'online' : 'offline');
+      } catch (error) {
+        console.warn('Agent connection test failed:', error);
+        setAgentStatus('offline');
+      }
+    };
+
+    testAgentConnection();
+    
+    // Test connection periodically
+    const interval = setInterval(testAgentConnection, 30000); // Every 30 seconds
+    
+    return () => clearInterval(interval);
+  }, []);
+
   return (
     <div 
       className="flex-1 overflow-y-auto relative"
@@ -488,6 +528,36 @@ export const PageEditor = ({
             </div>
           </div>
         )}
+
+        {/* Agent Status Indicator */}
+        <div className="mb-4 p-2 bg-gray-50 border border-gray-200 rounded-md flex items-center justify-between text-sm">
+          <div className="flex items-center gap-2">
+            <div className={`w-2 h-2 rounded-full ${
+              agentStatus === 'online' ? 'bg-green-500' : 
+              agentStatus === 'offline' ? 'bg-red-500' : 
+              'bg-yellow-500 animate-pulse'
+            }`} />
+            <span className="text-gray-700">
+              AI Agent: {
+                agentStatus === 'online' ? 'Connected' :
+                agentStatus === 'offline' ? 'Disconnected' :
+                'Checking...'
+              }
+            </span>
+          </div>
+          {agentStatus === 'offline' && (
+            <button
+              onClick={async () => {
+                setAgentStatus('checking');
+                const isOnline = await agentClient.testConnection();
+                setAgentStatus(isOnline ? 'online' : 'offline');
+              }}
+              className="text-blue-600 hover:text-blue-800 px-2 py-1 hover:bg-blue-50 rounded text-xs"
+            >
+              Retry
+            </button>
+          )}
+        </div>
 
         {/* Blocks */}
         <div className="space-y-0"> {/* Changed from space-y-1 to space-y-0 for continuous selection */}

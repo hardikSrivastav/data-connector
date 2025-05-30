@@ -172,10 +172,13 @@ export const BlockEditor = ({
         setShowTypeSelector(false); // Close type selector if open
       } 
       else {
-        setShowTypeSelector(false);
-        setShowAIQuery(false);
-        setTypeSelectorQuery('');
-        setAIQuery('');
+        // Close selectors if we're no longer on a command line
+        if (showAIQuery || showTypeSelector) {
+          setShowTypeSelector(false);
+          setShowAIQuery(false);
+          setTypeSelectorQuery('');
+          setAIQuery('');
+        }
       }
     } else {
       // Fallback to original logic if we can't get cursor position
@@ -239,7 +242,7 @@ export const BlockEditor = ({
   const handleAIQuerySubmit = async (query: string) => {
     setIsAILoading(true);
     
-    // Remove the @ command from the content
+    // Remove the @ command from the content while preserving line structure
     const textarea = textareaRef.current;
     if (textarea) {
       const cursorPosition = textarea.selectionStart;
@@ -249,16 +252,44 @@ export const BlockEditor = ({
       const currentLine = content.substring(currentLineStart, cursorPosition);
       
       if (currentLine.startsWith('@')) {
+        // Calculate the exact positions to preserve content structure
         const beforeCommand = content.substring(0, currentLineStart);
         const afterCursor = content.substring(cursorPosition);
-        const newContent = beforeCommand + afterCursor;
+        
+        // If there's content after the cursor on the same line, preserve it
+        const restOfCurrentLine = content.substring(cursorPosition);
+        const nextLineBreak = restOfCurrentLine.indexOf('\n');
+        const restOfLine = nextLineBreak >= 0 ? restOfCurrentLine.substring(0, nextLineBreak) : restOfCurrentLine;
+        const afterCurrentLine = nextLineBreak >= 0 ? restOfCurrentLine.substring(nextLineBreak) : '';
+        
+        // Reconstruct content: everything before the line + any remaining content on the line + everything after
+        const newContent = beforeCommand + restOfLine + afterCurrentLine;
         
         onUpdate({ content: newContent });
+        
+        // Set cursor position to where the @ command was (beginning of the line)
+        setTimeout(() => {
+          if (textareaRef.current) {
+            const newCursorPosition = currentLineStart;
+            textareaRef.current.setSelectionRange(newCursorPosition, newCursorPosition);
+          }
+        }, 0);
       }
     } else {
-      // Fallback: if @ was at the beginning of the content, clear it
+      // Fallback: if @ was at the beginning of the content, remove just the @ and query
       if (block.content.startsWith('@')) {
-        onUpdate({ content: block.content.substring(1) });
+        const atCommandEnd = block.content.indexOf(' ');
+        if (atCommandEnd >= 0) {
+          onUpdate({ content: block.content.substring(atCommandEnd + 1) });
+        } else {
+          // If there's no space, check for newline after the command
+          const newlineIndex = block.content.indexOf('\n');
+          if (newlineIndex >= 0) {
+            onUpdate({ content: block.content.substring(newlineIndex + 1) });
+          } else {
+            onUpdate({ content: '' });
+          }
+        }
       }
     }
     
@@ -478,7 +509,23 @@ export const BlockEditor = ({
           onKeyDown={handleKeyDown}
           onFocus={onFocus}
           onInput={adjustTextareaHeight}
-          onClick={(e) => e.stopPropagation()}
+          onClick={(e) => {
+            e.stopPropagation();
+            // If AI query is showing and user clicks textarea, close it and focus
+            if (showAIQuery) {
+              setShowAIQuery(false);
+              setAIQuery('');
+              // Don't modify content when clicking away from AI query
+              setTimeout(() => {
+                if (textareaRef.current) {
+                  textareaRef.current.focus();
+                  // Position cursor where user clicked
+                  const clickPosition = e.currentTarget.selectionStart;
+                  textareaRef.current.setSelectionRange(clickPosition, clickPosition);
+                }
+              }, 0);
+            }
+          }}
           placeholder={getPlaceholder()}
           className={getClassName()}
           rows={1}
@@ -495,12 +542,28 @@ export const BlockEditor = ({
             query={aiQuery}
             onQuerySubmit={handleAIQuerySubmit}
             onClose={() => {
+              // Don't modify content when just closing, preserve everything
               setShowAIQuery(false);
               setAIQuery('');
-              // Focus back to textarea
+              
+              // Focus back to textarea and restore cursor position
               setTimeout(() => {
                 if (textareaRef.current) {
                   textareaRef.current.focus();
+                  
+                  // Try to restore cursor to the end of the @ command line
+                  const content = block.content;
+                  const atIndex = content.lastIndexOf('@');
+                  if (atIndex >= 0) {
+                    // Find the end of the current line where @ command was
+                    const afterAt = content.substring(atIndex);
+                    const nextLineBreak = afterAt.indexOf('\n');
+                    const cursorPos = nextLineBreak >= 0 ? atIndex + nextLineBreak : content.length;
+                    textareaRef.current.setSelectionRange(cursorPos, cursorPos);
+                  } else {
+                    // Fallback: position at end of content
+                    textareaRef.current.setSelectionRange(content.length, content.length);
+                  }
                 }
               }, 0);
             }}
