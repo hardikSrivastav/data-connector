@@ -50,6 +50,74 @@ export const PageEditor = ({
     getSelectionInfo,
   } = useBlockSelection(page.blocks);
 
+  // AI Query handler
+  const handleAIQuery = async (query: string, blockId: string) => {
+    try {
+      console.log('AI Query received:', query, 'for block:', blockId);
+      
+      // Simulate API call delay
+      await new Promise(resolve => setTimeout(resolve, 1500));
+      
+      // Placeholder response - replace with actual API call later
+      const aiResponse = generatePlaceholderResponse(query);
+      
+      // Add the AI response as a new block after the current block
+      const newBlockId = onAddBlock(blockId);
+      
+      // Update the new block with the AI response
+      setTimeout(() => {
+        onUpdateBlock(newBlockId, {
+          content: aiResponse,
+          type: 'quote' // Style AI responses as quotes for now
+        });
+      }, 100);
+      
+    } catch (error) {
+      console.error('AI Query failed:', error);
+      
+      // Add error message as a block
+      const newBlockId = onAddBlock(blockId);
+      setTimeout(() => {
+        onUpdateBlock(newBlockId, {
+          content: 'Sorry, I encountered an error processing your request. Please try again.',
+          type: 'quote'
+        });
+      }, 100);
+    }
+  };
+
+  // Generate placeholder AI responses based on query content
+  const generatePlaceholderResponse = (query: string): string => {
+    const lowerQuery = query.toLowerCase();
+    
+    if (lowerQuery.includes('summarize') || lowerQuery.includes('summary')) {
+      return '📝 **AI Response:** Here\'s a summary of the key points: This content covers the main concepts and provides a comprehensive overview of the topic discussed above.';
+    }
+    
+    if (lowerQuery.includes('explain') || lowerQuery.includes('what is')) {
+      return '🧠 **AI Response:** Let me explain this concept: This is a fundamental principle that involves understanding the underlying mechanisms and how they relate to the broader context.';
+    }
+    
+    if (lowerQuery.includes('list') || lowerQuery.includes('ideas')) {
+      return '💡 **AI Response:** Here are some ideas:\n• First innovative approach\n• Creative solution methodology\n• Alternative perspective consideration\n• Strategic implementation plan\n• Future development opportunities';
+    }
+    
+    if (lowerQuery.includes('rewrite') || lowerQuery.includes('improve')) {
+      return '✨ **AI Response:** Here\'s an improved version: This enhanced text maintains the original meaning while improving clarity, flow, and readability for better comprehension.';
+    }
+    
+    if (lowerQuery.includes('outline')) {
+      return '📋 **AI Response:** Suggested outline:\n1. Introduction and overview\n2. Main concepts and principles\n3. Practical applications\n4. Examples and case studies\n5. Conclusion and next steps';
+    }
+    
+    if (lowerQuery.includes('grammar') || lowerQuery.includes('spelling') || lowerQuery.includes('fix')) {
+      return '✅ **AI Response:** Grammar and spelling have been reviewed. The text appears to be well-structured with proper grammar and spelling. Minor suggestions: Consider varying sentence length for better readability.';
+    }
+    
+    // Default response
+    return `🤖 **AI Response:** Thank you for your query: "${query}". This is a placeholder response. In the full implementation, this would be processed by an AI backend service and return a contextual response based on your specific request.`;
+  };
+
   // Global drag selection handlers
   const handleGlobalMouseDown = (e: React.MouseEvent) => {
     // Don't start drag selection if clicking on emoji picker area
@@ -451,6 +519,7 @@ export const PageEditor = ({
                   onDragStart={handleBlockDragStart(block.id)}
                   onDragOver={handleDragOver}
                   onDrop={handleBlockDrop(block.id)}
+                  onAIQuery={handleAIQuery}
                 />
               </div>
             );

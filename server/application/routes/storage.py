@@ -382,33 +382,39 @@ async def save_block(block: Block, db: Session = Depends(get_db)):
 @router.post("/sync", response_model=SyncResponse)
 async def sync_changes(sync_request: SyncRequest, db: Session = Depends(get_db)):
     """Sync changes from client"""
-    print(f"Received sync request with {len(sync_request.changes)} changes")
+    print(f"🔄 Received sync request with {len(sync_request.changes)} changes")
     
     # Process each change
     for change in sync_request.changes:
-        print(f"Processing change: {change.type} {change.entity} {change.entityId}")
+        print(f"📝 Processing change: {change.type} {change.entity} {change.entityId}")
         
         # Check if this change already exists to avoid duplicates
         existing_change = db.query(ChangeDB).filter(ChangeDB.id == change.id).first()
         if existing_change:
-            print(f"Change {change.id} already exists, skipping...")
+            print(f"⚠️  Change {change.id} already exists, skipping...")
             continue
         
         # Store the change for audit log
         try:
-            db_change = ChangeDB(
-                id=change.id,
-                type=change.type,
-                entity=change.entity,
-                entity_id=change.entityId,
-                user_id=change.userId,
-                timestamp=change.timestamp,
-                data=change.data,
-                workspace_id="main" if change.entity == "workspace" else None,
-                page_id=change.entityId if change.entity == "page" else None,
-                block_id=change.entityId if change.entity == "block" else None
-            )
-            db.add(db_change)
+            # For deletion changes, don't store them in the database to avoid foreign key constraint violations
+            # Just process the deletion directly
+            if change.type == "delete":
+                print(f"🗑️  Processing deletion directly without storing change record: {change.entity} {change.entityId}")
+            else:
+                # Store non-deletion changes normally
+                db_change = ChangeDB(
+                    id=change.id,
+                    type=change.type,
+                    entity=change.entity,
+                    entity_id=change.entityId,
+                    user_id=change.userId,
+                    timestamp=change.timestamp,
+                    data=change.data,
+                    workspace_id="main" if change.entity == "workspace" else None,
+                    page_id=change.entityId if change.entity == "page" else None,
+                    block_id=change.entityId if change.entity == "block" else None
+                )
+                db.add(db_change)
             
             # Apply the change to storage
             if change.entity == "page":
@@ -463,9 +469,14 @@ async def sync_changes(sync_request: SyncRequest, db: Session = Depends(get_db))
                         )
                         db.add(db_block)
                 elif change.type == "delete":
+                    print(f"🗑️  Deleting block: {change.entityId}")
                     db_block = db.query(BlockDB).filter(BlockDB.id == change.entityId).first()
                     if db_block:
+                        print(f"✅ Found block to delete: {db_block.id}")
                         db.delete(db_block)
+                        print(f"🗑️  Block {change.entityId} marked for deletion")
+                    else:
+                        print(f"❌ Block {change.entityId} not found in database")
                         
             elif change.entity == "workspace":
                 if change.type in ["create", "update"]:
@@ -492,10 +503,11 @@ async def sync_changes(sync_request: SyncRequest, db: Session = Depends(get_db))
     
     try:
         db.commit()
-        print("Successfully committed all changes")
+        print("✅ Successfully committed all changes")
     except Exception as e:
-        print(f"Error committing changes: {str(e)}")
+        print(f"❌ Error committing changes: {str(e)}")
         db.rollback()
+        raise HTTPException(status_code=500, detail=f"Database commit failed: {str(e)}")
     
     # Return sync response
     return SyncResponse(

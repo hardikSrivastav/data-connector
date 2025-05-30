@@ -1,51 +1,49 @@
 /* Block Selection Styles */
 .selectedBlock {
-  background-color: rgba(59, 130, 246, 0.1);
-  position: relative;
-  transition: background-color 0.2s ease;
+  @apply bg-blue-50 border border-blue-200 rounded-md -mx-1 px-1;
 }
 
 .firstSelected {
-  border: 2px solid #93c5fd; /* ring-blue-200 */
-  border-bottom: none;
-  border-top-left-radius: 6px;
-  border-top-right-radius: 6px;
-  margin-bottom: -1px;
+  @apply rounded-t-md rounded-b-none;
 }
 
 .lastSelected {
-  border: 2px solid #93c5fd;
-  border-top: none;
-  border-bottom-left-radius: 6px;
-  border-bottom-right-radius: 6px;
-  margin-top: -1px;
+  @apply rounded-b-md rounded-t-none;
 }
 
 .middleSelected {
-  border-left: 2px solid #93c5fd;
-  border-right: 2px solid #93c5fd;
-  border-top: none;
-  border-bottom: none;
-  margin-top: -1px;
-  margin-bottom: -1px;
+  @apply rounded-none;
 }
 
 .singleSelected {
-  border: 2px solid #93c5fd;
-  border-radius: 6px;
+  @apply rounded-md;
 }
 
 /* Prevent text selection during drag operations */
 .preventSelection {
-  -webkit-user-select: none !important;
-  -moz-user-select: none !important;
-  -ms-user-select: none !important;
-  user-select: none !important;
+  -webkit-user-select: none;
+  -moz-user-select: none;
+  -ms-user-select: none;
+  user-select: none;
 }
 
 .preventSelection * {
-  -webkit-user-select: none !important;
-  -moz-user-select: none !important;
-  -ms-user-select: none !important;
-  user-select: none !important;
+  -webkit-user-select: none;
+  -moz-user-select: none;
+  -ms-user-select: none;
+  user-select: none;
+}
+
+/* AI Query Selector Integration */
+.aiQueryInline {
+  @apply w-full;
+  min-height: 48px;
+  font-family: 'ui-serif', Georgia, Cambria, "Times New Roman", Times, serif;
+}
+
+.aiQueryInline input {
+  font-family: inherit;
+  font-size: inherit;
+  line-height: inherit;
+  min-height: 24px;
 } 

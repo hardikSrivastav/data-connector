@@ -12,7 +12,11 @@ export class EnterpriseSyncStrategy implements SyncStrategy {
   
   async syncToServer<T>(endpoint: string, data: T): Promise<T> {
     // Sync to enterprise on-premise API
-    const response = await fetch(`${this.config.apiBaseUrl}/api/${endpoint}`, {
+    const url = `${this.config.apiBaseUrl}/api/${endpoint}`;
+    console.log('🔄 Syncing to server:', url);
+    console.log('📤 Sync data:', data);
+    
+    const response = await fetch(url, {
       method: 'POST',
       headers: { 
         'Content-Type': 'application/json',
@@ -21,11 +25,17 @@ export class EnterpriseSyncStrategy implements SyncStrategy {
       body: JSON.stringify(data)
     });
     
+    console.log('📥 Sync response status:', response.status);
+    
     if (!response.ok) {
-      throw new Error(`Enterprise sync failed: ${response.status}`);
+      const errorText = await response.text();
+      console.error('❌ Sync failed:', response.status, errorText);
+      throw new Error(`Enterprise sync failed: ${response.status} - ${errorText}`);
     }
     
-    return response.json();
+    const result = await response.json();
+    console.log('✅ Sync successful:', result);
+    return result;
   }
   
   async fetchFromServer<T>(endpoint: string): Promise<T> {

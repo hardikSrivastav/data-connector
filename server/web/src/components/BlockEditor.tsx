@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect, KeyboardEvent } from 'react';
 import { Block } from '@/types';
 import { BlockTypeSelector } from './BlockTypeSelector';
+import { AIQuerySelector } from './AIQuerySelector';
 import { cn } from '@/lib/utils';
 import { GripVertical, Plus } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -28,6 +29,8 @@ interface BlockEditorProps {
   isFirstSelected?: boolean;
   isLastSelected?: boolean;
   isInSelection?: boolean;
+  // AI Query props
+  onAIQuery?: (query: string, blockId: string) => void;
 }
 
 export const BlockEditor = ({
@@ -49,10 +52,14 @@ export const BlockEditor = ({
   onMouseUp,
   isFirstSelected = false,
   isLastSelected = false,
-  isInSelection = false
+  isInSelection = false,
+  onAIQuery
 }: BlockEditorProps) => {
   const [showTypeSelector, setShowTypeSelector] = useState(false);
   const [typeSelectorQuery, setTypeSelectorQuery] = useState('');
+  const [showAIQuery, setShowAIQuery] = useState(false);
+  const [aiQuery, setAIQuery] = useState('');
+  const [isAILoading, setIsAILoading] = useState(false);
   const [showAddButton, setShowAddButton] = useState(false);
   const [justCreatedFromSlash, setJustCreatedFromSlash] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -136,7 +143,13 @@ export const BlockEditor = ({
       setJustCreatedFromSlash(false);
     }
     
-    // Get cursor position to detect slash command at current line
+    // Only show AI query if this block is currently focused
+    if (!isFocused) {
+      onUpdate({ content });
+      return;
+    }
+    
+    // Get cursor position to detect commands at current line
     const textarea = textareaRef.current;
     if (textarea) {
       const cursorPosition = textarea.selectionStart;
@@ -144,14 +157,25 @@ export const BlockEditor = ({
       const currentLineStart = textBeforeCursor.lastIndexOf('\n') + 1;
       const currentLine = content.substring(currentLineStart, cursorPosition);
       
-      // Check if current line starts with '/'
+      // Check if current line starts with '/' for block type selector
       if (currentLine.startsWith('/')) {
         const query = currentLine.slice(1);
         setTypeSelectorQuery(query);
         setShowTypeSelector(true);
-      } else {
+        setShowAIQuery(false); // Close AI query if open
+      } 
+      // Check if current line starts with '@' for AI query
+      else if (currentLine.startsWith('@')) {
+        const query = currentLine.slice(1);
+        setAIQuery(query);
+        setShowAIQuery(true);
+        setShowTypeSelector(false); // Close type selector if open
+      } 
+      else {
         setShowTypeSelector(false);
+        setShowAIQuery(false);
         setTypeSelectorQuery('');
+        setAIQuery('');
       }
     } else {
       // Fallback to original logic if we can't get cursor position
@@ -159,9 +183,17 @@ export const BlockEditor = ({
         const query = content.slice(1);
         setTypeSelectorQuery(query);
         setShowTypeSelector(true);
+        setShowAIQuery(false);
+      } else if (content.startsWith('@')) {
+        const query = content.slice(1);
+        setAIQuery(query);
+        setShowAIQuery(true);
+        setShowTypeSelector(false);
       } else {
         setShowTypeSelector(false);
+        setShowAIQuery(false);
         setTypeSelectorQuery('');
+        setAIQuery('');
       }
     }
     
@@ -204,6 +236,51 @@ export const BlockEditor = ({
     }, 0);
   };
 
+  const handleAIQuerySubmit = async (query: string) => {
+    setIsAILoading(true);
+    
+    // Remove the @ command from the content
+    const textarea = textareaRef.current;
+    if (textarea) {
+      const cursorPosition = textarea.selectionStart;
+      const content = block.content;
+      const textBeforeCursor = content.substring(0, cursorPosition);
+      const currentLineStart = textBeforeCursor.lastIndexOf('\n') + 1;
+      const currentLine = content.substring(currentLineStart, cursorPosition);
+      
+      if (currentLine.startsWith('@')) {
+        const beforeCommand = content.substring(0, currentLineStart);
+        const afterCursor = content.substring(cursorPosition);
+        const newContent = beforeCommand + afterCursor;
+        
+        onUpdate({ content: newContent });
+      }
+    } else {
+      // Fallback: if @ was at the beginning of the content, clear it
+      if (block.content.startsWith('@')) {
+        onUpdate({ content: block.content.substring(1) });
+      }
+    }
+    
+    // Close the AI query selector
+    setShowAIQuery(false);
+    setAIQuery('');
+    
+    // Call the parent's AI query handler
+    if (onAIQuery) {
+      await onAIQuery(query, block.id);
+    }
+    
+    setIsAILoading(false);
+    
+    // Focus back to textarea
+    setTimeout(() => {
+      if (textareaRef.current) {
+        textareaRef.current.focus();
+      }
+    }, 0);
+  };
+
   const getPlaceholder = () => {
     switch (block.type) {
       case 'heading1': return "Heading 1";
@@ -214,7 +291,7 @@ export const BlockEditor = ({
       case 'quote': return "Quote";
       case 'code': return "Code";
       case 'divider': return "---";
-      default: return "Type '/' for commands";
+      default: return "Type '/' for commands, '@' for AI";
     }
   };
 
@@ -407,9 +484,29 @@ export const BlockEditor = ({
           rows={1}
           style={{
             minHeight: getMinHeight(),
-            height: 'auto'
+            height: 'auto',
+            display: showAIQuery ? 'none' : 'block' // Hide textarea when AI query is active
           }}
         />
+        
+        {/* Inline AI Query Selector - replaces the textarea when active */}
+        {showAIQuery && (
+          <AIQuerySelector
+            query={aiQuery}
+            onQuerySubmit={handleAIQuerySubmit}
+            onClose={() => {
+              setShowAIQuery(false);
+              setAIQuery('');
+              // Focus back to textarea
+              setTimeout(() => {
+                if (textareaRef.current) {
+                  textareaRef.current.focus();
+                }
+              }, 0);
+            }}
+            isLoading={isAILoading}
+          />
+        )}
         
         {showTypeSelector && (
           <BlockTypeSelector
