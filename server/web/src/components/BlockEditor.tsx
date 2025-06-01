@@ -1,9 +1,10 @@
 import { useState, useRef, useEffect, KeyboardEvent } from 'react';
-import { Block, Workspace } from '@/types';
+import { Block, Workspace, Page } from '@/types';
 import { BlockTypeSelector } from './BlockTypeSelector';
 import { AIQuerySelector } from './AIQuerySelector';
 import { TableBlock } from './TableBlock';
 import { ToggleBlock } from './ToggleBlock';
+import { CanvasBlock } from './CanvasBlock';
 import { cn } from '@/lib/utils';
 import { GripVertical, Plus } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -36,8 +37,9 @@ interface BlockEditorProps {
   isInSelection?: boolean;
   // AI Query props
   onAIQuery?: (query: string, blockId: string) => void;
-  // Workspace for subpage blocks
+  // Workspace for subpage blocks and canvas
   workspace?: Workspace;
+  page?: Page;
   onNavigateToPage?: (pageId: string) => void;
 }
 
@@ -63,6 +65,7 @@ export const BlockEditor = ({
   isInSelection = false,
   onAIQuery,
   workspace,
+  page,
   onNavigateToPage
 }: BlockEditorProps) => {
   const [showTypeSelector, setShowTypeSelector] = useState(false);
@@ -105,7 +108,7 @@ export const BlockEditor = ({
       const isSpecialBlock = specialBlockTypes.includes(block.type);
       
       // For headings, dividers, and custom block types, Enter always creates a new block
-      if (['heading1', 'heading2', 'heading3', 'divider', 'table', 'toggle', 'subpage'].includes(block.type)) {
+      if (['heading1', 'heading2', 'heading3', 'divider', 'table', 'toggle', 'subpage', 'canvas'].includes(block.type)) {
         e.preventDefault();
         onAddBlock();
         return;
@@ -386,6 +389,7 @@ export const BlockEditor = ({
       case 'table': return "Table";
       case 'toggle': return "Toggle list";
       case 'subpage': return "Sub-page link";
+      case 'canvas': return "Canvas analysis";
       default: return "Type '/' for commands, '@' for AI";
     }
   };
@@ -602,6 +606,16 @@ export const BlockEditor = ({
           />
         )}
         
+        {block.type === 'canvas' && workspace && page && (
+          <CanvasBlock
+            block={block}
+            onUpdate={onUpdate}
+            isFocused={isFocused}
+            workspace={workspace}
+            page={page}
+          />
+        )}
+        
         <textarea
           ref={textareaRef}
           value={block.content}
@@ -632,7 +646,7 @@ export const BlockEditor = ({
           style={{
             minHeight: getMinHeight(),
             height: 'auto',
-            display: showAIQuery || ['table', 'toggle', 'subpage'].includes(block.type) ? 'none' : 'block' // Hide textarea when AI query is active or for custom components
+            display: showAIQuery || ['table', 'toggle', 'subpage', 'canvas'].includes(block.type) ? 'none' : 'block' // Hide textarea when AI query is active or for custom components
           }}
         />
         

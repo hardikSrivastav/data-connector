@@ -169,15 +169,75 @@
 
 /* Prevent text selection during drag operations */
 .prevent-selection {
-  -webkit-user-select: none !important;
-  -moz-user-select: none !important;
-  -ms-user-select: none !important;
-  user-select: none !important;
+  -webkit-user-select: none;
+  -moz-user-select: none;
+  -ms-user-select: none;
+  user-select: none;
 }
 
 .prevent-selection * {
-  -webkit-user-select: none !important;
-  -moz-user-select: none !important;
-  -ms-user-select: none !important;
-  user-select: none !important;
+  -webkit-user-select: none;
+  -moz-user-select: none;
+  -ms-user-select: none;
+  user-select: none;
+}
+
+/* Canvas Block Styles */
+.canvas-block {
+  width: 100%;
+}
+
+.canvas-preview:hover {
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+}
+
+.canvas-block-expanded {
+  width: 100%;
+  min-height: 400px;
+}
+
+.canvas-block .canvas-preview {
+  transition: all 0.2s ease;
+}
+
+.canvas-block .canvas-preview:hover .group-hover\:text-blue-600 {
+  color: #2563eb;
+}
+
+.canvas-block .canvas-preview:hover .group-hover\:text-gray-600 {
+  color: #4b5563;
+}
+
+/* Canvas Block Editor Styles */
+.canvas-block-editor {
+  border-left: 2px solid transparent;
+  transition: border-color 0.2s ease;
+  padding-left: 4px;
+  margin-left: -4px;
+}
+
+.canvas-block-editor:hover {
+  border-left-color: #e5e7eb;
+}
+
+.canvas-block-editor:focus-within {
+  border-left-color: #3b82f6;
+}
+
+/* Make canvas content feel like a subpage */
+.canvas-block-expanded .max-w-4xl {
+  background: white;
+  min-height: 400px;
+}
+
+.canvas-block-expanded h1 {
+  font-size: 1.75rem;
+  font-weight: 700;
+  line-height: 1.2;
+}
+
+/* Canvas empty state */
+.canvas-block-expanded .empty-state {
+  background: linear-gradient(135deg, #f8fafc 0%, #f1f5f9 100%);
+  border-radius: 12px;
 }

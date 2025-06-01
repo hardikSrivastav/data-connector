@@ -4,7 +4,7 @@ from typing import List, Optional, Dict, Any
 from datetime import datetime
 import json
 import os
-from sqlalchemy import create_engine, Column, String, DateTime, Text, Integer, JSON, Index, ForeignKey
+from sqlalchemy import create_engine, Column, String, DateTime, Text, Integer, JSON, Index, ForeignKey, Boolean, LargeBinary
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker, Session, relationship
 from sqlalchemy.dialects.postgresql import UUID, JSONB
@@ -37,6 +37,7 @@ class WorkspaceDB(Base):
     # Relationships
     pages = relationship("PageDB", back_populates="workspace", cascade="all, delete-orphan")
     changes = relationship("ChangeDB", back_populates="workspace")
+    canvas_threads = relationship("CanvasThreadDB", back_populates="workspace", cascade="all, delete-orphan")
 
 class PageDB(Base):
     __tablename__ = "pages"
@@ -53,6 +54,7 @@ class PageDB(Base):
     workspace = relationship("WorkspaceDB", back_populates="pages")
     blocks = relationship("BlockDB", back_populates="page", cascade="all, delete-orphan", order_by="BlockDB.order")
     changes = relationship("ChangeDB", back_populates="page")
+    canvas_threads = relationship("CanvasThreadDB", back_populates="page", cascade="all, delete-orphan")
     
     # Indexes for performance
     __table_args__ = (
@@ -65,22 +67,24 @@ class BlockDB(Base):
     
     id = Column(String, primary_key=True)
     page_id = Column(String, ForeignKey("pages.id"), nullable=False)
-    type = Column(String, nullable=False)  # text, heading1, bullet, etc.
+    type = Column(String, nullable=False)  # text, heading1, bullet, canvas, etc.
     content = Column(Text, nullable=False, default="")
     order = Column(Integer, nullable=False, default=0)
-    properties = Column(JSONB, default={})  # Bold, italic, color, etc.
+    properties = Column(JSONB, default={})  # Bold, italic, color, canvas-specific properties, etc.
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     
     # Relationships
     page = relationship("PageDB", back_populates="blocks")
     changes = relationship("ChangeDB", back_populates="block")
+    canvas_thread = relationship("CanvasThreadDB", back_populates="block", uselist=False)
     
     # Indexes for performance
     __table_args__ = (
         Index('idx_blocks_page_id', 'page_id'),
         Index('idx_blocks_page_order', 'page_id', 'order'),
         Index('idx_blocks_updated_at', 'updated_at'),
+        Index('idx_blocks_type', 'type'),
     )
 
 class ChangeDB(Base):
@@ -88,7 +92,7 @@ class ChangeDB(Base):
     
     id = Column(String, primary_key=True)  # Will be set explicitly from frontend or auto-generated
     type = Column(String, nullable=False)  # create, update, delete
-    entity = Column(String, nullable=False)  # workspace, page, block
+    entity = Column(String, nullable=False)  # workspace, page, block, canvas_thread, analysis_commit
     entity_id = Column(String, nullable=False)
     user_id = Column(String, nullable=False)
     timestamp = Column(DateTime, default=datetime.utcnow)
@@ -110,6 +114,109 @@ class ChangeDB(Base):
         Index('idx_changes_entity', 'entity', 'entity_id'),
         Index('idx_changes_timestamp', 'timestamp'),
         Index('idx_changes_user_timestamp', 'user_id', 'timestamp'),
+    )
+
+# Canvas-related models for data analysis functionality
+class CanvasThreadDB(Base):
+    __tablename__ = "canvas_threads"
+    
+    id = Column(String, primary_key=True)
+    workspace_id = Column(String, ForeignKey("workspaces.id"), nullable=False)
+    page_id = Column(String, ForeignKey("pages.id"), nullable=False)
+    block_id = Column(String, ForeignKey("blocks.id"), nullable=False)
+    name = Column(String, nullable=False)
+    status = Column(String, default='idle')  # 'idle', 'running', 'completed', 'failed'
+    query_text = Column(Text, nullable=True)
+    complexity_level = Column(String, default='quick')  # 'quick', 'deep', 'custom'
+    auto_generated_name = Column(Boolean, default=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    
+    # Relationships
+    workspace = relationship("WorkspaceDB", back_populates="canvas_threads")
+    page = relationship("PageDB", back_populates="canvas_threads")
+    block = relationship("BlockDB", back_populates="canvas_thread")
+    commits = relationship("AnalysisCommitDB", back_populates="thread", cascade="all, delete-orphan", order_by="AnalysisCommitDB.created_at")
+    progress_logs = relationship("ProgressLogDB", back_populates="thread", cascade="all, delete-orphan", order_by="ProgressLogDB.timestamp")
+    cache_entries = relationship("CanvasCacheDB", back_populates="thread", cascade="all, delete-orphan")
+    
+    # Indexes for performance
+    __table_args__ = (
+        Index('idx_canvas_threads_workspace_id', 'workspace_id'),
+        Index('idx_canvas_threads_page_id', 'page_id'),
+        Index('idx_canvas_threads_block_id', 'block_id'),
+        Index('idx_canvas_threads_status', 'status'),
+        Index('idx_canvas_threads_updated_at', 'updated_at'),
+    )
+
+class AnalysisCommitDB(Base):
+    __tablename__ = "analysis_commits"
+    
+    id = Column(String, primary_key=True)
+    thread_id = Column(String, ForeignKey("canvas_threads.id"), nullable=False)
+    commit_message = Column(String, nullable=False)
+    query_text = Column(Text, nullable=True)
+    result_data = Column(JSONB, nullable=True)
+    analysis_summary = Column(Text, nullable=True)
+    preview_data = Column(JSONB, nullable=True)  # For thumbnail generation
+    performance_metrics = Column(JSONB, nullable=True)  # Query time, row count, etc.
+    parent_commit = Column(String, ForeignKey("analysis_commits.id"), nullable=True)
+    is_head = Column(Boolean, default=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    
+    # Relationships
+    thread = relationship("CanvasThreadDB", back_populates="commits")
+    parent = relationship("AnalysisCommitDB", remote_side=[id], backref="children")
+    
+    # Indexes for performance
+    __table_args__ = (
+        Index('idx_analysis_commits_thread_id', 'thread_id'),
+        Index('idx_analysis_commits_is_head', 'is_head'),
+        Index('idx_analysis_commits_created_at', 'created_at'),
+        Index('idx_analysis_commits_parent', 'parent_commit'),
+    )
+
+class ProgressLogDB(Base):
+    __tablename__ = "progress_logs"
+    
+    id = Column(String, primary_key=True)
+    thread_id = Column(String, ForeignKey("canvas_threads.id"), nullable=False)
+    message = Column(Text, nullable=False)
+    step_type = Column(String, nullable=True)  # 'query', 'processing', 'analysis', 'error'
+    category = Column(String, default='user-friendly')  # 'technical', 'user-friendly', 'error'
+    timestamp = Column(DateTime, default=datetime.utcnow)
+    
+    # Relationships
+    thread = relationship("CanvasThreadDB", back_populates="progress_logs")
+    
+    # Indexes for performance
+    __table_args__ = (
+        Index('idx_progress_logs_thread_id', 'thread_id'),
+        Index('idx_progress_logs_timestamp', 'timestamp'),
+        Index('idx_progress_logs_step_type', 'step_type'),
+        Index('idx_progress_logs_category', 'category'),
+    )
+
+class CanvasCacheDB(Base):
+    __tablename__ = "canvas_cache"
+    
+    id = Column(String, primary_key=True)
+    thread_id = Column(String, ForeignKey("canvas_threads.id"), nullable=False)
+    cache_key = Column(String, nullable=False)
+    cache_data = Column(LargeBinary, nullable=True)  # Cached thumbnail images
+    cache_type = Column(String, nullable=True)  # 'thumbnail', 'preview_data'
+    expires_at = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    
+    # Relationships
+    thread = relationship("CanvasThreadDB", back_populates="cache_entries")
+    
+    # Indexes for performance
+    __table_args__ = (
+        Index('idx_canvas_cache_thread_id', 'thread_id'),
+        Index('idx_canvas_cache_key', 'cache_key'),
+        Index('idx_canvas_cache_type', 'cache_type'),
+        Index('idx_canvas_cache_expires_at', 'expires_at'),
     )
 
 # Create tables
@@ -163,6 +270,79 @@ class SyncResponse(BaseModel):
     changes: List[Any] = []
     conflicts: List[Any] = []
     lastSync: datetime
+
+# Canvas-related Pydantic models for API
+class ProgressLog(BaseModel):
+    id: str
+    threadId: str
+    message: str
+    stepType: Optional[str] = None
+    category: str = 'user-friendly'
+    timestamp: datetime
+
+class AnalysisCommit(BaseModel):
+    id: str
+    threadId: str
+    commitMessage: str
+    queryText: Optional[str] = None
+    resultData: Optional[Dict[str, Any]] = None
+    analysisSummary: Optional[str] = None
+    previewData: Optional[Dict[str, Any]] = None
+    performanceMetrics: Optional[Dict[str, Any]] = None
+    parentCommit: Optional[str] = None
+    isHead: bool = False
+    createdAt: datetime
+
+class CanvasThread(BaseModel):
+    id: str
+    workspaceId: str
+    pageId: str
+    blockId: str
+    name: str
+    status: str = 'idle'
+    queryText: Optional[str] = None
+    complexityLevel: str = 'quick'
+    autoGeneratedName: bool = True
+    createdAt: datetime
+    updatedAt: datetime
+    # Related data
+    commits: List[AnalysisCommit] = []
+    progressLogs: List[ProgressLog] = []
+
+class CanvasCache(BaseModel):
+    id: str
+    threadId: str
+    cacheKey: str
+    cacheType: Optional[str] = None
+    expiresAt: Optional[datetime] = None
+    createdAt: datetime
+
+# Extended Block model to support canvas properties
+class CanvasBlockProperties(BaseModel):
+    threadId: Optional[str] = None
+    isExpanded: bool = False
+    previewData: Optional[Dict[str, Any]] = None
+    currentCommit: Optional[str] = None
+    status: str = 'idle'
+    scrollPosition: Optional[int] = None
+    viewState: Optional[Dict[str, Any]] = None
+
+# API request/response models
+class CreateCanvasRequest(BaseModel):
+    blockId: str
+    query: str
+    complexityLevel: str = 'quick'
+
+class UpdateCanvasRequest(BaseModel):
+    threadId: str
+    query: str
+    commitMessage: Optional[str] = None
+
+class CanvasQueryResponse(BaseModel):
+    threadId: str
+    commitId: str
+    status: str
+    message: str
 
 # Helper functions to convert between DB and Pydantic models
 def db_workspace_to_pydantic(db_workspace: WorkspaceDB) -> Workspace:
@@ -549,9 +729,19 @@ async def debug_storage(db: Session = Depends(get_db)):
     blocks = db.query(BlockDB).all()
     recent_changes = db.query(ChangeDB).order_by(ChangeDB.timestamp.desc()).limit(5).all()
     
+    # Canvas stats for debugging
+    canvas_threads = db.query(CanvasThreadDB).count()
+    analysis_commits = db.query(AnalysisCommitDB).count()
+    progress_logs = db.query(ProgressLogDB).count()
+    
     return {
         "workspaces": [{"id": w.id, "name": w.name} for w in workspaces],
         "pages": [{"id": p.id, "title": p.title, "icon": p.icon} for p in pages],
         "blocks": [{"id": b.id, "type": b.type, "content": b.content[:50]} for b in blocks],
-        "recent_changes": [{"id": c.id, "type": c.type, "entity": c.entity} for c in recent_changes]
+        "recent_changes": [{"id": c.id, "type": c.type, "entity": c.entity} for c in recent_changes],
+        "canvas_system": {
+            "threads": canvas_threads,
+            "commits": analysis_commits,
+            "progress_logs": progress_logs
+        }
     } 

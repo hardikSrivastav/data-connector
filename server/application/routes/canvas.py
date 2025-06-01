@@ -1,0 +1,477 @@
+from fastapi import APIRouter, HTTPException, Depends
+from pydantic import BaseModel
+from typing import List, Optional, Dict, Any
+from datetime import datetime
+import uuid
+import re
+import logging
+from sqlalchemy.orm import Session
+
+# Import storage models and database setup
+from .storage import (
+    get_db, 
+    CanvasThreadDB, 
+    AnalysisCommitDB, 
+    ProgressLogDB, 
+    BlockDB,
+    CanvasThread,
+    AnalysisCommit, 
+    ProgressLog,
+    CreateCanvasRequest,
+    UpdateCanvasRequest,
+    CanvasQueryResponse
+)
+
+# Set up logging
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
+
+# Create API router with canvas prefix
+router = APIRouter(prefix="/canvas", tags=["canvas"])
+
+@router.post("/create", response_model=CanvasQueryResponse)
+async def create_canvas_thread(request: CreateCanvasRequest, db: Session = Depends(get_db)):
+    """Create a new canvas thread for a block"""
+    logger.info(f"🎨 Creating canvas thread for block {request.blockId}")
+    
+    # Verify the block exists
+    block = db.query(BlockDB).filter(BlockDB.id == request.blockId).first()
+    if not block:
+        logger.error(f"❌ Block not found: {request.blockId}")
+        raise HTTPException(status_code=404, detail="Block not found")
+    
+    # Generate thread ID and name
+    thread_id = str(uuid.uuid4())
+    
+    # Auto-generate thread name from query
+    thread_name = _generate_thread_name(request.query)
+    logger.info(f"📝 Generated thread name: '{thread_name}' for query: '{request.query}'")
+    
+    # Create canvas thread
+    canvas_thread = CanvasThreadDB(
+        id=thread_id,
+        workspace_id=block.page.workspace_id,
+        page_id=block.page_id,
+        block_id=request.blockId,
+        name=thread_name,
+        status='idle',
+        query_text=request.query,
+        complexity_level=request.complexityLevel,
+        auto_generated_name=True
+    )
+    
+    db.add(canvas_thread)
+    
+    # Update block properties to reference this thread
+    if not block.properties:
+        block.properties = {}
+    
+    block.properties.update({
+        'threadId': thread_id,
+        'isExpanded': False,
+        'status': 'idle'
+    })
+    
+    # Ensure block type is canvas
+    if block.type != 'canvas':
+        block.type = 'canvas'
+        block.content = thread_name  # Set content to thread name
+    
+    block.updated_at = datetime.utcnow()
+    
+    try:
+        db.commit()
+        db.refresh(canvas_thread)
+        logger.info(f"✅ Canvas thread created successfully: {thread_id}")
+    except Exception as e:
+        logger.error(f"❌ Failed to create canvas thread: {str(e)}")
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Failed to create canvas thread: {str(e)}")
+    
+    return CanvasQueryResponse(
+        threadId=thread_id,
+        commitId="",  # No commit yet
+        status="created",
+        message=f"Canvas thread '{thread_name}' created successfully"
+    )
+
+@router.get("/thread/{thread_id}", response_model=CanvasThread)
+async def get_canvas_thread(thread_id: str, db: Session = Depends(get_db)):
+    """Get canvas thread details including commits and progress logs"""
+    logger.info(f"🔍 Fetching canvas thread: {thread_id}")
+    
+    thread = db.query(CanvasThreadDB).filter(CanvasThreadDB.id == thread_id).first()
+    if not thread:
+        logger.error(f"❌ Canvas thread not found: {thread_id}")
+        raise HTTPException(status_code=404, detail="Canvas thread not found")
+    
+    # Convert to Pydantic model
+    commits = []
+    for commit in thread.commits:
+        commits.append(AnalysisCommit(
+            id=commit.id,
+            threadId=commit.thread_id,
+            commitMessage=commit.commit_message,
+            queryText=commit.query_text,
+            resultData=commit.result_data,
+            analysisSummary=commit.analysis_summary,
+            previewData=commit.preview_data,
+            performanceMetrics=commit.performance_metrics,
+            parentCommit=commit.parent_commit,
+            isHead=commit.is_head,
+            createdAt=commit.created_at
+        ))
+    
+    progress_logs = []
+    for log in thread.progress_logs:
+        progress_logs.append(ProgressLog(
+            id=log.id,
+            threadId=log.thread_id,
+            message=log.message,
+            stepType=log.step_type,
+            category=log.category,
+            timestamp=log.timestamp
+        ))
+    
+    logger.info(f"📊 Retrieved thread with {len(commits)} commits and {len(progress_logs)} logs")
+    
+    return CanvasThread(
+        id=thread.id,
+        workspaceId=thread.workspace_id,
+        pageId=thread.page_id,
+        blockId=thread.block_id,
+        name=thread.name,
+        status=thread.status,
+        queryText=thread.query_text,
+        complexityLevel=thread.complexity_level,
+        autoGeneratedName=thread.auto_generated_name,
+        createdAt=thread.created_at,
+        updatedAt=thread.updated_at,
+        commits=commits,
+        progressLogs=progress_logs
+    )
+
+@router.post("/query", response_model=CanvasQueryResponse)
+async def execute_canvas_query(request: UpdateCanvasRequest, db: Session = Depends(get_db)):
+    """Execute a new query on an existing canvas thread (Git-style commit)"""
+    logger.info(f"🚀 Executing canvas query on thread {request.threadId}: '{request.query}'")
+    
+    thread = db.query(CanvasThreadDB).filter(CanvasThreadDB.id == request.threadId).first()
+    if not thread:
+        logger.error(f"❌ Canvas thread not found: {request.threadId}")
+        raise HTTPException(status_code=404, detail="Canvas thread not found")
+    
+    # Update thread status
+    thread.status = 'running'
+    thread.query_text = request.query
+    thread.updated_at = datetime.utcnow()
+    
+    # Create new commit
+    commit_id = str(uuid.uuid4())
+    commit_message = request.commitMessage or f"Query: {request.query[:50]}..."
+    
+    # Find current HEAD commit to set as parent
+    current_head = db.query(AnalysisCommitDB).filter(
+        AnalysisCommitDB.thread_id == request.threadId,
+        AnalysisCommitDB.is_head == True
+    ).first()
+    
+    # Mark current HEAD as not head anymore
+    if current_head:
+        current_head.is_head = False
+        logger.info(f"📝 Updated HEAD from {current_head.id} to {commit_id}")
+    
+    # Create new commit
+    new_commit = AnalysisCommitDB(
+        id=commit_id,
+        thread_id=request.threadId,
+        commit_message=commit_message,
+        query_text=request.query,
+        parent_commit=current_head.id if current_head else None,
+        is_head=True  # This becomes the new HEAD
+    )
+    
+    db.add(new_commit)
+    
+    # Add initial progress log
+    progress_log = ProgressLogDB(
+        id=str(uuid.uuid4()),
+        thread_id=request.threadId,
+        message=f"Starting analysis: {request.query}",
+        step_type='query',
+        category='user-friendly'
+    )
+    
+    db.add(progress_log)
+    
+    try:
+        db.commit()
+        db.refresh(new_commit)
+        logger.info(f"✅ Canvas query started with commit: {commit_id}")
+    except Exception as e:
+        logger.error(f"❌ Failed to execute canvas query: {str(e)}")
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Failed to execute canvas query: {str(e)}")
+    
+    return CanvasQueryResponse(
+        threadId=request.threadId,
+        commitId=commit_id,
+        status="running",
+        message="Query execution started"
+    )
+
+@router.post("/progress/{thread_id}")
+async def add_progress_log(
+    thread_id: str, 
+    message: str, 
+    step_type: str = 'processing', 
+    category: str = 'user-friendly', 
+    db: Session = Depends(get_db)
+):
+    """Add a progress log entry for real-time updates (WebSocket streaming)"""
+    logger.info(f"📊 Adding progress log to thread {thread_id}: {message}")
+    
+    thread = db.query(CanvasThreadDB).filter(CanvasThreadDB.id == thread_id).first()
+    if not thread:
+        logger.error(f"❌ Canvas thread not found: {thread_id}")
+        raise HTTPException(status_code=404, detail="Canvas thread not found")
+    
+    progress_log = ProgressLogDB(
+        id=str(uuid.uuid4()),
+        thread_id=thread_id,
+        message=message,
+        step_type=step_type,
+        category=category
+    )
+    
+    db.add(progress_log)
+    
+    try:
+        db.commit()
+        logger.info(f"✅ Progress log added: {step_type} - {message}")
+    except Exception as e:
+        logger.error(f"❌ Failed to add progress log: {str(e)}")
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Failed to add progress log: {str(e)}")
+    
+    return {"status": "success", "message": "Progress log added"}
+
+@router.put("/complete/{commit_id}")
+async def complete_analysis(
+    commit_id: str, 
+    result_data: Dict[str, Any], 
+    analysis_summary: str,
+    preview_data: Optional[Dict[str, Any]] = None,
+    performance_metrics: Optional[Dict[str, Any]] = None,
+    db: Session = Depends(get_db)
+):
+    """Complete an analysis and store results"""
+    logger.info(f"🏁 Completing analysis for commit {commit_id}")
+    
+    commit = db.query(AnalysisCommitDB).filter(AnalysisCommitDB.id == commit_id).first()
+    if not commit:
+        logger.error(f"❌ Analysis commit not found: {commit_id}")
+        raise HTTPException(status_code=404, detail="Analysis commit not found")
+    
+    # Update commit with results
+    commit.result_data = result_data
+    commit.analysis_summary = analysis_summary
+    commit.preview_data = preview_data or {}
+    commit.performance_metrics = performance_metrics or {}
+    
+    # Update thread status
+    thread = commit.thread
+    thread.status = 'completed'
+    thread.updated_at = datetime.utcnow()
+    
+    # Update block properties with preview data
+    block = thread.block
+    if not block.properties:
+        block.properties = {}
+    
+    block.properties.update({
+        'status': 'completed',
+        'previewData': preview_data,
+        'currentCommit': commit_id
+    })
+    block.updated_at = datetime.utcnow()
+    
+    # Add completion progress log
+    progress_log = ProgressLogDB(
+        id=str(uuid.uuid4()),
+        thread_id=thread.id,
+        message="Analysis completed successfully",
+        step_type='analysis',
+        category='user-friendly'
+    )
+    
+    db.add(progress_log)
+    
+    try:
+        db.commit()
+        logger.info(f"✅ Analysis completed successfully: {commit_id}")
+    except Exception as e:
+        logger.error(f"❌ Failed to complete analysis: {str(e)}")
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Failed to complete analysis: {str(e)}")
+    
+    return {"status": "success", "message": "Analysis completed"}
+
+@router.get("/workspace/{workspace_id}")
+async def get_workspace_canvas_threads(workspace_id: str, db: Session = Depends(get_db)):
+    """Get all canvas threads for a workspace (Canvas discovery)"""
+    logger.info(f"🔍 Fetching canvas threads for workspace: {workspace_id}")
+    
+    threads = db.query(CanvasThreadDB).filter(CanvasThreadDB.workspace_id == workspace_id).all()
+    
+    thread_summaries = []
+    for thread in threads:
+        # Get latest commit for preview
+        latest_commit = db.query(AnalysisCommitDB).filter(
+            AnalysisCommitDB.thread_id == thread.id,
+            AnalysisCommitDB.is_head == True
+        ).first()
+        
+        thread_summaries.append({
+            "id": thread.id,
+            "name": thread.name,
+            "status": thread.status,
+            "complexityLevel": thread.complexity_level,
+            "pageId": thread.page_id,
+            "blockId": thread.block_id,
+            "createdAt": thread.created_at,
+            "updatedAt": thread.updated_at,
+            "latestCommit": {
+                "id": latest_commit.id if latest_commit else None,
+                "summary": latest_commit.analysis_summary if latest_commit else None,
+                "previewData": latest_commit.preview_data if latest_commit else None
+            } if latest_commit else None
+        })
+    
+    logger.info(f"📊 Found {len(thread_summaries)} canvas threads in workspace")
+    
+    return {
+        "threads": thread_summaries,
+        "count": len(thread_summaries)
+    }
+
+@router.put("/thread/{thread_id}/name")
+async def update_thread_name(thread_id: str, new_name: str, db: Session = Depends(get_db)):
+    """Update canvas thread name (user editable)"""
+    logger.info(f"✏️ Updating thread name: {thread_id} -> '{new_name}'")
+    
+    thread = db.query(CanvasThreadDB).filter(CanvasThreadDB.id == thread_id).first()
+    if not thread:
+        logger.error(f"❌ Canvas thread not found: {thread_id}")
+        raise HTTPException(status_code=404, detail="Canvas thread not found")
+    
+    # Update thread name and mark as manually named
+    thread.name = new_name[:50]  # Limit length
+    thread.auto_generated_name = False
+    thread.updated_at = datetime.utcnow()
+    
+    # Update associated block content
+    block = thread.block
+    if block and block.type == 'canvas':
+        block.content = new_name
+        block.updated_at = datetime.utcnow()
+    
+    try:
+        db.commit()
+        logger.info(f"✅ Thread name updated successfully")
+    except Exception as e:
+        logger.error(f"❌ Failed to update thread name: {str(e)}")
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Failed to update thread name: {str(e)}")
+    
+    return {"status": "success", "message": "Thread name updated", "name": new_name}
+
+@router.delete("/thread/{thread_id}")
+async def delete_canvas_thread(thread_id: str, db: Session = Depends(get_db)):
+    """Delete a canvas thread and all associated data"""
+    logger.info(f"🗑️ Deleting canvas thread: {thread_id}")
+    
+    thread = db.query(CanvasThreadDB).filter(CanvasThreadDB.id == thread_id).first()
+    if not thread:
+        logger.error(f"❌ Canvas thread not found: {thread_id}")
+        raise HTTPException(status_code=404, detail="Canvas thread not found")
+    
+    # Reset associated block to text type
+    block = thread.block
+    if block and block.type == 'canvas':
+        block.type = 'text'
+        block.content = ''
+        block.properties = {}
+        block.updated_at = datetime.utcnow()
+    
+    # Delete thread (cascade will handle commits, logs, cache)
+    db.delete(thread)
+    
+    try:
+        db.commit()
+        logger.info(f"✅ Canvas thread deleted successfully")
+    except Exception as e:
+        logger.error(f"❌ Failed to delete canvas thread: {str(e)}")
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Failed to delete canvas thread: {str(e)}")
+    
+    return {"status": "success", "message": "Canvas thread deleted"}
+
+@router.get("/stats")
+async def get_canvas_stats(db: Session = Depends(get_db)):
+    """Get canvas system statistics"""
+    logger.info("📊 Fetching canvas statistics")
+    
+    thread_count = db.query(CanvasThreadDB).count()
+    commit_count = db.query(AnalysisCommitDB).count()
+    progress_log_count = db.query(ProgressLogDB).count()
+    
+    # Status breakdown
+    status_counts = {}
+    for status, count in db.query(CanvasThreadDB.status, db.func.count(CanvasThreadDB.id)).group_by(CanvasThreadDB.status).all():
+        status_counts[status] = count
+    
+    # Recent activity
+    recent_threads = db.query(CanvasThreadDB).order_by(CanvasThreadDB.updated_at.desc()).limit(5).all()
+    recent_activity = [
+        {
+            "threadId": thread.id,
+            "name": thread.name,
+            "status": thread.status,
+            "updatedAt": thread.updated_at
+        }
+        for thread in recent_threads
+    ]
+    
+    stats = {
+        "totalThreads": thread_count,
+        "totalCommits": commit_count,
+        "totalProgressLogs": progress_log_count,
+        "statusBreakdown": status_counts,
+        "recentActivity": recent_activity
+    }
+    
+    logger.info(f"📊 Canvas stats: {thread_count} threads, {commit_count} commits")
+    return stats
+
+def _generate_thread_name(query: str) -> str:
+    """Generate a descriptive thread name from user query"""
+    import re
+    
+    # Remove common question words and clean up
+    cleaned = re.sub(r'\b(show|get|find|give|tell|what|how|when|where|why|me|i|you|the|a|an)\b', '', query.lower())
+    cleaned = re.sub(r'[^\w\s]', '', cleaned)  # Remove punctuation
+    cleaned = re.sub(r'\s+', ' ', cleaned).strip()  # Clean up whitespace
+    
+    if not cleaned:
+        return f"Analysis {datetime.utcnow().strftime('%H:%M')}"
+    
+    # Take first few meaningful words
+    words = cleaned.split()[:4]
+    name = ' '.join(word.capitalize() for word in words)
+    
+    # Add "Analysis" suffix if not already descriptive
+    if len(name) < 10:
+        name += " Analysis"
+    
+    return name[:50]  # Limit length 

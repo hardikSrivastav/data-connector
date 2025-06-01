@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Type, Hash, List, ListOrdered, Quote, Minus, Image, Code, FileText, Table, ChevronRight } from 'lucide-react';
+import { Type, Hash, List, ListOrdered, Quote, Minus, Image, Code, FileText, Table, ChevronRight, BarChart3 } from 'lucide-react';
 import { Block } from '@/types';
 import { cn } from '@/lib/utils';
 
@@ -22,6 +22,7 @@ const blockTypes = [
   { type: 'table' as const, label: 'Table', icon: Table, description: 'Create a table with rows and columns.' },
   { type: 'toggle' as const, label: 'Toggle list', icon: ChevronRight, description: 'Create a collapsible toggle section.' },
   { type: 'subpage' as const, label: 'Sub-page', icon: FileText, description: 'Link to another page in this workspace.' },
+  { type: 'canvas' as const, label: 'Canvas', icon: BarChart3, description: 'Create a data analysis canvas with AI queries and visualizations.' },
 ];
 
 export const BlockTypeSelector = ({ onSelect, onClose, query }: BlockTypeSelectorProps) => {

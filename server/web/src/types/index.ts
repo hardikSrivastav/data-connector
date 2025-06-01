@@ -1,6 +1,6 @@
 export interface Block {
   id: string;
-  type: 'text' | 'heading1' | 'heading2' | 'heading3' | 'bullet' | 'numbered' | 'quote' | 'divider' | 'image' | 'code' | 'subpage' | 'table' | 'toggle';
+  type: 'text' | 'heading1' | 'heading2' | 'heading3' | 'bullet' | 'numbered' | 'quote' | 'divider' | 'image' | 'code' | 'subpage' | 'table' | 'toggle' | 'canvas';
   content: string;
   order: number;
   isSelected?: boolean;
@@ -27,6 +27,32 @@ export interface Block {
       pageId: string;
       pageTitle: string;
       pageIcon?: string;
+    };
+    // Canvas-specific properties
+    canvasData?: {
+      threadId: string;
+      threadName: string;
+      isExpanded: boolean;
+      workspaceId: string;
+      pageId: string;
+      blockId: string;
+      blocks?: Block[];
+      preview?: {
+        summary?: string;
+        stats?: {
+          label: string;
+          value: string | number;
+        }[];
+        tablePreview?: {
+          headers: string[];
+          rows: string[][];
+          totalRows: number;
+        };
+        charts?: {
+          type: 'bar' | 'line' | 'pie';
+          data: any;
+        }[];
+      };
     };
   };
 }

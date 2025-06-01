@@ -39,7 +39,11 @@ export const PageEditor = ({
     currentX: number;
     currentY: number;
   } | null>(null);
-  const [pendingAIUpdate, setPendingAIUpdate] = useState<{ blockId: string; content: string } | null>(null);
+  const [pendingAIUpdate, setPendingAIUpdate] = useState<{ 
+    blockId: string; 
+    content?: string;
+    canvasData?: any;
+  } | null>(null);
   const addingBlockRef = useRef(false); // Track if we're currently adding a block to prevent loops
   
   const {
@@ -59,7 +63,7 @@ export const PageEditor = ({
     getSelectionInfo,
   } = useBlockSelection(page.blocks);
 
-  // AI Query handler - Updated to use real agent API
+  // AI Query handler - Updated to use real agent API and create Canvas blocks
   const handleAIQuery = async (query: string, blockId: string) => {
     console.log(`🎯 PageEditor: handleAIQuery called`);
     console.log(`📝 PageEditor: Query='${query}', BlockId='${blockId}'`);
@@ -80,20 +84,28 @@ export const PageEditor = ({
         has_analysis: !!response.analysis
       });
       
-      // Format the response for display
-      console.log(`🎨 PageEditor: Formatting agent response for display...`);
-      const aiResponse = formatAgentResponse(response);
-      console.log(`🎨 PageEditor: Formatted response length: ${aiResponse.length} characters`);
-      console.log(`🎨 PageEditor: Formatted response preview:`, aiResponse.substring(0, 200) + '...');
+      // Create canvas preview data from the AI response
+      const canvasPreview = createCanvasPreviewFromResponse(response, query);
       
-      // Add the AI response as a new block after the current block
-      console.log(`➕ PageEditor: Adding new block after blockId='${blockId}'`);
+      // Add the AI response as a new Canvas block after the current block
+      console.log(`➕ PageEditor: Adding new Canvas block after blockId='${blockId}'`);
       const newBlockId = onAddBlock(blockId);
-      console.log(`➕ PageEditor: New block created with id='${newBlockId}'`);
+      console.log(`➕ PageEditor: New Canvas block created with id='${newBlockId}'`);
       
-      // Store the AI response to update when the block appears in state
-      console.log(`💾 PageEditor: Storing AI response for delayed update`);
-      setPendingAIUpdate({ blockId: newBlockId, content: aiResponse });
+      // Store the canvas data to update when the block appears in state
+      console.log(`💾 PageEditor: Storing Canvas data for delayed update`);
+      setPendingAIUpdate({ 
+        blockId: newBlockId, 
+        canvasData: {
+          threadId: `thread_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+          threadName: generateThreadName(query),
+          isExpanded: false,
+          workspaceId: workspace.id,
+          pageId: page.id,
+          blockId: newBlockId,
+          preview: canvasPreview
+        }
+      });
       
     } catch (error) {
       console.error('❌ PageEditor: AI Query failed:', error);
@@ -104,7 +116,7 @@ export const PageEditor = ({
         stack: error.stack
       });
       
-      // Add error message as a block
+      // Add error message as a regular text block
       console.log(`⚠️ PageEditor: Adding error block after blockId='${blockId}'`);
       const newBlockId = onAddBlock(blockId);
       const errorMessage = `❌ **Error:** ${error.message || 'Failed to get AI response. Please check that the agent server is running.'}`;
@@ -113,87 +125,109 @@ export const PageEditor = ({
     }
   };
 
-  // Format agent response for display
-  const formatAgentResponse = (response: AgentQueryResponse): string => {
-    console.log(`🎨 formatAgentResponse: Starting response formatting`);
-    console.log(`🎨 formatAgentResponse: Input response:`, {
-      rows_count: response.rows?.length || 0,
-      sql_length: response.sql?.length || 0,
-      has_analysis: !!response.analysis,
-      analysis_preview: response.analysis?.substring(0, 50) + '...' || 'No analysis'
-    });
+  // Generate a smart thread name from the query
+  const generateThreadName = (query: string): string => {
+    // Clean up the query for a thread name
+    const cleaned = query
+      .replace(/[^\w\s-]/g, '') // Remove special chars except dashes
+      .replace(/\s+/g, ' ')     // Normalize whitespace
+      .trim()
+      .split(' ')
+      .slice(0, 4)              // Take first 4 words
+      .join(' ');
     
-    let formattedResponse = '🤖 **AI Agent Response:**\n\n';
-    console.log(`🎨 formatAgentResponse: Base response header set`);
+    // Capitalize first letter
+    return cleaned.charAt(0).toUpperCase() + cleaned.slice(1) || 'Data Analysis';
+  };
+
+  // Create canvas preview data from AI response
+  const createCanvasPreviewFromResponse = (response: AgentQueryResponse, query: string) => {
+    const preview: any = {};
     
-    // Add SQL query if available
-    if (response.sql) {
-      const sqlSection = `**Generated SQL:**\n\`\`\`sql\n${response.sql}\n\`\`\`\n\n`;
-      formattedResponse += sqlSection;
-      console.log(`🎨 formatAgentResponse: Added SQL section (${response.sql.length} chars)`);
-    }
-    
-    // Add analysis if available
+    // Create summary from analysis or a default based on query results
     if (response.analysis) {
-      const analysisSection = `**Analysis:**\n${response.analysis}\n\n`;
-      formattedResponse += analysisSection;
-      console.log(`🎨 formatAgentResponse: Added analysis section (${response.analysis.length} chars)`);
+      preview.summary = response.analysis.length > 200 
+        ? response.analysis.substring(0, 197) + '...' 
+        : response.analysis;
+    } else if (response.rows && response.rows.length > 0) {
+      preview.summary = `Query executed successfully and returned ${response.rows.length} rows of data. Click to expand and explore the results.`;
+    } else {
+      preview.summary = `Query executed but returned no data. The SQL query was processed successfully.`;
     }
     
-    // Add data results if available
-    if (response.rows && response.rows.length > 0) {
-      console.log(`🎨 formatAgentResponse: Processing ${response.rows.length} data rows`);
+    // Create stats
+    const stats = [];
+    
+    if (response.rows) {
+      stats.push({ label: 'Rows', value: response.rows.length.toLocaleString() });
       
-      const resultsHeader = `**Results:** Found ${response.rows.length} row(s)\n\n`;
-      formattedResponse += resultsHeader;
-      console.log(`🎨 formatAgentResponse: Added results header`);
-      
-      // Show first few rows as a simple table
-      const maxRows = Math.min(response.rows.length, 5);
-      console.log(`🎨 formatAgentResponse: Will display ${maxRows} rows (max 5)`);
-      
-      if (maxRows > 0) {
+      if (response.rows.length > 0) {
         const columns = Object.keys(response.rows[0]);
-        console.log(`🎨 formatAgentResponse: Table columns:`, columns);
+        stats.push({ label: 'Columns', value: columns.length });
         
-        // Create a simple markdown table
-        let tableSection = `| ${columns.join(' | ')} |\n`;
-        tableSection += `| ${columns.map(() => '---').join(' | ')} |\n`;
+        // Try to find numeric columns for additional stats
+        const numericColumns = columns.filter(col => {
+          const value = response.rows[0][col];
+          return typeof value === 'number' || !isNaN(Number(value));
+        });
         
-        for (let i = 0; i < maxRows; i++) {
-          const row = response.rows[i];
-          const values = columns.map(col => {
-            const value = row[col];
-            return value !== null && value !== undefined ? String(value) : '';
-          });
-          tableSection += `| ${values.join(' | ')} |\n`;
-        }
-        
-        formattedResponse += tableSection;
-        console.log(`🎨 formatAgentResponse: Added table section with ${maxRows} rows`);
-        
-        if (response.rows.length > maxRows) {
-          const moreRowsNote = `\n... and ${response.rows.length - maxRows} more rows`;
-          formattedResponse += moreRowsNote;
-          console.log(`🎨 formatAgentResponse: Added 'more rows' note for remaining ${response.rows.length - maxRows} rows`);
+        if (numericColumns.length > 0) {
+          stats.push({ label: 'Numeric Fields', value: numericColumns.length });
         }
       }
-    } else {
-      const noDataSection = '**Results:** No data returned from query.';
-      formattedResponse += noDataSection;
-      console.log(`🎨 formatAgentResponse: Added 'no data' section`);
     }
     
-    console.log(`🎨 formatAgentResponse: Formatting complete!`);
-    console.log(`🎨 formatAgentResponse: Final response length: ${formattedResponse.length} characters`);
-    console.log(`🎨 formatAgentResponse: Final response structure:`, {
-      has_sql: formattedResponse.includes('Generated SQL:'),
-      has_analysis: formattedResponse.includes('Analysis:'),
-      has_results: formattedResponse.includes('Results:'),
-      has_table: formattedResponse.includes('|')
-    });
+    if (response.sql) {
+      stats.push({ label: 'SQL Lines', value: response.sql.split('\n').length });
+    }
     
-    return formattedResponse;
+    if (stats.length > 0) {
+      preview.stats = stats;
+    }
+    
+    // Create table preview if we have data
+    if (response.rows && response.rows.length > 0) {
+      const headers = Object.keys(response.rows[0]);
+      const rows = response.rows.slice(0, 5).map(row => 
+        headers.map(header => {
+          const value = row[header];
+          if (value === null || value === undefined) return '';
+          return String(value);
+        })
+      );
+      
+      preview.tablePreview = {
+        headers,
+        rows,
+        totalRows: response.rows.length
+      };
+    }
+    
+    // Add placeholder charts if we have numeric data
+    if (response.rows && response.rows.length > 0) {
+      const headers = Object.keys(response.rows[0]);
+      const numericColumns = headers.filter(col => {
+        const value = response.rows[0][col];
+        return typeof value === 'number' || (!isNaN(Number(value)) && value !== '');
+      });
+      
+      if (numericColumns.length >= 1) {
+        const charts = [];
+        
+        // Always add a trend chart for time series data
+        charts.push({ type: 'line', data: {} });
+        
+        // Add a distribution chart if we have categorical data
+        const categoricalColumns = headers.filter(col => !numericColumns.includes(col));
+        if (categoricalColumns.length > 0) {
+          charts.push({ type: 'pie', data: {} });
+        }
+        
+        preview.charts = charts;
+      }
+    }
+    
+    return preview;
   };
 
   // Global drag selection handlers
@@ -523,7 +557,7 @@ export const PageEditor = ({
   // Handle pending AI update
   useEffect(() => {
     if (pendingAIUpdate) {
-      const { blockId, content } = pendingAIUpdate;
+      const { blockId, content, canvasData } = pendingAIUpdate;
       console.log(`🎯 PageEditor: Checking pending AI update for blockId='${blockId}'`);
       
       // Check if the block now exists in the page state
@@ -532,15 +566,33 @@ export const PageEditor = ({
       console.log(`🎯 PageEditor: Current page blocks:`, page.blocks.map(b => ({ id: b.id, content_length: b.content?.length || 0 })));
       
       if (blockExists) {
-        console.log(`🎯 PageEditor: Executing pending AI update for blockId='${blockId}'`);
-        console.log(`🎯 PageEditor: Content preview:`, content.substring(0, 100) + '...');
+        if (canvasData) {
+          // Create Canvas block with preview data
+          console.log(`🎯 PageEditor: Executing pending Canvas update for blockId='${blockId}'`);
+          console.log(`🎯 PageEditor: Canvas thread name:`, canvasData.threadName);
+          
+          onUpdateBlock(blockId, {
+            content: canvasData.threadName,
+            type: 'canvas',
+            properties: {
+              canvasData: canvasData
+            }
+          });
+          
+          console.log(`✅ PageEditor: Pending Canvas update completed for blockId='${blockId}'`);
+        } else if (content) {
+          // Create regular content block (for errors)
+          console.log(`🎯 PageEditor: Executing pending content update for blockId='${blockId}'`);
+          console.log(`🎯 PageEditor: Content preview:`, content.substring(0, 100) + '...');
+          
+          onUpdateBlock(blockId, {
+            content: content,
+            type: 'quote' // Style error messages as quotes
+          });
+          
+          console.log(`✅ PageEditor: Pending content update completed for blockId='${blockId}'`);
+        }
         
-        onUpdateBlock(blockId, {
-          content: content,
-          type: 'quote' // Style AI responses as quotes for now
-        });
-        
-        console.log(`✅ PageEditor: Pending AI update completed for blockId='${blockId}'`);
         setPendingAIUpdate(null);
       } else {
         console.log(`⏳ PageEditor: Block not yet available in page state, will retry on next render`);
@@ -622,7 +674,7 @@ export const PageEditor = ({
       return;
     }
 
-    const nonTextBlockTypes = ['table', 'divider', 'toggle', 'subpage'];
+    const nonTextBlockTypes = ['table', 'divider', 'toggle', 'subpage', 'canvas'];
     let needsUpdate = false;
     let actionNeeded: 'initial' | 'after-nontext' | null = null;
     let targetBlockId: string | null = null;
@@ -818,6 +870,7 @@ export const PageEditor = ({
                     onDrop={handleBlockDrop(block.id)}
                     onAIQuery={handleAIQuery}
                     workspace={workspace}
+                    page={page}
                     onNavigateToPage={handleNavigateToPage}
                   />
                 </div>

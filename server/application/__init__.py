@@ -1,6 +1,6 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from .routes import main_router, storage_router
+from .routes import main_router, storage_router, canvas_router
 from .config import get_settings
 from .middleware import CIDRMiddleware
 
@@ -36,5 +36,6 @@ def create_app():
     # Include routers
     app.include_router(main_router)
     app.include_router(storage_router)
+    app.include_router(canvas_router)
     
     return app
