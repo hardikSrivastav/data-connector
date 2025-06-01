@@ -1,7 +1,8 @@
 import { useState, useEffect } from 'react';
-import { Page } from '@/types';
+import { Page, Workspace } from '@/types';
 import { BlockEditor } from './BlockEditor';
 import { EmojiPicker } from './EmojiPicker';
+import { BottomStatusBar } from './BottomStatusBar';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { useBlockSelection } from '@/hooks/useBlockSelection';
@@ -14,6 +15,9 @@ interface PageEditorProps {
   onDeleteBlock: (blockId: string) => void;
   onUpdatePage: (updates: Partial<Page>) => void;
   onMoveBlock: (blockId: string, newIndex: number) => void;
+  showAgentPanel: boolean;
+  onToggleAgentPanel: (show: boolean) => void;
+  workspace: Workspace;
 }
 
 export const PageEditor = ({
@@ -22,7 +26,10 @@ export const PageEditor = ({
   onAddBlock,
   onDeleteBlock,
   onUpdatePage,
-  onMoveBlock
+  onMoveBlock,
+  showAgentPanel,
+  onToggleAgentPanel,
+  workspace
 }: PageEditorProps) => {
   const [focusedBlockId, setFocusedBlockId] = useState<string | null>(null);
   const [isGlobalDragSelecting, setIsGlobalDragSelecting] = useState(false);
@@ -33,7 +40,6 @@ export const PageEditor = ({
     currentX: number;
     currentY: number;
   } | null>(null);
-  const [agentStatus, setAgentStatus] = useState<'checking' | 'online' | 'offline'>('checking');
   const [pendingAIUpdate, setPendingAIUpdate] = useState<{ blockId: string; content: string } | null>(null);
   
   const {
@@ -490,26 +496,6 @@ export const PageEditor = ({
     setShowEmojiPicker(false);
   };
 
-  // Test agent connection on mount
-  useEffect(() => {
-    const testAgentConnection = async () => {
-      try {
-        const isOnline = await agentClient.testConnection();
-        setAgentStatus(isOnline ? 'online' : 'offline');
-      } catch (error) {
-        console.warn('Agent connection test failed:', error);
-        setAgentStatus('offline');
-      }
-    };
-
-    testAgentConnection();
-    
-    // Test connection periodically
-    const interval = setInterval(testAgentConnection, 30000); // Every 30 seconds
-    
-    return () => clearInterval(interval);
-  }, []);
-
   // Handle pending AI update
   useEffect(() => {
     if (pendingAIUpdate) {
@@ -538,158 +524,158 @@ export const PageEditor = ({
     }
   }, [pendingAIUpdate, page.blocks, onUpdateBlock]);
 
+  // Handle page navigation for subpage blocks
+  const handleNavigateToPage = (pageId: string) => {
+    const targetPage = workspace.pages.find(p => p.id === pageId);
+    if (targetPage) {
+      // For now, we'll just log the navigation. In a real app, this would change the current page
+      console.log(`Navigating to page: ${targetPage.title} (${pageId})`);
+      // You could implement actual navigation here:
+      // onPageChange?.(pageId);
+      alert(`Would navigate to: ${targetPage.title}`);
+    }
+  };
+
+  // Generate breadcrumbs from workspace and page data
+  const breadcrumbs = [
+    { label: 'Workspace', onClick: () => console.log('Navigate to workspace') },
+    { label: workspace.name || 'My Workspace' },
+    { label: page.title || 'Untitled Page' }
+  ];
+
   return (
-    <div 
-      className="flex-1 overflow-y-auto relative"
-      tabIndex={0}
-      style={{ 
-        userSelect: isDragSelecting || isGlobalDragSelecting ? 'none' : 'auto',
-        WebkitUserSelect: isDragSelecting || isGlobalDragSelecting ? 'none' : 'auto',
-        MozUserSelect: isDragSelecting || isGlobalDragSelecting ? 'none' : 'auto',
-      }}
-      onMouseDown={handleGlobalMouseDown}
-      onMouseMove={handleGlobalMouseMove}
-      onMouseUp={handleGlobalMouseUp}
-    >
-      {/* Global selection rectangle */}
-      {dragSelection && (
-        <div
-          style={getSelectionRectStyle()}
-        />
-      )}
-      
-      <div className="max-w-4xl mx-auto p-8 relative">
-        {/* Page Header with Emoji */}
-        <div className="mb-6 relative">
-          <div className="flex items-center gap-2 mb-4">
-            <div className="relative emoji-picker-container">
-              <Button
-                variant="ghost"
-                size="sm"
-                className="h-12 w-12 p-0 text-4xl hover:bg-gray-100 rounded-md transition-colors"
-                onClick={() => setShowEmojiPicker(!showEmojiPicker)}
-              >
-                {page.icon || '📄'}
-              </Button>
-              
-              {showEmojiPicker && (
-                <div className="relative">
-                  <EmojiPicker
-                    currentEmoji={page.icon}
-                    onEmojiSelect={handleEmojiSelect}
-                    onClose={() => setShowEmojiPicker(false)}
-                  />
-                  {page.icon && (
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      className="absolute top-full left-0 mt-1 text-xs text-gray-500 hover:text-gray-700"
-                      onClick={handleRemoveEmoji}
-                    >
-                      Remove
-                    </Button>
-                  )}
-                </div>
-              )}
-            </div>
-          </div>
-        </div>
-
-        {/* Selection indicator */}
-        {selectedBlocks.size > 0 && (
-          <div className="mb-4 p-2 bg-blue-50 border border-blue-200 rounded-md flex items-center justify-between text-sm">
-            <span>{selectedBlocks.size} block{selectedBlocks.size !== 1 ? 's' : ''} selected</span>
-            <div className="flex gap-2">
-              <button
-                onClick={(e) => {
-                  e.preventDefault();
-                  handleDeleteSelected();
-                }}
-                className="text-red-600 hover:text-red-800 px-2 py-1 hover:bg-red-50 rounded"
-              >
-                Delete
-              </button>
-              <button
-                onClick={(e) => {
-                  e.preventDefault();
-                  clearSelection();
-                }}
-                className="text-gray-600 hover:text-gray-800 px-2 py-1 hover:bg-gray-50 rounded"
-              >
-                Clear
-              </button>
-            </div>
-          </div>
+    <div className="flex-1 flex flex-col relative">
+      {/* Main content area */}
+      <div 
+        className="flex-1 overflow-y-auto relative"
+        tabIndex={0}
+        style={{ 
+          userSelect: isDragSelecting || isGlobalDragSelecting ? 'none' : 'auto',
+          WebkitUserSelect: isDragSelecting || isGlobalDragSelecting ? 'none' : 'auto',
+          MozUserSelect: isDragSelecting || isGlobalDragSelecting ? 'none' : 'auto',
+        }}
+        onMouseDown={handleGlobalMouseDown}
+        onMouseMove={handleGlobalMouseMove}
+        onMouseUp={handleGlobalMouseUp}
+      >
+        {/* Global selection rectangle */}
+        {dragSelection && (
+          <div
+            style={getSelectionRectStyle()}
+          />
         )}
-
-        {/* Agent Status Indicator */}
-        <div className="mb-4 p-2 bg-gray-50 border border-gray-200 rounded-md flex items-center justify-between text-sm">
-          <div className="flex items-center gap-2">
-            <div className={`w-2 h-2 rounded-full ${
-              agentStatus === 'online' ? 'bg-green-500' : 
-              agentStatus === 'offline' ? 'bg-red-500' : 
-              'bg-yellow-500 animate-pulse'
-            }`} />
-            <span className="text-gray-700">
-              AI Agent: {
-                agentStatus === 'online' ? 'Connected' :
-                agentStatus === 'offline' ? 'Disconnected' :
-                'Checking...'
-              }
-            </span>
+        
+        <div className="max-w-4xl mx-auto p-8 pb-20 relative"> {/* Added pb-20 for bottom bar clearance */}
+          {/* Page Header with Emoji */}
+          <div className="mb-6 relative">
+            <div className="flex items-center gap-2 mb-4">
+              <div className="relative emoji-picker-container">
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="h-12 w-12 p-0 text-4xl hover:bg-gray-100 rounded-md transition-colors"
+                  onClick={() => setShowEmojiPicker(!showEmojiPicker)}
+                >
+                  {page.icon || '📄'}
+                </Button>
+                
+                {showEmojiPicker && (
+                  <div className="relative">
+                    <EmojiPicker
+                      currentEmoji={page.icon}
+                      onEmojiSelect={handleEmojiSelect}
+                      onClose={() => setShowEmojiPicker(false)}
+                    />
+                    {page.icon && (
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="absolute top-full left-0 mt-1 text-xs text-gray-500 hover:text-gray-700"
+                        onClick={handleRemoveEmoji}
+                      >
+                        Remove
+                      </Button>
+                    )}
+                  </div>
+                )}
+              </div>
+            </div>
           </div>
-          {agentStatus === 'offline' && (
-            <button
-              onClick={async () => {
-                setAgentStatus('checking');
-                const isOnline = await agentClient.testConnection();
-                setAgentStatus(isOnline ? 'online' : 'offline');
-              }}
-              className="text-blue-600 hover:text-blue-800 px-2 py-1 hover:bg-blue-50 rounded text-xs"
-            >
-              Retry
-            </button>
-          )}
-        </div>
 
-        {/* Blocks */}
-        <div className="space-y-0"> {/* Changed from space-y-1 to space-y-0 for continuous selection */}
-          {page.blocks.map((block, index) => {
-            const selectionInfo = getSelectionInfo(block.id);
-            
-            return (
-              <div key={block.id} className="block-editor">
-                <BlockEditor
-                  block={block}
-                  isSelected={selectionInfo.isSelected}
-                  isFirstSelected={selectionInfo.isFirstSelected}
-                  isLastSelected={selectionInfo.isLastSelected}
-                  isInSelection={selectionInfo.isInSelection}
-                  onUpdate={(updates) => handleBlockUpdate(block.id, updates)}
-                  onAddBlock={() => handleAddBlock(block.id)}
-                  onDeleteBlock={() => handleDeleteBlock(block.id)}
-                  onFocus={() => {
-                    setFocusedBlockId(block.id);
+          {/* Selection indicator */}
+          {selectedBlocks.size > 0 && (
+            <div className="mb-4 p-2 bg-blue-50 border border-blue-200 rounded-md flex items-center justify-between text-sm">
+              <span>{selectedBlocks.size} block{selectedBlocks.size !== 1 ? 's' : ''} selected</span>
+              <div className="flex gap-2">
+                <button
+                  onClick={(e) => {
+                    e.preventDefault();
+                    handleDeleteSelected();
+                  }}
+                  className="text-red-600 hover:text-red-800 px-2 py-1 hover:bg-red-50 rounded"
+                >
+                  Delete
+                </button>
+                <button
+                  onClick={(e) => {
+                    e.preventDefault();
                     clearSelection();
                   }}
-                  isFocused={focusedBlockId === block.id}
-                  onMoveUp={() => handleMoveBlock(block.id, 'up')}
-                  onMoveDown={() => handleMoveBlock(block.id, 'down')}
-                  onSelect={handleBlockSelect(block.id)}
-                  onMouseDown={handleBlockMouseDown(block.id)}
-                  onMouseEnter={handleBlockMouseEnterDuringGlobalDrag(block.id)}
-                  onMouseUp={handleMouseUp}
-                  onDragStart={handleBlockDragStart(block.id)}
-                  onDragOver={handleDragOver}
-                  onDrop={handleBlockDrop(block.id)}
-                  onAIQuery={handleAIQuery}
-                />
+                  className="text-gray-600 hover:text-gray-800 px-2 py-1 hover:bg-gray-50 rounded"
+                >
+                  Clear
+                </button>
               </div>
-            );
-          })}
-        </div>
+            </div>
+          )}
 
+          {/* Blocks */}
+          <div className="space-y-0"> {/* Changed from space-y-1 to space-y-0 for continuous selection */}
+            {page.blocks.map((block, index) => {
+              const selectionInfo = getSelectionInfo(block.id);
+              
+              return (
+                <div key={block.id} className="block-editor">
+                  <BlockEditor
+                    block={block}
+                    isSelected={selectionInfo.isSelected}
+                    isFirstSelected={selectionInfo.isFirstSelected}
+                    isLastSelected={selectionInfo.isLastSelected}
+                    isInSelection={selectionInfo.isInSelection}
+                    onUpdate={(updates) => handleBlockUpdate(block.id, updates)}
+                    onAddBlock={() => handleAddBlock(block.id)}
+                    onDeleteBlock={() => handleDeleteBlock(block.id)}
+                    onFocus={() => {
+                      setFocusedBlockId(block.id);
+                      clearSelection();
+                    }}
+                    isFocused={focusedBlockId === block.id}
+                    onMoveUp={() => handleMoveBlock(block.id, 'up')}
+                    onMoveDown={() => handleMoveBlock(block.id, 'down')}
+                    onSelect={handleBlockSelect(block.id)}
+                    onMouseDown={handleBlockMouseDown(block.id)}
+                    onMouseEnter={handleBlockMouseEnterDuringGlobalDrag(block.id)}
+                    onMouseUp={handleMouseUp}
+                    onDragStart={handleBlockDragStart(block.id)}
+                    onDragOver={handleDragOver}
+                    onDrop={handleBlockDrop(block.id)}
+                    onAIQuery={handleAIQuery}
+                    workspace={workspace}
+                    onNavigateToPage={handleNavigateToPage}
+                  />
+                </div>
+              );
+            })}
+          </div>
+        </div>
       </div>
+
+      {/* Bottom Status Bar - positioned relative to PageEditor */}
+      <BottomStatusBar
+        showAgentPanel={showAgentPanel}
+        onToggleAgentPanel={onToggleAgentPanel}
+        breadcrumbs={breadcrumbs}
+      />
     </div>
   );
 };

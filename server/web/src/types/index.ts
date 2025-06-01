@@ -1,6 +1,6 @@
 export interface Block {
   id: string;
-  type: 'text' | 'heading1' | 'heading2' | 'heading3' | 'bullet' | 'numbered' | 'quote' | 'divider' | 'image' | 'code';
+  type: 'text' | 'heading1' | 'heading2' | 'heading3' | 'bullet' | 'numbered' | 'quote' | 'divider' | 'image' | 'code' | 'subpage' | 'table' | 'toggle';
   content: string;
   order: number;
   isSelected?: boolean;
@@ -10,6 +10,24 @@ export interface Block {
     strikethrough?: boolean;
     code?: boolean;
     color?: string;
+    // Table-specific properties
+    tableData?: {
+      rows: number;
+      cols: number;
+      data: string[][];
+      headers?: string[];
+    };
+    // Toggle-specific properties
+    toggleData?: {
+      isOpen: boolean;
+      children: Block[];
+    };
+    // Subpage-specific properties
+    subpageData?: {
+      pageId: string;
+      pageTitle: string;
+      pageIcon?: string;
+    };
   };
 }
 

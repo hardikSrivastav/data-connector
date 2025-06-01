@@ -113,6 +113,60 @@
   @apply text-gray-400;
 }
 
+/* Table block styles */
+.table-block table {
+  @apply border-collapse border border-gray-300;
+  border-spacing: 0;
+}
+
+.table-block th,
+.table-block td {
+  @apply border border-gray-300;
+  padding: 8px 12px;
+}
+
+.table-block th {
+  @apply bg-gray-50 font-semibold;
+}
+
+.table-block input {
+  @apply w-full border-none outline-none bg-transparent;
+}
+
+/* Toggle block styles */
+.toggle-block {
+  @apply w-full;
+}
+
+.toggle-block .toggle-header {
+  @apply flex items-center gap-2 cursor-pointer;
+}
+
+.toggle-block .toggle-content {
+  @apply ml-6 mt-2 border-l-2 border-gray-200 pl-4;
+}
+
+.toggle-block .toggle-item {
+  @apply mb-2;
+}
+
+/* Subpage block styles */
+.subpage-block {
+  @apply w-full;
+}
+
+.subpage-block .subpage-card {
+  @apply flex items-center gap-3 p-4 border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors cursor-pointer;
+}
+
+.subpage-block .subpage-selector {
+  @apply w-full p-4 border border-gray-200 rounded-lg bg-gray-50;
+}
+
+.subpage-block .page-option {
+  @apply w-full text-left p-3 border border-gray-200 rounded-lg hover:bg-white hover:border-blue-300 transition-colors bg-white;
+}
+
 /* Prevent text selection during drag operations */
 .prevent-selection {
   -webkit-user-select: none !important;

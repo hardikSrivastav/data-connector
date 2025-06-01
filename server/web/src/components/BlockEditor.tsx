@@ -1,7 +1,10 @@
 import { useState, useRef, useEffect, KeyboardEvent } from 'react';
-import { Block } from '@/types';
+import { Block, Workspace } from '@/types';
 import { BlockTypeSelector } from './BlockTypeSelector';
 import { AIQuerySelector } from './AIQuerySelector';
+import { TableBlock } from './TableBlock';
+import { ToggleBlock } from './ToggleBlock';
+import { SubpageBlock } from './SubpageBlock';
 import { cn } from '@/lib/utils';
 import { GripVertical, Plus } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -31,6 +34,9 @@ interface BlockEditorProps {
   isInSelection?: boolean;
   // AI Query props
   onAIQuery?: (query: string, blockId: string) => void;
+  // Workspace for subpage blocks
+  workspace?: Workspace;
+  onNavigateToPage?: (pageId: string) => void;
 }
 
 export const BlockEditor = ({
@@ -53,7 +59,9 @@ export const BlockEditor = ({
   isFirstSelected = false,
   isLastSelected = false,
   isInSelection = false,
-  onAIQuery
+  onAIQuery,
+  workspace,
+  onNavigateToPage
 }: BlockEditorProps) => {
   const [showTypeSelector, setShowTypeSelector] = useState(false);
   const [typeSelectorQuery, setTypeSelectorQuery] = useState('');
@@ -94,8 +102,8 @@ export const BlockEditor = ({
       const specialBlockTypes = ['quote', 'code', 'bullet', 'numbered'];
       const isSpecialBlock = specialBlockTypes.includes(block.type);
       
-      // For headings and dividers, Enter always creates a new block
-      if (['heading1', 'heading2', 'heading3', 'divider'].includes(block.type)) {
+      // For headings, dividers, and custom block types, Enter always creates a new block
+      if (['heading1', 'heading2', 'heading3', 'divider', 'table', 'toggle', 'subpage'].includes(block.type)) {
         e.preventDefault();
         onAddBlock();
         return;
@@ -360,6 +368,9 @@ export const BlockEditor = ({
       case 'quote': return "Quote";
       case 'code': return "Code";
       case 'divider': return "---";
+      case 'table': return "Table";
+      case 'toggle': return "Toggle list";
+      case 'subpage': return "Sub-page link";
       default: return "Type '/' for commands, '@' for AI";
     }
   };
@@ -384,6 +395,10 @@ export const BlockEditor = ({
         return `${baseClasses} font-mono text-sm bg-gray-100 p-3 rounded`;
       case 'divider':
         return `${baseClasses} text-center text-gray-400`;
+      case 'table':
+      case 'toggle':
+      case 'subpage':
+        return `${baseClasses} hidden`; // Hide textarea for custom components
       default:
         return `${baseClasses} py-1`;
     }
@@ -397,6 +412,10 @@ export const BlockEditor = ({
         return '48px';
       case 'code':
         return '80px';
+      case 'table':
+      case 'toggle':
+      case 'subpage':
+        return 'auto'; // Let custom components control their height
       default:
         return '24px';
     }
@@ -540,6 +559,34 @@ export const BlockEditor = ({
           </div>
         )}
         
+        {/* Custom block components */}
+        {block.type === 'table' && (
+          <TableBlock
+            block={block}
+            onUpdate={onUpdate}
+            isFocused={isFocused}
+          />
+        )}
+        
+        {block.type === 'toggle' && (
+          <ToggleBlock
+            block={block}
+            onUpdate={onUpdate}
+            isFocused={isFocused}
+            onAddBlock={onAddBlock}
+          />
+        )}
+        
+        {block.type === 'subpage' && workspace && (
+          <SubpageBlock
+            block={block}
+            onUpdate={onUpdate}
+            isFocused={isFocused}
+            workspace={workspace}
+            onNavigateToPage={onNavigateToPage}
+          />
+        )}
+        
         <textarea
           ref={textareaRef}
           value={block.content}
@@ -570,7 +617,7 @@ export const BlockEditor = ({
           style={{
             minHeight: getMinHeight(),
             height: 'auto',
-            display: showAIQuery ? 'none' : 'block' // Hide textarea when AI query is active
+            display: showAIQuery || ['table', 'toggle', 'subpage'].includes(block.type) ? 'none' : 'block' // Hide textarea when AI query is active or for custom components
           }}
         />
         

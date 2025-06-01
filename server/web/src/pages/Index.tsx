@@ -3,8 +3,7 @@ import { useWorkspace } from '@/hooks/useWorkspace';
 import { Sidebar } from '@/components/Sidebar';
 import { PageEditor } from '@/components/PageEditor';
 import { AgentTestPanel } from '@/components/AgentTestPanel';
-import { Button } from '@/components/ui/button';
-import { Settings, X } from 'lucide-react';
+import { X } from 'lucide-react';
 
 const Index = () => {
   const [showAgentPanel, setShowAgentPanel] = useState(false);
@@ -42,34 +41,22 @@ const Index = () => {
           onDeleteBlock={deleteBlock}
           onUpdatePage={(updates) => updatePage(currentPageId, updates)}
           onMoveBlock={moveBlock}
+          showAgentPanel={showAgentPanel}
+          onToggleAgentPanel={setShowAgentPanel}
+          workspace={workspace}
         />
-        
-        {/* Agent Test Panel Toggle */}
-        {!showAgentPanel && (
-          <div className="fixed bottom-4 right-4 z-50">
-            <Button
-              onClick={() => setShowAgentPanel(true)}
-              size="sm"
-              className="bg-blue-600 hover:bg-blue-700 text-white shadow-lg"
-            >
-              <Settings className="h-4 w-4 mr-2" />
-              Test AI Agent
-            </Button>
-          </div>
-        )}
         
         {/* Agent Test Panel */}
         {showAgentPanel && (
           <div className="w-96 border-l border-gray-200 bg-gray-50 p-4 overflow-y-auto">
             <div className="flex items-center justify-between mb-4">
               <h2 className="text-lg font-semibold">AI Agent Testing</h2>
-              <Button
+              <button
                 onClick={() => setShowAgentPanel(false)}
-                size="sm"
-                variant="ghost"
+                className="p-1 hover:bg-gray-200 rounded"
               >
                 <X className="h-4 w-4" />
-              </Button>
+              </button>
             </div>
             <AgentTestPanel />
           </div>

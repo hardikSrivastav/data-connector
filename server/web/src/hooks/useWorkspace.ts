@@ -72,9 +72,18 @@ export const useWorkspace = () => {
       try {
         const savedWorkspace = await storageManager.getWorkspace('main');
         if (savedWorkspace) {
-          setWorkspace(savedWorkspace);
+          // Ensure all pages have their blocks sorted by order
+          const workspaceWithSortedBlocks = {
+            ...savedWorkspace,
+            pages: savedWorkspace.pages.map(page => ({
+              ...page,
+              blocks: [...page.blocks].sort((a, b) => a.order - b.order)
+            }))
+          };
+          
+          setWorkspace(workspaceWithSortedBlocks);
           // Set current page to first page or saved current page
-          const firstPageId = savedWorkspace.pages[0]?.id || 'default';
+          const firstPageId = workspaceWithSortedBlocks.pages[0]?.id || 'default';
           setCurrentPageId(localStorage.getItem('currentPageId') || firstPageId);
         }
       } catch (error) {
@@ -108,7 +117,14 @@ export const useWorkspace = () => {
     }
   }, [workspace, currentPageId, saveWorkspace, isLoaded]);
 
-  const currentPage = workspace.pages.find(p => p.id === currentPageId) || defaultPage;
+  const currentPage = (() => {
+    const page = workspace.pages.find(p => p.id === currentPageId) || defaultPage;
+    // Always ensure blocks are sorted by order
+    return {
+      ...page,
+      blocks: [...page.blocks].sort((a, b) => a.order - b.order)
+    };
+  })();
 
   const createPage = async (title: string = 'Untitled') => {
     const newPage: Page = {
@@ -271,9 +287,36 @@ export const useWorkspace = () => {
     const newBlock: Block = {
       id: generateId(),
       type,
-      content: '',
+      content: type === 'table' ? 'Table' : type === 'toggle' ? 'Toggle' : type === 'subpage' ? 'Sub-page' : '',
       order: newOrder
     };
+
+    // Initialize properties for specific block types
+    if (type === 'table') {
+      newBlock.properties = {
+        tableData: {
+          rows: 2,
+          cols: 2,
+          data: [['', ''], ['', '']],
+          headers: ['Column 1', 'Column 2']
+        }
+      };
+    } else if (type === 'toggle') {
+      newBlock.properties = {
+        toggleData: {
+          isOpen: false,
+          children: []
+        }
+      };
+    } else if (type === 'subpage') {
+      newBlock.properties = {
+        subpageData: {
+          pageId: '',
+          pageTitle: '',
+          pageIcon: ''
+        }
+      };
+    }
 
     if (afterBlockId) {
       const index = blocks.findIndex(b => b.id === afterBlockId);

@@ -1,6 +1,5 @@
-
 import { useState, useEffect } from 'react';
-import { Type, Hash, List, ListOrdered, Quote, Minus, Image, Code } from 'lucide-react';
+import { Type, Hash, List, ListOrdered, Quote, Minus, Image, Code, FileText, Table, ChevronRight } from 'lucide-react';
 import { Block } from '@/types';
 import { cn } from '@/lib/utils';
 
@@ -20,6 +19,9 @@ const blockTypes = [
   { type: 'quote' as const, label: 'Quote', icon: Quote, description: 'Capture a quote.' },
   { type: 'divider' as const, label: 'Divider', icon: Minus, description: 'Visually divide blocks.' },
   { type: 'code' as const, label: 'Code', icon: Code, description: 'Capture a code snippet.' },
+  { type: 'table' as const, label: 'Table', icon: Table, description: 'Create a table with rows and columns.' },
+  { type: 'toggle' as const, label: 'Toggle list', icon: ChevronRight, description: 'Create a collapsible toggle section.' },
+  { type: 'subpage' as const, label: 'Sub-page', icon: FileText, description: 'Link to another page in this workspace.' },
 ];
 
 export const BlockTypeSelector = ({ onSelect, onClose, query }: BlockTypeSelectorProps) => {

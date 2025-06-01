@@ -135,22 +135,47 @@ export class StorageManager {
   async getWorkspace(id: string): Promise<Workspace | null> {
     // 1. Check memory cache
     const cached = this.getCached<Workspace>(`workspace:${id}`);
-    if (cached) return cached;
+    if (cached) {
+      // Ensure blocks are sorted even from cache
+      return {
+        ...cached,
+        pages: cached.pages.map(page => ({
+          ...page,
+          blocks: [...page.blocks].sort((a, b) => a.order - b.order)
+        }))
+      };
+    }
 
     // 2. Check IndexedDB
     const local = await this.getFromDB<Workspace>('workspaces', id);
     if (local) {
-      this.setCache(`workspace:${id}`, local);
-      return local;
+      // Ensure blocks are sorted when loading from IndexedDB
+      const sortedWorkspace = {
+        ...local,
+        pages: local.pages.map(page => ({
+          ...page,
+          blocks: [...page.blocks].sort((a, b) => a.order - b.order)
+        }))
+      };
+      this.setCache(`workspace:${id}`, sortedWorkspace);
+      return sortedWorkspace;
     }
 
     // 3. Fetch from server if online and not zero-sync
     if (this.syncState.isOnline && this.config.edition !== 'zero-sync') {
       try {
         const remote = await this.fetchFromServer<Workspace>(`workspaces/${id}`);
-        await this.saveTooDB('workspaces', remote);
-        this.setCache(`workspace:${id}`, remote);
-        return remote;
+        // Ensure blocks are sorted when loading from server
+        const sortedWorkspace = {
+          ...remote,
+          pages: remote.pages.map(page => ({
+            ...page,
+            blocks: [...page.blocks].sort((a, b) => a.order - b.order)
+          }))
+        };
+        await this.saveTooDB('workspaces', sortedWorkspace);
+        this.setCache(`workspace:${id}`, sortedWorkspace);
+        return sortedWorkspace;
       } catch (error) {
         console.error('Failed to fetch workspace from server:', error);
       }
