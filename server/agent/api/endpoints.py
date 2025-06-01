@@ -7,8 +7,11 @@ import re
 import json
 import traceback
 
-from ..db.execute import test_conn, process_ai_query
+from ..db.db_orchestrator import Orchestrator
 from ..config.settings import Settings
+from ..llm.client import get_llm_client
+from ..meta.ingest import SchemaSearcher, ensure_index_exists
+from ..performance.schema_monitor import ensure_schema_index_updated
 
 # Set up logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
@@ -17,13 +20,12 @@ logger = logging.getLogger(__name__)
 # Create API router
 router = APIRouter()
 
-# Create connection pool
-pool: Optional[asyncpg.Pool] = None
-
 # Define request and response models
 class QueryRequest(BaseModel):
     question: str
     analyze: bool = False
+    db_type: Optional[str] = None
+    db_uri: Optional[str] = None
 
 class QueryResponse(BaseModel):
     rows: List[Dict[str, Any]]
@@ -34,57 +36,45 @@ class HealthResponse(BaseModel):
     status: str
     message: Optional[str] = None
 
-async def get_db_pool():
-    """
-    Get database connection pool (dependency)
-    """
-    global pool
-    if pool is None:
-        settings = Settings()
-        pool = await asyncpg.create_pool(
-            dsn=settings.db_dsn,
-            min_size=2,
-            max_size=10
-        )
-    return pool
+def sanitize_sql(sql: str) -> str:
+    """Basic SQL sanitization"""
+    # Remove dangerous keywords
+    dangerous_keywords = ['DROP', 'DELETE', 'UPDATE', 'INSERT', 'ALTER', 'CREATE', 'TRUNCATE']
+    sql_upper = sql.upper()
+    
+    for keyword in dangerous_keywords:
+        if keyword in sql_upper:
+            raise ValueError(f"Dangerous SQL keyword '{keyword}' detected")
+    
+    return sql.strip()
 
 @router.get("/health", response_model=HealthResponse)
 async def health_check():
     """
-    Health check endpoint - tests database connection and demo LLM client
+    Health check endpoint - tests database connection
     """
     logger.info("🏥 API ENDPOINT: /health - Starting health check")
     
     try:
-        # Test database connection
-        logger.info("🔍 Testing database connection...")
-        conn_ok = await test_conn()
+        settings = Settings()
+        
+        # Test database connection using the default database
+        orchestrator = Orchestrator(settings.connection_uri, db_type=settings.DB_TYPE)
+        
+        conn_ok = await orchestrator.test_connection()
         logger.info(f"🔍 Database connection result: {conn_ok}")
         
         if not conn_ok:
             response = HealthResponse(
                 status="degraded", 
-                message="Database connection failed, but demo LLM client is available"
-            )
-            logger.warning(f"⚠️ Health check degraded: {response.message}")
-            return response
-        
-        # Test demo LLM client
-        logger.info("🤖 Testing demo LLM client...")
-        demo_result = await process_ai_query("Hello", analyze=False)
-        logger.info(f"🤖 Demo LLM client test result: {type(demo_result)} with keys: {list(demo_result.keys())}")
-        
-        if not demo_result or "error" in demo_result.get("rows", [{}])[0]:
-            response = HealthResponse(
-                status="degraded", 
-                message="Database OK, but demo LLM client failed"
+                message="Database connection failed"
             )
             logger.warning(f"⚠️ Health check degraded: {response.message}")
             return response
         
         response = HealthResponse(
             status="ok", 
-            message="Database and demo LLM client are operational"
+            message="Database connection is operational"
         )
         logger.info(f"✅ Health check successful: {response.message}")
         return response
@@ -101,10 +91,10 @@ async def health_check():
 @router.post("/query", response_model=QueryResponse)
 async def query(request: QueryRequest):
     """
-    Query endpoint for natural language to SQL translation using demo LLM client
+    Query endpoint for natural language to SQL translation using real database connections
     
     Args:
-        request: QueryRequest containing the question and analyze flag
+        request: QueryRequest containing the question, analyze flag, and optional db settings
         
     Returns:
         QueryResponse containing the results, SQL query, and optional analysis
@@ -113,28 +103,49 @@ async def query(request: QueryRequest):
     logger.info(f"📥 Request received: question='{request.question}', analyze={request.analyze}")
     
     try:
-        logger.info(f"🔄 Calling process_ai_query with question='{request.question}', analyze={request.analyze}")
+        settings = Settings()
         
-        # Use the demo LLM client to process the query
-        result = await process_ai_query(request.question, request.analyze)
+        # Determine database type and URI
+        db_type = request.db_type or settings.DB_TYPE
+        db_uri = request.db_uri or settings.connection_uri
         
-        logger.info(f"🔄 process_ai_query returned: {type(result)}")
-        logger.info(f"🔄 Result keys: {list(result.keys())}")
-        logger.info(f"🔄 Result structure: rows={len(result.get('rows', []))}, sql={len(result.get('sql', ''))}, analysis={len(result.get('analysis', '')) if result.get('analysis') else 0}")
+        logger.info(f"🔄 Using database: type={db_type}, uri={db_uri[:50]}...")
         
-        # Validate the result structure
-        if not isinstance(result, dict):
-            logger.error(f"❌ Invalid result type: {type(result)}")
-            raise HTTPException(status_code=500, detail="Invalid response from demo LLM client")
+        # Create orchestrator for the specified database
+        orchestrator = Orchestrator(db_uri, db_type=db_type)
         
-        # Check for errors in the response
-        rows = result.get("rows", [])
-        logger.info(f"📊 Processing {len(rows)} rows from result")
+        # Test connection
+        if not await orchestrator.test_connection():
+            logger.error("❌ Database connection failed")
+            raise HTTPException(status_code=500, detail="Database connection failed")
         
-        if rows and isinstance(rows[0], dict) and "error" in rows[0]:
-            error_msg = rows[0]["error"]
-            logger.error(f"❌ Demo LLM client returned error: {error_msg}")
-            raise HTTPException(status_code=500, detail=f"Query processing failed: {error_msg}")
+        # Ensure schema index exists
+        try:
+            await ensure_index_exists(db_type=db_type, conn_uri=db_uri)
+            await ensure_schema_index_updated(force=False, db_type=db_type, conn_uri=db_uri)
+        except Exception as schema_error:
+            logger.warning(f"⚠️ Schema index setup failed: {schema_error}")
+            # Continue anyway, as the query might still work
+        
+        # Get LLM client
+        llm = get_llm_client()
+        
+        # Execute query based on database type
+        if db_type.lower() in ["postgres", "postgresql"]:
+            result = await execute_postgres_query(llm, request.question, request.analyze, orchestrator, db_type)
+        elif db_type.lower() == "mongodb":
+            result = await execute_mongodb_query(llm, request.question, request.analyze, orchestrator, db_type)
+        elif db_type.lower() == "qdrant":
+            result = await execute_qdrant_query(llm, request.question, request.analyze, orchestrator, db_type)
+        elif db_type.lower() == "slack":
+            result = await execute_slack_query(llm, request.question, request.analyze, orchestrator, db_type)
+        elif db_type.lower() == "shopify":
+            result = await execute_shopify_query(llm, request.question, request.analyze, orchestrator, db_type)
+        elif db_type.lower() == "ga4":
+            result = await execute_ga4_query(llm, request.question, request.analyze, orchestrator, db_type)
+        else:
+            logger.error(f"❌ Unsupported database type: {db_type}")
+            raise HTTPException(status_code=400, detail=f"Unsupported database type: {db_type}")
         
         # Build response
         response = QueryResponse(
@@ -145,16 +156,6 @@ async def query(request: QueryRequest):
         
         logger.info(f"✅ Query processed successfully")
         logger.info(f"📤 Returning response: rows={len(response.rows)}, sql_length={len(response.sql)}")
-        logger.info(f"📤 SQL Query: {response.sql}")
-        
-        if response.analysis:
-            logger.info(f"📤 Analysis length: {len(response.analysis)} characters")
-            logger.info(f"📤 Analysis preview: {response.analysis[:100]}...")
-        
-        # Log sample data for debugging
-        if response.rows:
-            logger.info(f"📤 Sample row keys: {list(response.rows[0].keys())}")
-            logger.info(f"📤 First row preview: {json.dumps(response.rows[0], default=str)[:200]}...")
         
         return response
         
@@ -167,18 +168,249 @@ async def query(request: QueryRequest):
         logger.error(f"❌ Traceback: {traceback.format_exc()}")
         raise HTTPException(status_code=500, detail=f"Query execution failed: {str(e)}")
 
-@router.get("/test")
-async def test_demo_client():
-    """
-    Test endpoint for the demo LLM client functionality
-    """
-    logger.info("🧪 API ENDPOINT: /test - Testing demo client")
+async def execute_postgres_query(llm, question: str, analyze: bool, orchestrator: Orchestrator, db_type: str) -> Dict[str, Any]:
+    """Execute a PostgreSQL query"""
+    logger.info(f"🐘 Executing PostgreSQL query: {question}")
     
     try:
+        # Search schema metadata
+        searcher = SchemaSearcher(db_type=db_type)
+        schema_chunks = await searcher.search(question, top_k=10, db_type=db_type)
+        
+        # Render prompt template for PostgreSQL
+        prompt = llm.render_template("nl2sql.tpl", schema_chunks=schema_chunks, user_question=question)
+        
+        # Generate SQL
+        sql = await llm.generate_sql(prompt)
+        
+        # Sanitize SQL
+        validated_sql = sanitize_sql(sql)
+        logger.info(f"🛠️ Generated SQL: {validated_sql}")
+        
+        # Execute query using the orchestrator
+        rows = await orchestrator.execute(validated_sql)
+        
+        result = {
+            "rows": rows,
+            "sql": validated_sql
+        }
+        
+        # Add analysis if requested
+        if analyze:
+            analysis = await llm.analyze_results(rows)
+            result["analysis"] = analysis
+        
+        return result
+        
+    except Exception as e:
+        logger.error(f"❌ PostgreSQL query error: {str(e)}")
+        return {
+            "rows": [{"error": f"PostgreSQL query failed: {str(e)}"}],
+            "sql": "-- Error occurred during query generation",
+            "analysis": f"❌ **Error**: {str(e)}" if analyze else None
+        }
+
+async def execute_mongodb_query(llm, question: str, analyze: bool, orchestrator: Orchestrator, db_type: str) -> Dict[str, Any]:
+    """Execute a MongoDB query"""
+    logger.info(f"🍃 Executing MongoDB query: {question}")
+    
+    try:
+        # Search schema metadata
+        searcher = SchemaSearcher(db_type=db_type)
+        schema_chunks = await searcher.search(question, top_k=5, db_type=db_type)
+        
+        # Get default collection (if applicable)
+        default_collection = getattr(orchestrator.adapter, 'default_collection', None)
+        
+        # Render prompt template for MongoDB
+        prompt = llm.render_template("mongo_query.tpl", 
+                                  schema_chunks=schema_chunks, 
+                                  user_question=question,
+                                  default_collection=default_collection)
+        
+        # Generate MongoDB query
+        raw_response = await llm.generate_mongodb_query(prompt)
+        query_data = json.loads(raw_response)
+        
+        logger.info(f"🛠️ Generated MongoDB query: {json.dumps(query_data, indent=2)}")
+        
+        # Execute query
+        rows = await orchestrator.execute(query_data)
+        
+        result = {
+            "rows": rows,
+            "sql": json.dumps(query_data, indent=2)  # Return formatted query as "sql"
+        }
+        
+        # Add analysis if requested
+        if analyze:
+            analysis = await llm.analyze_results(rows)
+            result["analysis"] = analysis
+        
+        return result
+        
+    except Exception as e:
+        logger.error(f"❌ MongoDB query error: {str(e)}")
+        return {
+            "rows": [{"error": f"MongoDB query failed: {str(e)}"}],
+            "sql": "-- Error occurred during query generation",
+            "analysis": f"❌ **Error**: {str(e)}" if analyze else None
+        }
+
+async def execute_qdrant_query(llm, question: str, analyze: bool, orchestrator: Orchestrator, db_type: str) -> Dict[str, Any]:
+    """Execute a Qdrant vector search query"""
+    logger.info(f"🔍 Executing Qdrant query: {question}")
+    
+    try:
+        # Search schema metadata
+        searcher = SchemaSearcher(db_type=db_type)
+        schema_chunks = await searcher.search(question, top_k=5, db_type=db_type)
+        
+        # Render prompt template for vector search
+        prompt = llm.render_template("vector_search.tpl", 
+                                  schema_chunks=schema_chunks, 
+                                  user_question=question)
+        
+        # Generate query using the orchestrator's LLM-to-query method
+        query_data = await orchestrator.llm_to_query(question)
+        
+        logger.info(f"🛠️ Generated Qdrant query: {json.dumps(query_data, indent=2)}")
+        
+        # Execute query
+        rows = await orchestrator.execute(query_data)
+        
+        result = {
+            "rows": rows,
+            "sql": json.dumps(query_data, indent=2)  # Return formatted query as "sql"
+        }
+        
+        # Add analysis if requested
+        if analyze:
+            analysis = await llm.analyze_results(rows, is_vector_search=True)
+            result["analysis"] = analysis
+        
+        return result
+        
+    except Exception as e:
+        logger.error(f"❌ Qdrant query error: {str(e)}")
+        return {
+            "rows": [{"error": f"Qdrant query failed: {str(e)}"}],
+            "sql": "-- Error occurred during query generation", 
+            "analysis": f"❌ **Error**: {str(e)}" if analyze else None
+        }
+
+async def execute_slack_query(llm, question: str, analyze: bool, orchestrator: Orchestrator, db_type: str) -> Dict[str, Any]:
+    """Execute a Slack query"""
+    logger.info(f"💬 Executing Slack query: {question}")
+    
+    try:
+        # Use orchestrator's LLM-to-query method
+        query_data = await orchestrator.llm_to_query(question)
+        
+        logger.info(f"🛠️ Generated Slack query: {json.dumps(query_data, indent=2)}")
+        
+        # Execute query
+        rows = await orchestrator.execute(query_data)
+        
+        result = {
+            "rows": rows,
+            "sql": json.dumps(query_data, indent=2)  # Return formatted query as "sql"
+        }
+        
+        # Add analysis if requested
+        if analyze:
+            analysis = await llm.analyze_results(rows)
+            result["analysis"] = analysis
+        
+        return result
+        
+    except Exception as e:
+        logger.error(f"❌ Slack query error: {str(e)}")
+        return {
+            "rows": [{"error": f"Slack query failed: {str(e)}"}],
+            "sql": "-- Error occurred during query generation",
+            "analysis": f"❌ **Error**: {str(e)}" if analyze else None
+        }
+
+async def execute_shopify_query(llm, question: str, analyze: bool, orchestrator: Orchestrator, db_type: str) -> Dict[str, Any]:
+    """Execute a Shopify query"""
+    logger.info(f"🛍️ Executing Shopify query: {question}")
+    
+    try:
+        # Use orchestrator's LLM-to-query method
+        query_data = await orchestrator.llm_to_query(question)
+        
+        logger.info(f"🛠️ Generated Shopify query: {json.dumps(query_data, indent=2)}")
+        
+        # Execute query
+        rows = await orchestrator.execute(query_data)
+        
+        result = {
+            "rows": rows,
+            "sql": json.dumps(query_data, indent=2)  # Return formatted query as "sql"
+        }
+        
+        # Add analysis if requested
+        if analyze:
+            analysis = await llm.analyze_results(rows)
+            result["analysis"] = analysis
+        
+        return result
+        
+    except Exception as e:
+        logger.error(f"❌ Shopify query error: {str(e)}")
+        return {
+            "rows": [{"error": f"Shopify query failed: {str(e)}"}],
+            "sql": "-- Error occurred during query generation",
+            "analysis": f"❌ **Error**: {str(e)}" if analyze else None
+        }
+
+async def execute_ga4_query(llm, question: str, analyze: bool, orchestrator: Orchestrator, db_type: str) -> Dict[str, Any]:
+    """Execute a GA4 query"""
+    logger.info(f"📊 Executing GA4 query: {question}")
+    
+    try:
+        # Use orchestrator's LLM-to-query method
+        query_data = await orchestrator.llm_to_query(question)
+        
+        logger.info(f"🛠️ Generated GA4 query: {json.dumps(query_data, indent=2)}")
+        
+        # Execute query
+        rows = await orchestrator.execute(query_data)
+        
+        result = {
+            "rows": rows,
+            "sql": json.dumps(query_data, indent=2)  # Return formatted query as "sql"
+        }
+        
+        # Add analysis if requested
+        if analyze:
+            analysis = await llm.analyze_results(rows)
+            result["analysis"] = analysis
+        
+        return result
+        
+    except Exception as e:
+        logger.error(f"❌ GA4 query error: {str(e)}")
+        return {
+            "rows": [{"error": f"GA4 query failed: {str(e)}"}],
+            "sql": "-- Error occurred during query generation",
+            "analysis": f"❌ **Error**: {str(e)}" if analyze else None
+        }
+
+@router.get("/test")
+async def test_real_connection():
+    """
+    Test endpoint for the real database connection functionality
+    """
+    logger.info("🧪 API ENDPOINT: /test - Testing real database connection")
+    
+    try:
+        settings = Settings()
+        
         test_queries = [
-            {"question": "Hello there!", "analyze": False},
-            {"question": "Show me recent users", "analyze": True},
-            {"question": "How many orders do we have?", "analyze": True}
+            {"question": "Show me recent users", "analyze": True, "db_type": "postgres"},
+            {"question": "How many records are in the database?", "analyze": True, "db_type": "postgres"}
         ]
         
         logger.info(f"🧪 Running {len(test_queries)} test queries")
@@ -186,84 +418,117 @@ async def test_demo_client():
         results = []
         for i, test_query in enumerate(test_queries):
             logger.info(f"🧪 Test {i+1}/{len(test_queries)}: '{test_query['question']}'")
-            result = await process_ai_query(test_query["question"], test_query["analyze"])
-            logger.info(f"🧪 Test {i+1} result: {len(result.get('rows', []))} rows, {len(result.get('sql', ''))} char SQL")
+            
+            # Create a test request
+            request = QueryRequest(
+                question=test_query["question"],
+                analyze=test_query["analyze"],
+                db_type=test_query.get("db_type")
+            )
+            
+            # Execute the query
+            result = await query(request)
+            
+            logger.info(f"🧪 Test {i+1} result: {len(result.rows)} rows")
             results.append({
                 "query": test_query["question"],
-                "response": result
+                "response": {
+                    "rows": result.rows,
+                    "sql": result.sql,
+                    "analysis": result.analysis
+                }
             })
         
         response = {
             "status": "success",
-            "message": "Demo LLM client is working correctly",
+            "message": "Real database connection is working correctly",
             "test_results": results
         }
         
-        logger.info(f"✅ Demo client test completed successfully with {len(results)} results")
+        logger.info(f"✅ Database connection test completed successfully with {len(results)} results")
         return response
         
     except Exception as e:
-        logger.error(f"❌ Demo client test failed: {str(e)}")
+        logger.error(f"❌ Database connection test failed: {str(e)}")
         logger.error(f"❌ Traceback: {traceback.format_exc()}")
-        raise HTTPException(status_code=500, detail=f"Demo client test failed: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Database connection test failed: {str(e)}")
 
 @router.get("/capabilities")
 async def get_capabilities():
     """
-    Get information about the demo LLM client capabilities
+    Get information about the database connection capabilities
     """
     logger.info("ℹ️ API ENDPOINT: /capabilities - Returning capabilities info")
     
+    settings = Settings()
+    
     capabilities = {
-        "name": "Demo LLM Client",
+        "name": "Real Database Agent",
         "version": "1.0.0",
+        "default_database": {
+            "type": settings.DB_TYPE,
+            "host": settings.DB_HOST,
+            "port": settings.DB_PORT,
+            "database": settings.DB_NAME
+        },
+        "supported_databases": ["postgres", "postgresql", "mongodb", "qdrant", "slack", "shopify", "ga4"],
         "capabilities": {
             "natural_language_queries": True,
             "sql_generation": True,
             "data_analysis": True,
-            "multiple_data_types": ["users", "orders", "products", "analytics"],
-            "query_intents": ["greetings", "data_queries", "analytics", "performance"],
-            "supported_patterns": {
-                "greetings": ["hello", "hi", "hey"],
-                "data_queries": ["show", "list", "find", "get", "fetch"],
-                "analytics": ["analyze", "insights", "trends", "statistics"],
-                "users": ["user", "customer", "account", "profile"],
-                "orders": ["order", "purchase", "sale", "transaction", "revenue"],
-                "products": ["product", "item", "inventory", "catalog"]
-            }
+            "schema_introspection": True,
+            "vector_search": True,
+            "multiple_data_sources": True
         },
         "sample_queries": [
-            "Hello! What can you help me with?",
             "Show me the latest users",
-            "How many orders were placed recently?", 
-            "Analyze product performance",
+            "How many orders were placed this month?", 
             "Find products with low stock",
+            "Search for messages about project updates",
             "What's the revenue trend?",
-            "Show me user analytics"
+            "Show me user analytics from GA4"
         ]
     }
     
-    logger.info(f"📤 Returning capabilities: {len(capabilities['capabilities']['sample_queries'])} sample queries")
+    logger.info(f"📤 Returning capabilities for {len(capabilities['supported_databases'])} database types")
     return capabilities
 
 @router.get("/metadata")
 async def get_metadata():
     """
-    Get schema metadata information
+    Get schema metadata information from the real database
     """
     logger.info("📊 API ENDPOINT: /metadata - Returning metadata info")
     
-    metadata = {
-        "status": "ok", 
-        "message": "Demo LLM client provides built-in sample data",
-        "available_entities": ["users", "orders", "products", "analytics"],
-        "sample_schemas": {
-            "users": ["id", "name", "email", "created_at", "last_login"],
-            "orders": ["id", "customer_id", "total_amount", "status", "created_at"],
-            "products": ["id", "name", "price", "category", "stock_quantity"],
-            "analytics": ["metric", "value", "change", "period"]
+    try:
+        settings = Settings()
+        
+        # Create orchestrator for introspection
+        orchestrator = Orchestrator(settings.connection_uri, db_type=settings.DB_TYPE)
+        
+        # Test connection
+        if not await orchestrator.test_connection():
+            raise HTTPException(status_code=500, detail="Database connection failed")
+        
+        # Get schema metadata
+        schema_metadata = await orchestrator.introspect_schema()
+        
+        metadata = {
+            "status": "ok", 
+            "message": f"Schema metadata from {settings.DB_TYPE} database",
+            "database_type": settings.DB_TYPE,
+            "connection_info": {
+                "host": settings.DB_HOST,
+                "port": settings.DB_PORT,
+                "database": settings.DB_NAME
+            },
+            "schema_elements": len(schema_metadata),
+            "tables": list(set(item.get("table_name", "") for item in schema_metadata if item.get("table_name")))
         }
-    }
-    
-    logger.info(f"📤 Returning metadata for {len(metadata['available_entities'])} entities")
-    return metadata
+        
+        logger.info(f"📤 Returning metadata for {len(schema_metadata)} schema elements")
+        return metadata
+        
+    except Exception as e:
+        logger.error(f"❌ Error getting metadata: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to get metadata: {str(e)}")

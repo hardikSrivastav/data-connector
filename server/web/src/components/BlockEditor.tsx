@@ -4,11 +4,13 @@ import { BlockTypeSelector } from './BlockTypeSelector';
 import { AIQuerySelector } from './AIQuerySelector';
 import { TableBlock } from './TableBlock';
 import { ToggleBlock } from './ToggleBlock';
-import { SubpageBlock } from './SubpageBlock';
 import { cn } from '@/lib/utils';
 import { GripVertical, Plus } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import styles from './BlockEditor.module.css';
+
+// Import SubpageBlock with explicit path
+import { SubpageBlock } from './SubpageBlock';
 
 interface BlockEditorProps {
   block: Block;
@@ -134,6 +136,14 @@ export const BlockEditor = ({
       // (don't preventDefault, let the textarea handle it naturally)
       
     } else if (e.key === 'Backspace' && block.content === '') {
+      e.preventDefault();
+      onDeleteBlock();
+    } else if (e.key === 'Delete') {
+      // Delete key always deletes the block regardless of content
+      e.preventDefault();
+      onDeleteBlock();
+    } else if ((e.ctrlKey || e.metaKey) && e.key === 'Backspace') {
+      // Ctrl/Cmd + Backspace also deletes the block (consistent with selection shortcut)
       e.preventDefault();
       onDeleteBlock();
     } else if (e.key === 'ArrowUp' && e.metaKey) {
@@ -359,6 +369,11 @@ export const BlockEditor = ({
   };
 
   const getPlaceholder = () => {
+    // Only show placeholder when block is focused and empty
+    if (!isFocused || block.content.trim() !== '') {
+      return '';
+    }
+    
     switch (block.type) {
       case 'heading1': return "Heading 1";
       case 'heading2': return "Heading 2";
@@ -466,12 +481,12 @@ export const BlockEditor = ({
         onDragOver={onDragOver}
         onDrop={onDrop}
       >
-        <div className="absolute left-0 top-2 flex items-center gap-1 -ml-20">
+        <div className="absolute left-0 top-1/2 -translate-y-1/2 flex items-center gap-1 -ml-20">
           <Button
             variant="ghost"
             size="sm"
             className={cn(
-              "h-6 w-6 p-0 transition-opacity cursor-grab",
+              "h-6 w-6 p-0 transition-opacity cursor-grab flex items-center justify-center",
               showAddButton ? "opacity-100" : "opacity-0"
             )}
             draggable
@@ -487,7 +502,7 @@ export const BlockEditor = ({
               onAddBlock();
             }}
             className={cn(
-              "h-6 w-6 p-0 transition-opacity",
+              "h-6 w-6 p-0 transition-opacity flex items-center justify-center",
               showAddButton ? "opacity-100" : "opacity-0"
             )}
           >
@@ -523,12 +538,12 @@ export const BlockEditor = ({
       onDragOver={onDragOver}
       onDrop={onDrop}
     >
-      <div className="absolute left-0 top-1 flex items-center gap-1 -ml-20">
+      <div className="absolute left-0 top-1/2 -translate-y-1/2 flex items-center gap-1 -ml-20">
         <Button
           variant="ghost"
           size="sm"
           className={cn(
-            "h-6 w-6 p-0 transition-opacity cursor-grab",
+            "h-6 w-6 p-0 transition-opacity cursor-grab flex items-center justify-center",
             showAddButton ? "opacity-100" : "opacity-0"
           )}
           draggable
@@ -544,7 +559,7 @@ export const BlockEditor = ({
             onAddBlock();
           }}
           className={cn(
-            "h-6 w-6 p-0 transition-opacity",
+            "h-6 w-6 p-0 transition-opacity flex items-center justify-center",
             showAddButton ? "opacity-100" : "opacity-0"
           )}
         >

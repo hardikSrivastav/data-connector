@@ -1,9 +1,8 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { Page, Workspace } from '@/types';
 import { BlockEditor } from './BlockEditor';
 import { EmojiPicker } from './EmojiPicker';
 import { BottomStatusBar } from './BottomStatusBar';
-import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { useBlockSelection } from '@/hooks/useBlockSelection';
 import { agentClient, AgentQueryResponse } from '@/lib/agent-client';
@@ -41,6 +40,7 @@ export const PageEditor = ({
     currentY: number;
   } | null>(null);
   const [pendingAIUpdate, setPendingAIUpdate] = useState<{ blockId: string; content: string } | null>(null);
+  const addingBlockRef = useRef(false); // Track if we're currently adding a block to prevent loops
   
   const {
     selectedBlocks,
@@ -358,6 +358,7 @@ export const PageEditor = ({
     const newBlockId = onAddBlock(afterBlockId);
     setFocusedBlockId(newBlockId);
     clearSelection(); // Clear selection when adding new block
+    return newBlockId; // Return the new block ID
   };
 
   const handleDeleteBlock = (blockId: string) => {
@@ -374,12 +375,32 @@ export const PageEditor = ({
 
   const handleDeleteSelected = () => {
     const blocksToDelete = deleteSelected();
-    console.log('Deleting blocks:', blocksToDelete); // Debug log
-    blocksToDelete.forEach(blockId => {
-      console.log('Deleting block:', blockId); // Debug log
+    console.log('handleDeleteSelected called');
+    console.log('Currently selected blocks:', Array.from(selectedBlocks));
+    console.log('Blocks to delete from deleteSelected():', blocksToDelete);
+    console.log('Page blocks before deletion:', page.blocks.map(b => ({ id: b.id, content: b.content?.substring(0, 20) + '...' })));
+    
+    if (blocksToDelete.length === 0) {
+      console.warn('No blocks to delete!');
+      return;
+    }
+    
+    // Delete blocks in reverse order to avoid index issues
+    const sortedBlocksToDelete = blocksToDelete.sort((a, b) => {
+      const indexA = page.blocks.findIndex(block => block.id === a);
+      const indexB = page.blocks.findIndex(block => block.id === b);
+      return indexB - indexA; // Reverse order
+    });
+    
+    console.log('Deleting blocks in order:', sortedBlocksToDelete);
+    
+    sortedBlocksToDelete.forEach((blockId, index) => {
+      console.log(`Deleting block ${index + 1}/${sortedBlocksToDelete.length}:`, blockId);
       onDeleteBlock(blockId);
     });
+    
     clearSelection();
+    console.log('Deletion complete, selection cleared');
   };
 
   const handleMoveBlock = (blockId: string, direction: 'up' | 'down') => {
@@ -437,6 +458,9 @@ export const PageEditor = ({
     const handleKeyDown = (e: KeyboardEvent) => {
       if ((e.ctrlKey || e.metaKey) && e.key === 'Backspace' && selectedBlocks.size > 0) {
         e.preventDefault();
+        console.log('Keyboard shortcut triggered - Cmd+Backspace');
+        console.log('Selected blocks at time of deletion:', Array.from(selectedBlocks));
+        console.log('Selected blocks size:', selectedBlocks.size);
         handleDeleteSelected();
       }
       if (e.key === 'Escape' && showEmojiPicker) {
@@ -446,7 +470,7 @@ export const PageEditor = ({
 
     document.addEventListener('keydown', handleKeyDown);
     return () => document.removeEventListener('keydown', handleKeyDown);
-  }, [selectedBlocks.size, showEmojiPicker]); // Add dependency to ensure latest selectedBlocks
+  }, [selectedBlocks, showEmojiPicker, handleDeleteSelected]); // Include selectedBlocks directly instead of just size
 
   // Close emoji picker when clicking outside
   useEffect(() => {
@@ -536,6 +560,118 @@ export const PageEditor = ({
     }
   };
 
+  // Handle clicks in empty space to create new blocks
+  const handleEmptySpaceClick = (e: React.MouseEvent) => {
+    // Check if the click was on empty space (not on a block or interactive element)
+    const target = e.target as HTMLElement;
+    
+    // Don't create block if:
+    // - Clicking on a button, input, or other interactive element
+    // - Clicking inside a block editor
+    // - Currently dragging/selecting
+    // - Emoji picker is open
+    if (
+      target.closest('.block-editor') || 
+      target.closest('button') || 
+      target.closest('input') || 
+      target.closest('textarea') || 
+      target.closest('.emoji-picker-container') ||
+      target.closest('[role="button"]') ||
+      isDragSelecting || 
+      isGlobalDragSelecting ||
+      showEmojiPicker ||
+      selectedBlocks.size > 0 // Don't interfere with selection
+    ) {
+      return;
+    }
+
+    // Only create block if clicking in the main content area
+    if (target.closest('.page-content-area')) {
+      e.preventDefault();
+      e.stopPropagation();
+      
+      // Clear any existing selections
+      clearSelection();
+      
+      // Check if there's already an empty block at the end
+      const lastBlock = page.blocks.length > 0 ? page.blocks[page.blocks.length - 1] : null;
+      const isLastBlockEmpty = lastBlock && (!lastBlock.content || lastBlock.content.trim() === '');
+      const isLastBlockFocused = lastBlock && focusedBlockId === lastBlock.id;
+      
+      if (isLastBlockEmpty && !isLastBlockFocused) {
+        // Focus the existing empty block instead of creating a new one
+        setFocusedBlockId(lastBlock.id);
+      } else if (!isLastBlockEmpty) {
+        // Only create a new block if the last block has content
+        const lastBlockId = lastBlock ? lastBlock.id : undefined;
+        const newBlockId = handleAddBlock(lastBlockId);
+        
+        // Focus the new block immediately so user can start typing
+        setTimeout(() => {
+          setFocusedBlockId(newBlockId);
+        }, 50);
+      }
+      // If the last block is empty AND focused, do nothing (user is already typing)
+    }
+  };
+
+  // Automatically ensure there's always an empty text block after non-text blocks
+  useEffect(() => {
+    // Prevent infinite loops by checking if we're already adding a block
+    if (addingBlockRef.current) {
+      return;
+    }
+
+    const nonTextBlockTypes = ['table', 'divider', 'toggle', 'subpage'];
+    let needsUpdate = false;
+    let actionNeeded: 'initial' | 'after-nontext' | null = null;
+    let targetBlockId: string | null = null;
+    
+    // Check if page is empty and needs an initial block
+    if (page.blocks.length === 0) {
+      needsUpdate = true;
+      actionNeeded = 'initial';
+    } else {
+      // Check if we need to add blocks after non-text blocks
+      for (let i = 0; i < page.blocks.length; i++) {
+        const currentBlock = page.blocks[i];
+        const nextBlock = page.blocks[i + 1];
+        
+        // If current block is non-text and either:
+        // - It's the last block, OR
+        // - The next block is also non-text
+        // Then we need to add an empty text block after it
+        if (nonTextBlockTypes.includes(currentBlock.type)) {
+          if (!nextBlock || nonTextBlockTypes.includes(nextBlock.type)) {
+            needsUpdate = true;
+            actionNeeded = 'after-nontext';
+            targetBlockId = currentBlock.id;
+            break; // Only handle one at a time
+          }
+        }
+      }
+    }
+    
+    if (needsUpdate && actionNeeded) {
+      addingBlockRef.current = true; // Set flag to prevent loops
+      
+      if (actionNeeded === 'initial') {
+        // For initial block, we'll manually add it and focus it
+        const newBlockId = onAddBlock();
+        setFocusedBlockId(newBlockId);
+        setTimeout(() => {
+          addingBlockRef.current = false;
+        }, 100);
+      } else if (actionNeeded === 'after-nontext' && targetBlockId) {
+        // For blocks after non-text blocks, don't auto-focus
+        onAddBlock(targetBlockId);
+        setTimeout(() => {
+          addingBlockRef.current = false;
+        }, 100);
+      }
+    }
+  }, [page.blocks, onAddBlock]); // Depend on onAddBlock directly
+
   // Generate breadcrumbs from workspace and page data
   const breadcrumbs = [
     { label: 'Workspace', onClick: () => console.log('Navigate to workspace') },
@@ -557,6 +693,7 @@ export const PageEditor = ({
         onMouseDown={handleGlobalMouseDown}
         onMouseMove={handleGlobalMouseMove}
         onMouseUp={handleGlobalMouseUp}
+        onClick={handleEmptySpaceClick}
       >
         {/* Global selection rectangle */}
         {dragSelection && (
@@ -565,7 +702,7 @@ export const PageEditor = ({
           />
         )}
         
-        <div className="max-w-4xl mx-auto p-8 pb-20 relative"> {/* Added pb-20 for bottom bar clearance */}
+        <div className="max-w-4xl mx-auto p-8 pb-20 relative page-content-area min-h-screen"> {/* Added min-h-screen to ensure clickable space */}
           {/* Page Header with Emoji */}
           <div className="mb-6 relative">
             <div className="flex items-center gap-2 mb-4">
@@ -602,17 +739,37 @@ export const PageEditor = ({
             </div>
           </div>
 
-          {/* Selection indicator */}
+          {/* Selection indicator - Fixed position to not disrupt layout */}
           {selectedBlocks.size > 0 && (
-            <div className="mb-4 p-2 bg-blue-50 border border-blue-200 rounded-md flex items-center justify-between text-sm">
-              <span>{selectedBlocks.size} block{selectedBlocks.size !== 1 ? 's' : ''} selected</span>
+            <div className="fixed top-4 right-4 z-50 p-3 bg-white border border-blue-200 rounded-lg shadow-lg text-sm max-w-xs">
+              <div className="flex items-center justify-between mb-2">
+                <span className="font-medium text-blue-900">
+                  {selectedBlocks.size} block{selectedBlocks.size !== 1 ? 's' : ''} selected
+                </span>
+                <button
+                  onClick={(e) => {
+                    e.preventDefault();
+                    clearSelection();
+                  }}
+                  className="text-gray-400 hover:text-gray-600 ml-2"
+                  title="Clear selection"
+                >
+                  ✕
+                </button>
+              </div>
+              {selectedBlocks.size === 1 && (
+                <div className="text-xs text-gray-600 mb-2">
+                  Hold Ctrl/Cmd and click more blocks to select multiple
+                </div>
+              )}
               <div className="flex gap-2">
                 <button
                   onClick={(e) => {
                     e.preventDefault();
+                    console.log('Delete button clicked, selected blocks:', Array.from(selectedBlocks));
                     handleDeleteSelected();
                   }}
-                  className="text-red-600 hover:text-red-800 px-2 py-1 hover:bg-red-50 rounded"
+                  className="flex-1 px-3 py-1 bg-red-50 text-red-700 border border-red-200 rounded hover:bg-red-100 transition-colors text-xs"
                 >
                   Delete
                 </button>
@@ -621,7 +778,7 @@ export const PageEditor = ({
                     e.preventDefault();
                     clearSelection();
                   }}
-                  className="text-gray-600 hover:text-gray-800 px-2 py-1 hover:bg-gray-50 rounded"
+                  className="flex-1 px-3 py-1 bg-gray-50 text-gray-700 border border-gray-200 rounded hover:bg-gray-100 transition-colors text-xs"
                 >
                   Clear
                 </button>
