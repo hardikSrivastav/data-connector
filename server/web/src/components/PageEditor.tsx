@@ -85,7 +85,7 @@ export const PageEditor = ({
       });
       
       // Create canvas preview data from the AI response
-      const canvasPreview = createCanvasPreviewFromResponse(response, query);
+      const canvasData = createCanvasPreviewFromResponse(response, query);
       
       // Add the AI response as a new Canvas block after the current block
       console.log(`➕ PageEditor: Adding new Canvas block after blockId='${blockId}'`);
@@ -94,6 +94,7 @@ export const PageEditor = ({
       
       // Store the canvas data to update when the block appears in state
       console.log(`💾 PageEditor: Storing Canvas data for delayed update`);
+      console.log(`💾 PageEditor: Canvas data structure being stored:`, canvasData);
       setPendingAIUpdate({ 
         blockId: newBlockId, 
         canvasData: {
@@ -103,7 +104,12 @@ export const PageEditor = ({
           workspaceId: workspace.id,
           pageId: page.id,
           blockId: newBlockId,
-          preview: canvasPreview
+          // Explicitly spread the canvas data to ensure all properties are preserved
+          fullAnalysis: canvasData.fullAnalysis,
+          fullData: canvasData.fullData,
+          sqlQuery: canvasData.sqlQuery,
+          preview: canvasData.preview,
+          blocks: [] // Initialize empty blocks array
         }
       });
       
@@ -142,6 +148,48 @@ export const PageEditor = ({
 
   // Create canvas preview data from AI response
   const createCanvasPreviewFromResponse = (response: AgentQueryResponse, query: string) => {
+    console.log('🎯 Creating canvas data from response:', response);
+    
+    const canvasData: any = {};
+    
+    // Store full analysis text
+    if (response.analysis) {
+      canvasData.fullAnalysis = response.analysis;
+      console.log('✅ Added fullAnalysis, length:', response.analysis.length);
+    } else {
+      console.log('❌ No analysis in response');
+    }
+    
+    // Store SQL query
+    if (response.sql) {
+      canvasData.sqlQuery = response.sql;
+      console.log('✅ Added sqlQuery, length:', response.sql.length);
+    } else {
+      console.log('❌ No SQL in response');
+    }
+    
+    // Store full data
+    if (response.rows && response.rows.length > 0) {
+      const headers = Object.keys(response.rows[0]);
+      const rows = response.rows.map(row => 
+        headers.map(header => {
+          const value = row[header];
+          if (value === null || value === undefined) return '';
+          return String(value);
+        })
+      );
+      
+      canvasData.fullData = {
+        headers,
+        rows,
+        totalRows: response.rows.length
+      };
+      console.log('✅ Added fullData:', { headers: headers.length, rows: rows.length, totalRows: response.rows.length });
+    } else {
+      console.log('❌ No rows in response');
+    }
+    
+    // Create preview data for collapsed view
     const preview: any = {};
     
     // Create summary from analysis or a default based on query results
@@ -185,7 +233,7 @@ export const PageEditor = ({
       preview.stats = stats;
     }
     
-    // Create table preview if we have data
+    // Create table preview (limited rows for collapsed view)
     if (response.rows && response.rows.length > 0) {
       const headers = Object.keys(response.rows[0]);
       const rows = response.rows.slice(0, 5).map(row => 
@@ -227,7 +275,16 @@ export const PageEditor = ({
       }
     }
     
-    return preview;
+    canvasData.preview = preview;
+    console.log('🎯 Final canvas data structure:', {
+      keys: Object.keys(canvasData),
+      hasFullAnalysis: !!canvasData.fullAnalysis,
+      hasFullData: !!canvasData.fullData,
+      hasSqlQuery: !!canvasData.sqlQuery,
+      hasPreview: !!canvasData.preview,
+      previewKeys: canvasData.preview ? Object.keys(canvasData.preview) : []
+    });
+    return canvasData;
   };
 
   // Global drag selection handlers
@@ -570,6 +627,15 @@ export const PageEditor = ({
           // Create Canvas block with preview data
           console.log(`🎯 PageEditor: Executing pending Canvas update for blockId='${blockId}'`);
           console.log(`🎯 PageEditor: Canvas thread name:`, canvasData.threadName);
+          console.log(`🎯 PageEditor: Canvas data being saved:`, {
+            keys: Object.keys(canvasData),
+            hasFullAnalysis: !!canvasData.fullAnalysis,
+            hasFullData: !!canvasData.fullData,
+            hasSqlQuery: !!canvasData.sqlQuery,
+            hasPreview: !!canvasData.preview,
+            fullAnalysisLength: canvasData.fullAnalysis?.length || 0,
+            fullDataRows: canvasData.fullData?.rows?.length || 0
+          });
           
           onUpdateBlock(blockId, {
             content: canvasData.threadName,
@@ -583,13 +649,13 @@ export const PageEditor = ({
         } else if (content) {
           // Create regular content block (for errors)
           console.log(`🎯 PageEditor: Executing pending content update for blockId='${blockId}'`);
-          console.log(`🎯 PageEditor: Content preview:`, content.substring(0, 100) + '...');
-          
-          onUpdateBlock(blockId, {
-            content: content,
+        console.log(`🎯 PageEditor: Content preview:`, content.substring(0, 100) + '...');
+        
+        onUpdateBlock(blockId, {
+          content: content,
             type: 'quote' // Style error messages as quotes
-          });
-          
+        });
+        
           console.log(`✅ PageEditor: Pending content update completed for blockId='${blockId}'`);
         }
         

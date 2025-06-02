@@ -37,6 +37,14 @@ export interface Block {
       pageId: string;
       blockId: string;
       blocks?: Block[];
+      // Full analysis data
+      fullAnalysis?: string;
+      sqlQuery?: string;
+      fullData?: {
+        headers: string[];
+        rows: any[][];
+        totalRows: number;
+      };
       preview?: {
         summary?: string;
         stats?: {

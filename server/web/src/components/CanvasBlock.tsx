@@ -41,21 +41,9 @@ export const CanvasBlock = ({
   useEffect(() => {
     if (canvasData && canvasData.isExpanded) {
       const storedBlocks = canvasData.blocks || [];
-      if (storedBlocks.length === 0) {
-        // Create initial block when canvas is first expanded
-        const initialBlock: Block = {
-          id: `canvas_block_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
-          type: 'text',
-          content: '',
-          order: 0
-        };
-        setCanvasBlocks([initialBlock]);
-        setFocusedCanvasBlockId(initialBlock.id);
-        // Save initial block to canvas data
-        updateCanvasBlocks([initialBlock]);
-      } else {
-        setCanvasBlocks(storedBlocks);
-      }
+      setCanvasBlocks(storedBlocks);
+      // Don't automatically create a block - let users see analysis results first
+      // and choose to add blocks when they want to
     }
   }, [canvasData?.isExpanded]);
 
@@ -578,60 +566,193 @@ export const CanvasBlock = ({
             </div>
 
             {/* Canvas Blocks */}
-            <div className="space-y-0">
-              {canvasBlocks.length === 0 ? (
-                <div className="flex flex-col items-center justify-center py-12 text-gray-500">
-                  <BarChart3 className="h-12 w-12 mb-4 text-gray-300" />
-                  <div className="text-center">
-                    <div className="font-medium text-gray-900 mb-2">
-                      Empty Canvas
+            <div className="space-y-4">
+              {/* Show Analysis Results if we have preview data */}
+              {canvasData.preview && (
+                <div className="analysis-results border border-gray-200 rounded-lg overflow-hidden bg-gray-50">
+                  <div className="bg-gray-100 px-4 py-2 border-b border-gray-200">
+                    <div className="flex items-center gap-2">
+                      <BarChart3 className="h-4 w-4 text-blue-600" />
+                      <span className="text-sm font-medium text-gray-700">Analysis Results</span>
+                      <span className="text-xs text-gray-500">
+                        Thread #{canvasData.threadId.split('_')[1]?.substr(0, 6) || 'new'}
+                      </span>
                     </div>
-                    <div className="text-sm mb-4">
-                      Start adding blocks to build your analysis workspace
+                  </div>
+                  
+                  <div className="p-4 space-y-4 bg-white">
+                    {/* Debug Section - Remove this after debugging */}
+                    <div className="text-xs bg-red-50 p-2 rounded border border-red-200 font-mono">
+                      <div><strong>DEBUG Canvas Data:</strong></div>
+                      <div>Has preview: {!!canvasData.preview ? 'YES' : 'NO'}</div>
+                      <div>Has fullAnalysis: {!!canvasData.fullAnalysis ? 'YES' : 'NO'}</div>
+                      <div>Has fullData: {!!canvasData.fullData ? 'YES' : 'NO'}</div>
+                      <div>Has sqlQuery: {!!canvasData.sqlQuery ? 'YES' : 'NO'}</div>
+                      {canvasData.fullAnalysis && <div>Analysis length: {canvasData.fullAnalysis.length}</div>}
+                      {canvasData.fullData && <div>Data rows: {canvasData.fullData.rows?.length || 0}</div>}
+                      <div>Canvas data keys: {Object.keys(canvasData).join(', ')}</div>
                     </div>
-                    <Button
-                      onClick={() => handleAddCanvasBlock()}
-                      size="sm"
-                      className="flex items-center gap-2"
-                    >
-                      <Plus className="h-4 w-4" />
-                      Add Block
-                    </Button>
+                    
+                    {/* Full Analysis Text */}
+                    {canvasData.fullAnalysis && (
+                      <div className="text-sm text-gray-700 bg-blue-50 p-4 rounded-lg border-l-4 border-blue-200">
+                        <div className="flex items-center gap-2 font-medium text-blue-900 mb-2">
+                          <Eye className="h-4 w-4" />
+                          Analysis
+                        </div>
+                        <div className="prose prose-sm text-gray-700 whitespace-pre-wrap">
+                          {canvasData.fullAnalysis}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* SQL Query */}
+                    {canvasData.sqlQuery && (
+                      <div className="text-sm bg-gray-100 p-4 rounded-lg border border-gray-200">
+                        <div className="flex items-center gap-2 font-medium text-gray-900 mb-2">
+                          <Database className="h-4 w-4" />
+                          SQL Query
+                        </div>
+                        <pre className="text-xs text-gray-700 font-mono whitespace-pre-wrap">
+                          {canvasData.sqlQuery}
+                        </pre>
+                      </div>
+                    )}
+
+                    {/* Stats */}
+                    {canvasData.preview.stats && canvasData.preview.stats.length > 0 && (
+                      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                        {canvasData.preview.stats.map((stat, index) => (
+                          <div key={index} className="bg-gray-50 border border-gray-200 rounded-lg p-3 text-center">
+                            <div className="text-xs text-gray-500 uppercase tracking-wide">{stat.label}</div>
+                            <div className="text-lg font-semibold text-gray-900 mt-1">{stat.value}</div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+
+                    {/* Full Data Table */}
+                    {canvasData.fullData && canvasData.fullData.rows.length > 0 && (
+                      <div className="bg-white border border-gray-200 rounded-lg overflow-hidden">
+                        <div className="bg-gray-50 px-3 py-2 border-b border-gray-200 flex items-center gap-2">
+                          <Database className="h-4 w-4 text-gray-600" />
+                          <span className="text-sm font-medium text-gray-700">
+                            Data Results ({canvasData.fullData.totalRows} rows)
+                          </span>
+                        </div>
+                        <div className="overflow-auto max-h-96">
+                          <table className="w-full text-sm">
+                            <thead className="bg-gray-50 sticky top-0">
+                              <tr>
+                                {canvasData.fullData.headers.map((header, index) => (
+                                  <th key={index} className="px-3 py-2 text-left font-medium text-gray-700 border-b border-gray-200 whitespace-nowrap">
+                                    {header}
+                                  </th>
+                                ))}
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {canvasData.fullData.rows.map((row, rowIndex) => (
+                                <tr key={rowIndex} className="border-b border-gray-100 hover:bg-gray-50">
+                                  {row.map((cell, cellIndex) => (
+                                    <td key={cellIndex} className="px-3 py-2 text-gray-900 whitespace-nowrap">
+                                      {cell}
+                                    </td>
+                                  ))}
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Charts Preview */}
+                    {canvasData.preview.charts && canvasData.preview.charts.length > 0 && (
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                        {canvasData.preview.charts.map((chart, index) => (
+                          <div key={index} className="bg-gray-50 border border-gray-200 rounded-lg p-3">
+                            <div className="flex items-center gap-2 mb-2">
+                              <TrendingUp className="h-4 w-4 text-green-600" />
+                              <span className="text-sm font-medium text-gray-700">
+                                {chart.type.charAt(0).toUpperCase() + chart.type.slice(1)} Chart
+                              </span>
+                            </div>
+                            <div className="h-32 bg-white rounded flex items-center justify-center text-xs text-gray-500 border border-gray-200">
+                              📊 Chart visualization (coming soon)
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
                   </div>
                 </div>
-              ) : (
-                canvasBlocks.map((canvasBlock, index) => (
-                  <div key={canvasBlock.id} className="canvas-block-editor">
-                    <BlockEditor
-                      block={canvasBlock}
-                      onUpdate={(updates) => handleCanvasBlockUpdate(canvasBlock.id, updates)}
-                      onAddBlock={() => handleAddCanvasBlock(canvasBlock.id)}
-                      onDeleteBlock={() => handleDeleteCanvasBlock(canvasBlock.id)}
-                      onFocus={() => setFocusedCanvasBlockId(canvasBlock.id)}
-                      isFocused={focusedCanvasBlockId === canvasBlock.id}
-                      onMoveUp={() => {
-                        const currentIndex = canvasBlocks.findIndex(b => b.id === canvasBlock.id);
-                        if (currentIndex > 0) {
-                          handleMoveCanvasBlock(canvasBlock.id, currentIndex - 1);
-                        }
-                      }}
-                      onMoveDown={() => {
-                        const currentIndex = canvasBlocks.findIndex(b => b.id === canvasBlock.id);
-                        if (currentIndex < canvasBlocks.length - 1) {
-                          handleMoveCanvasBlock(canvasBlock.id, currentIndex + 1);
-                        }
-                      }}
-                      workspace={workspace}
-                      page={page}
-                    />
-                  </div>
-                ))
               )}
-            </div>
 
-            {/* Add Block Button at Bottom */}
-            {canvasBlocks.length > 0 && (
-              <div className="mt-8 pt-4 border-t border-gray-100">
+              {/* Separator between analysis and user blocks */}
+              {canvasData.preview && canvasBlocks.length > 0 && (
+                <div className="flex items-center gap-4 py-2">
+                  <hr className="flex-1 border-gray-200" />
+                  <span className="text-xs text-gray-500 bg-white px-3 py-1 rounded-full border border-gray-200">
+                    Your Analysis
+                  </span>
+                  <hr className="flex-1 border-gray-200" />
+                </div>
+              )}
+
+              {/* User Canvas Blocks */}
+              <div className="space-y-0">
+                {canvasBlocks.length === 0 ? (
+                  <div className="flex flex-col items-center justify-center py-8 text-gray-500">
+                    <div className="text-center">
+                      <div className="font-medium text-gray-900 mb-2">
+                        Add Your Analysis
+                      </div>
+                      <div className="text-sm mb-4">
+                        Build on the results above with notes, insights, or additional queries
+                      </div>
+                      <Button
+                        onClick={() => handleAddCanvasBlock()}
+                        size="sm"
+                        className="flex items-center gap-2"
+                      >
+                        <Plus className="h-4 w-4" />
+                        Add Block
+                      </Button>
+                    </div>
+                  </div>
+                ) : (
+                  canvasBlocks.map((canvasBlock, index) => (
+                    <div key={canvasBlock.id} className="canvas-block-editor">
+                      <BlockEditor
+                        block={canvasBlock}
+                        onUpdate={(updates) => handleCanvasBlockUpdate(canvasBlock.id, updates)}
+                        onAddBlock={() => handleAddCanvasBlock(canvasBlock.id)}
+                        onDeleteBlock={() => handleDeleteCanvasBlock(canvasBlock.id)}
+                        onFocus={() => setFocusedCanvasBlockId(canvasBlock.id)}
+                        isFocused={focusedCanvasBlockId === canvasBlock.id}
+                        onMoveUp={() => {
+                          const currentIndex = canvasBlocks.findIndex(b => b.id === canvasBlock.id);
+                          if (currentIndex > 0) {
+                            handleMoveCanvasBlock(canvasBlock.id, currentIndex - 1);
+                          }
+                        }}
+                        onMoveDown={() => {
+                          const currentIndex = canvasBlocks.findIndex(b => b.id === canvasBlock.id);
+                          if (currentIndex < canvasBlocks.length - 1) {
+                            handleMoveCanvasBlock(canvasBlock.id, currentIndex + 1);
+                          }
+                        }}
+                        workspace={workspace}
+                        page={page}
+                      />
+                    </div>
+                  ))
+                )}
+              </div>
+
+              {/* Add Block Button at Bottom */}
+              <div className="pt-4 border-t border-gray-100">
                 <Button
                   onClick={() => handleAddCanvasBlock()}
                   variant="ghost"
@@ -642,7 +763,7 @@ export const CanvasBlock = ({
                   Add Block
                 </Button>
               </div>
-            )}
+            </div>
           </div>
         </div>
       </div>
