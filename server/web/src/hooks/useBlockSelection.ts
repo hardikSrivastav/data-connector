@@ -22,14 +22,21 @@ export const useBlockSelection = (blocks: Block[]) => {
   });
 
   const selectBlock = useCallback((blockId: string, isMultiSelect = false) => {
+    console.log('🎯 selectBlock called:', { blockId, isMultiSelect });
+    console.log('🎯 Current selection before selectBlock:', Array.from(selectionState.selectedBlocks));
+    
     setSelectionState(prev => {
       const newSelected = new Set(isMultiSelect ? prev.selectedBlocks : []);
       
       if (isMultiSelect && prev.selectedBlocks.has(blockId)) {
+        console.log('🎯 Removing block from selection (was already selected)');
         newSelected.delete(blockId);
       } else {
+        console.log('🎯 Adding block to selection');
         newSelected.add(blockId);
       }
+      
+      console.log('🎯 New selection after selectBlock:', Array.from(newSelected));
       
       return {
         ...prev,
@@ -58,6 +65,10 @@ export const useBlockSelection = (blocks: Block[]) => {
   }, [blocks]);
 
   const clearSelection = useCallback(() => {
+    console.log('🚨 clearSelection called');
+    console.log('🚨 Selection before clear:', Array.from(selectionState.selectedBlocks));
+    console.trace('🚨 clearSelection call stack');
+    
     setSelectionState(prev => ({
       ...prev,
       selectedBlocks: new Set(),
@@ -76,23 +87,38 @@ export const useBlockSelection = (blocks: Block[]) => {
   }, [blocks]);
 
   const deleteSelected = useCallback(() => {
-    return Array.from(selectionState.selectedBlocks);
+    console.log('🚨 deleteSelected called');
+    console.log('🚨 Current selection state:', Array.from(selectionState.selectedBlocks));
+    const result = Array.from(selectionState.selectedBlocks);
+    console.log('🚨 deleteSelected returning:', result);
+    return result;
   }, [selectionState.selectedBlocks]);
 
   const handleBlockClick = useCallback((blockId: string, event: React.MouseEvent) => {
+    console.log('🎯 handleBlockClick called:', { blockId });
+    console.log('🎯 Event modifiers:', { 
+      shiftKey: event.shiftKey, 
+      ctrlKey: event.ctrlKey, 
+      metaKey: event.metaKey 
+    });
+    console.log('🎯 Current selection before handleBlockClick:', Array.from(selectionState.selectedBlocks));
+    
     const isShiftClick = event.shiftKey;
     const isCtrlClick = event.ctrlKey || event.metaKey;
     
     if (isShiftClick && selectionState.selectedBlocks.size > 0) {
+      console.log('🎯 Shift+click detected - doing range selection');
       // Range selection
       const lastSelected = Array.from(selectionState.selectedBlocks).pop();
       if (lastSelected) {
         selectRange(lastSelected, blockId);
       }
     } else if (isCtrlClick) {
+      console.log('🎯 Ctrl+click detected - doing multi-select');
       // Multi-select
       selectBlock(blockId, true);
     } else {
+      console.log('🎯 Regular click detected - doing single select');
       // Single select
       selectBlock(blockId, false);
     }

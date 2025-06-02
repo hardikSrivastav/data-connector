@@ -41,6 +41,7 @@ interface BlockEditorProps {
   workspace?: Workspace;
   page?: Page;
   onNavigateToPage?: (pageId: string) => void;
+  onCreateCanvasPage?: (canvasData: any) => Promise<string>;
 }
 
 export const BlockEditor = ({
@@ -66,7 +67,8 @@ export const BlockEditor = ({
   onAIQuery,
   workspace,
   page,
-  onNavigateToPage
+  onNavigateToPage,
+  onCreateCanvasPage
 }: BlockEditorProps) => {
   const [showTypeSelector, setShowTypeSelector] = useState(false);
   const [typeSelectorQuery, setTypeSelectorQuery] = useState('');
@@ -534,9 +536,39 @@ export const BlockEditor = ({
         onMouseEnter?.(e);
       }}
       onMouseLeave={() => setShowAddButton(false)}
-      onMouseDown={onMouseDown}
+      onMouseDown={(e) => {
+        // Don't trigger selection mouse down if clicking on interactive elements
+        const target = e.target as HTMLElement;
+        if (
+          target.tagName === 'BUTTON' ||
+          target.tagName === 'INPUT' ||
+          target.tagName === 'TEXTAREA' ||
+          target.closest('button') ||
+          target.closest('input') ||
+          target.closest('textarea') ||
+          target.closest('.canvas-preview') // Don't interfere with canvas navigation
+        ) {
+          return;
+        }
+        onMouseDown?.(e);
+      }}
       onMouseUp={onMouseUp}
-      onClick={(e) => onSelect?.(e)}
+      onClick={(e) => {
+        // Don't trigger selection if clicking on interactive elements within the block
+        const target = e.target as HTMLElement;
+        if (
+          target.tagName === 'BUTTON' ||
+          target.tagName === 'INPUT' ||
+          target.tagName === 'TEXTAREA' ||
+          target.closest('button') ||
+          target.closest('input') ||
+          target.closest('textarea') ||
+          target.closest('.canvas-preview') // Don't interfere with canvas navigation
+        ) {
+          return;
+        }
+        onSelect?.(e);
+      }}
       draggable
       onDragStart={onDragStart}
       onDragOver={onDragOver}
@@ -613,6 +645,8 @@ export const BlockEditor = ({
             isFocused={isFocused}
             workspace={workspace}
             page={page}
+            onNavigateToPage={onNavigateToPage}
+            onCreateCanvasPage={onCreateCanvasPage}
           />
         )}
         

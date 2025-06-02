@@ -4,6 +4,7 @@ import { BarChart3, ChevronDown, ChevronRight, Maximize2, Minimize2, TrendingUp,
 import { Button } from '@/components/ui/button';
 import { BlockEditor } from './BlockEditor';
 import { cn } from '@/lib/utils';
+import ReactMarkdown from 'react-markdown';
 
 interface CanvasBlockProps {
   block: Block;
@@ -12,6 +13,8 @@ interface CanvasBlockProps {
   workspace: Workspace;
   page: Page;
   onCanvasQuery?: (query: string, threadId: string) => void;
+  onNavigateToPage?: (pageId: string) => void;
+  onCreateCanvasPage?: (canvasData: any) => Promise<string>;
 }
 
 export const CanvasBlock = ({ 
@@ -20,7 +23,9 @@ export const CanvasBlock = ({
   isFocused, 
   workspace, 
   page,
-  onCanvasQuery 
+  onCanvasQuery,
+  onNavigateToPage,
+  onCreateCanvasPage
 }: CanvasBlockProps) => {
   const canvasData = block.properties?.canvasData;
   const [showNameEditor, setShowNameEditor] = useState(!canvasData?.threadName);
@@ -163,18 +168,63 @@ export const CanvasBlock = ({
     updateCanvasBlocks(newBlocks);
   };
 
-  const toggleExpanded = () => {
+  const openCanvasPage = async () => {
     if (!canvasData) return;
     
+    // If canvas has an associated pageId, navigate to it
+    if (canvasData.canvasPageId) {
+      // First check if the page still exists
+      const targetPage = workspace.pages.find(p => p.id === canvasData.canvasPageId);
+      
+      if (targetPage) {
+        // Page exists, navigate normally
+        onNavigateToPage?.(canvasData.canvasPageId);
+        return;
+      } else {
+        // Page was deleted - clear the broken reference and recreate
+        console.warn('Canvas page was deleted, recreating...', canvasData.canvasPageId);
+        
+        // Clear the broken reference
     onUpdate({
       properties: {
         ...block.properties,
         canvasData: {
           ...canvasData,
-          isExpanded: !canvasData.isExpanded
+              canvasPageId: undefined
         }
       }
     });
+        
+        // Fall through to creation logic below
+      }
+    }
+    
+    // Create a new dedicated page for this canvas
+    if (onCreateCanvasPage) {
+      try {
+        const canvasPageId = await onCreateCanvasPage({
+          ...canvasData,
+          parentPageId: page.id,
+          parentBlockId: block.id
+        });
+        
+        // Store the canvas page reference in the block
+        onUpdate({
+          properties: {
+            ...block.properties,
+            canvasData: {
+              ...canvasData,
+              canvasPageId: canvasPageId
+            }
+          }
+        });
+        
+        // Navigate to the new canvas page
+        onNavigateToPage?.(canvasPageId);
+      } catch (error) {
+        console.error('Failed to create canvas page:', error);
+      }
+    }
   };
 
   const updateThreadName = (newName: string) => {
@@ -213,6 +263,10 @@ export const CanvasBlock = ({
     }
   };
 
+  // Check if canvas page reference is broken
+  const isCanvasPageMissing = canvasData?.canvasPageId && 
+    !workspace.pages.find(p => p.id === canvasData.canvasPageId);
+
   if (!canvasData) {
     return (
       <div className="w-full p-4 border border-gray-200 rounded-lg bg-gray-50">
@@ -224,19 +278,39 @@ export const CanvasBlock = ({
     );
   }
 
-  // Collapsed preview state
-  if (!canvasData.isExpanded) {
+  // Always show as collapsed preview - clicking opens dedicated page
     return (
       <div className="w-full canvas-block">
         <div 
-          className="group border border-gray-200 rounded-lg hover:border-gray-300 transition-colors cursor-pointer overflow-hidden canvas-preview"
-          onClick={toggleExpanded}
+        className={cn(
+          "group border rounded-lg hover:border-gray-300 transition-colors cursor-pointer overflow-hidden canvas-preview",
+          isCanvasPageMissing ? "border-orange-300 bg-orange-50" : "border-gray-200"
+        )}
+        onClick={(e) => {
+          // Don't navigate if clicking on interactive elements
+          const target = e.target as HTMLElement;
+          if (
+            target.tagName === 'BUTTON' ||
+            target.tagName === 'INPUT' ||
+            target.closest('button') ||
+            target.closest('input')
+          ) {
+            return;
+          }
+          openCanvasPage();
+        }}
         >
           {/* Header */}
-          <div className="flex items-center justify-between p-4 bg-gray-50 border-b border-gray-200">
+        <div className={cn(
+          "flex items-center justify-between p-4 border-b border-gray-200",
+          isCanvasPageMissing ? "bg-orange-100" : "bg-gray-50"
+        )}>
             <div className="flex items-center gap-3">
               <div className="flex items-center gap-2">
-                <BarChart3 className="h-5 w-5 text-blue-600" />
+              <BarChart3 className={cn(
+                "h-5 w-5",
+                isCanvasPageMissing ? "text-orange-600" : "text-blue-600"
+              )} />
                 <ChevronRight className="h-4 w-4 text-gray-400 group-hover:text-gray-600 transition-colors" />
               </div>
               
@@ -263,18 +337,39 @@ export const CanvasBlock = ({
                   {canvasData.threadName || 'Untitled Canvas'}
                 </span>
               )}
-            </div>
+            
+            {isCanvasPageMissing && (
+              <span className="text-xs text-orange-600 bg-orange-200 px-2 py-1 rounded">
+                Page Missing
+              </span>
+            )}
+          </div>
             
             <div className="flex items-center gap-2">
               <span className="text-xs text-gray-500 bg-white px-2 py-1 rounded">
                 Thread #{canvasData.threadId.split('_')[1]?.substr(0, 6) || 'new'}
               </span>
-              <Maximize2 className="h-4 w-4 text-gray-400 group-hover:text-blue-600 transition-colors" />
+            <Maximize2 className={cn(
+              "h-4 w-4 transition-colors",
+              isCanvasPageMissing 
+                ? "text-orange-400 group-hover:text-orange-600" 
+                : "text-gray-400 group-hover:text-blue-600"
+            )} />
+          </div>
+        </div>
+
+        {/* Preview Content - Show different content if page is missing */}
+        {isCanvasPageMissing ? (
+          <div className="p-4 space-y-4">
+            <div className="text-sm text-orange-700 bg-orange-100 p-3 rounded-lg border-l-4 border-orange-300">
+              <div className="flex items-center gap-2 font-medium text-orange-900 mb-1">
+                <Eye className="h-4 w-4" />
+                Canvas Page Missing
+              </div>
+              <p>The dedicated page for this canvas was deleted. Click to recreate it and continue your analysis.</p>
             </div>
           </div>
-
-          {/* Preview Content */}
-          {canvasData.preview ? (
+        ) : canvasData.preview ? (
             <div className="p-4 space-y-4">
               {/* Summary */}
               {canvasData.preview.summary && (
@@ -283,7 +378,9 @@ export const CanvasBlock = ({
                     <Eye className="h-4 w-4" />
                     Summary
                   </div>
-                  <p>{canvasData.preview.summary}</p>
+                  <div className="prose prose-sm max-w-none text-sm text-gray-700">
+                    <ReactMarkdown children={canvasData.preview.summary} />
+                  </div>
                 </div>
               )}
 
@@ -464,8 +561,8 @@ export const CanvasBlock = ({
                 <Activity className="h-8 w-8" />
                 <div>
                   <div className="font-medium">Ready for Analysis</div>
-                  <div className="text-sm">Click to expand and start querying your data</div>
-                </div>
+                <div className="text-sm">Click to open canvas workspace</div>
+              </div>
               </div>
             </div>
           )}
@@ -479,294 +576,40 @@ export const CanvasBlock = ({
               variant="outline"
               onClick={(e) => {
                 e.stopPropagation();
+              e.preventDefault();
                 setShowNameEditor(true);
               }}
             >
               Rename Thread
             </Button>
+          {isCanvasPageMissing ? (
             <Button
               size="sm"
               variant="outline"
-              onClick={toggleExpanded}
+              onClick={(e) => {
+                e.stopPropagation();
+                e.preventDefault();
+                openCanvasPage();
+              }}
+              className="text-orange-600 border-orange-300 hover:bg-orange-50"
             >
-              Expand Canvas
+              Recreate Page
             </Button>
-          </div>
-        )}
-      </div>
-    );
-  }
-
-  // Expanded canvas state
-  return (
-    <div className="w-full canvas-block-expanded">
-      <div className="border border-gray-200 rounded-lg overflow-hidden">
-        {/* Header */}
-        <div className="flex items-center justify-between p-4 bg-gray-50 border-b border-gray-200">
-          <div className="flex items-center gap-3">
-            <div className="flex items-center gap-2">
-              <BarChart3 className="h-5 w-5 text-blue-600" />
-              <ChevronDown className="h-4 w-4 text-gray-600" />
-            </div>
-            
-            {showNameEditor ? (
-              <input
-                type="text"
-                value={tempName}
-                onChange={(e) => setTempName(e.target.value)}
-                onBlur={handleNameSubmit}
-                onKeyDown={handleKeyDown}
-                placeholder="Name your canvas thread..."
-                className="font-medium text-gray-900 bg-transparent border-none outline-none focus:ring-0 flex-1 min-w-0"
-                autoFocus
-              />
-            ) : (
-              <span 
-                className="font-medium text-gray-900 cursor-pointer hover:text-blue-600"
-                onDoubleClick={() => setShowNameEditor(true)}
-              >
-                {canvasData.threadName || 'Untitled Canvas'}
-              </span>
-            )}
-          </div>
-          
-          <div className="flex items-center gap-2">
-            <span className="text-xs text-gray-500 bg-white px-2 py-1 rounded">
-              Thread #{canvasData.threadId.split('_')[1]?.substr(0, 6) || 'new'}
-            </span>
+          ) : (
             <Button
               size="sm"
-              variant="ghost"
-              onClick={toggleExpanded}
-              className="h-8 w-8 p-0"
+              variant="outline"
+              onClick={(e) => {
+                e.stopPropagation();
+                e.preventDefault();
+                openCanvasPage();
+              }}
             >
-              <Minimize2 className="h-4 w-4" />
+              Open Canvas
             </Button>
-          </div>
+          )}
         </div>
-
-        {/* Canvas Content Area - Full Page Interface */}
-        <div className="bg-white min-h-96">
-          <div className="max-w-4xl mx-auto p-6">
-            {/* Canvas Page Header */}
-            <div className="mb-6">
-              <div className="flex items-center gap-3 mb-4">
-                <div className="w-12 h-12 bg-blue-100 rounded-lg flex items-center justify-center">
-                  <BarChart3 className="h-6 w-6 text-blue-600" />
-                </div>
-                <div>
-                  <h1 className="text-2xl font-bold text-gray-900">
-                    {canvasData.threadName || 'Untitled Canvas'}
-                  </h1>
-                  <p className="text-sm text-gray-500">
-                    Analysis workspace • {canvasBlocks.length} block{canvasBlocks.length !== 1 ? 's' : ''}
-                  </p>
-                </div>
-              </div>
-            </div>
-
-            {/* Canvas Blocks */}
-            <div className="space-y-4">
-              {/* Show Analysis Results if we have preview data */}
-              {canvasData.preview && (
-                <div className="analysis-results border border-gray-200 rounded-lg overflow-hidden bg-gray-50">
-                  <div className="bg-gray-100 px-4 py-2 border-b border-gray-200">
-                    <div className="flex items-center gap-2">
-                      <BarChart3 className="h-4 w-4 text-blue-600" />
-                      <span className="text-sm font-medium text-gray-700">Analysis Results</span>
-                      <span className="text-xs text-gray-500">
-                        Thread #{canvasData.threadId.split('_')[1]?.substr(0, 6) || 'new'}
-                      </span>
-                    </div>
-                  </div>
-                  
-                  <div className="p-4 space-y-4 bg-white">
-                    {/* Debug Section - Remove this after debugging */}
-                    <div className="text-xs bg-red-50 p-2 rounded border border-red-200 font-mono">
-                      <div><strong>DEBUG Canvas Data:</strong></div>
-                      <div>Has preview: {!!canvasData.preview ? 'YES' : 'NO'}</div>
-                      <div>Has fullAnalysis: {!!canvasData.fullAnalysis ? 'YES' : 'NO'}</div>
-                      <div>Has fullData: {!!canvasData.fullData ? 'YES' : 'NO'}</div>
-                      <div>Has sqlQuery: {!!canvasData.sqlQuery ? 'YES' : 'NO'}</div>
-                      {canvasData.fullAnalysis && <div>Analysis length: {canvasData.fullAnalysis.length}</div>}
-                      {canvasData.fullData && <div>Data rows: {canvasData.fullData.rows?.length || 0}</div>}
-                      <div>Canvas data keys: {Object.keys(canvasData).join(', ')}</div>
-                    </div>
-                    
-                    {/* Full Analysis Text */}
-                    {canvasData.fullAnalysis && (
-                      <div className="text-sm text-gray-700 bg-blue-50 p-4 rounded-lg border-l-4 border-blue-200">
-                        <div className="flex items-center gap-2 font-medium text-blue-900 mb-2">
-                          <Eye className="h-4 w-4" />
-                          Analysis
-                        </div>
-                        <div className="prose prose-sm text-gray-700 whitespace-pre-wrap">
-                          {canvasData.fullAnalysis}
-                        </div>
-                      </div>
-                    )}
-
-                    {/* SQL Query */}
-                    {canvasData.sqlQuery && (
-                      <div className="text-sm bg-gray-100 p-4 rounded-lg border border-gray-200">
-                        <div className="flex items-center gap-2 font-medium text-gray-900 mb-2">
-                          <Database className="h-4 w-4" />
-                          SQL Query
-                        </div>
-                        <pre className="text-xs text-gray-700 font-mono whitespace-pre-wrap">
-                          {canvasData.sqlQuery}
-                        </pre>
-                      </div>
-                    )}
-
-                    {/* Stats */}
-                    {canvasData.preview.stats && canvasData.preview.stats.length > 0 && (
-                      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-                        {canvasData.preview.stats.map((stat, index) => (
-                          <div key={index} className="bg-gray-50 border border-gray-200 rounded-lg p-3 text-center">
-                            <div className="text-xs text-gray-500 uppercase tracking-wide">{stat.label}</div>
-                            <div className="text-lg font-semibold text-gray-900 mt-1">{stat.value}</div>
-                          </div>
-                        ))}
-                      </div>
-                    )}
-
-                    {/* Full Data Table */}
-                    {canvasData.fullData && canvasData.fullData.rows.length > 0 && (
-                      <div className="bg-white border border-gray-200 rounded-lg overflow-hidden">
-                        <div className="bg-gray-50 px-3 py-2 border-b border-gray-200 flex items-center gap-2">
-                          <Database className="h-4 w-4 text-gray-600" />
-                          <span className="text-sm font-medium text-gray-700">
-                            Data Results ({canvasData.fullData.totalRows} rows)
-                          </span>
-                        </div>
-                        <div className="overflow-auto max-h-96">
-                          <table className="w-full text-sm">
-                            <thead className="bg-gray-50 sticky top-0">
-                              <tr>
-                                {canvasData.fullData.headers.map((header, index) => (
-                                  <th key={index} className="px-3 py-2 text-left font-medium text-gray-700 border-b border-gray-200 whitespace-nowrap">
-                                    {header}
-                                  </th>
-                                ))}
-                              </tr>
-                            </thead>
-                            <tbody>
-                              {canvasData.fullData.rows.map((row, rowIndex) => (
-                                <tr key={rowIndex} className="border-b border-gray-100 hover:bg-gray-50">
-                                  {row.map((cell, cellIndex) => (
-                                    <td key={cellIndex} className="px-3 py-2 text-gray-900 whitespace-nowrap">
-                                      {cell}
-                                    </td>
-                                  ))}
-                                </tr>
-                              ))}
-                            </tbody>
-                          </table>
-                        </div>
-                      </div>
-                    )}
-
-                    {/* Charts Preview */}
-                    {canvasData.preview.charts && canvasData.preview.charts.length > 0 && (
-                      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                        {canvasData.preview.charts.map((chart, index) => (
-                          <div key={index} className="bg-gray-50 border border-gray-200 rounded-lg p-3">
-                            <div className="flex items-center gap-2 mb-2">
-                              <TrendingUp className="h-4 w-4 text-green-600" />
-                              <span className="text-sm font-medium text-gray-700">
-                                {chart.type.charAt(0).toUpperCase() + chart.type.slice(1)} Chart
-                              </span>
-                            </div>
-                            <div className="h-32 bg-white rounded flex items-center justify-center text-xs text-gray-500 border border-gray-200">
-                              📊 Chart visualization (coming soon)
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                </div>
-              )}
-
-              {/* Separator between analysis and user blocks */}
-              {canvasData.preview && canvasBlocks.length > 0 && (
-                <div className="flex items-center gap-4 py-2">
-                  <hr className="flex-1 border-gray-200" />
-                  <span className="text-xs text-gray-500 bg-white px-3 py-1 rounded-full border border-gray-200">
-                    Your Analysis
-                  </span>
-                  <hr className="flex-1 border-gray-200" />
-                </div>
-              )}
-
-              {/* User Canvas Blocks */}
-              <div className="space-y-0">
-                {canvasBlocks.length === 0 ? (
-                  <div className="flex flex-col items-center justify-center py-8 text-gray-500">
-                    <div className="text-center">
-                      <div className="font-medium text-gray-900 mb-2">
-                        Add Your Analysis
-                      </div>
-                      <div className="text-sm mb-4">
-                        Build on the results above with notes, insights, or additional queries
-                      </div>
-                      <Button
-                        onClick={() => handleAddCanvasBlock()}
-                        size="sm"
-                        className="flex items-center gap-2"
-                      >
-                        <Plus className="h-4 w-4" />
-                        Add Block
-                      </Button>
-                    </div>
-                  </div>
-                ) : (
-                  canvasBlocks.map((canvasBlock, index) => (
-                    <div key={canvasBlock.id} className="canvas-block-editor">
-                      <BlockEditor
-                        block={canvasBlock}
-                        onUpdate={(updates) => handleCanvasBlockUpdate(canvasBlock.id, updates)}
-                        onAddBlock={() => handleAddCanvasBlock(canvasBlock.id)}
-                        onDeleteBlock={() => handleDeleteCanvasBlock(canvasBlock.id)}
-                        onFocus={() => setFocusedCanvasBlockId(canvasBlock.id)}
-                        isFocused={focusedCanvasBlockId === canvasBlock.id}
-                        onMoveUp={() => {
-                          const currentIndex = canvasBlocks.findIndex(b => b.id === canvasBlock.id);
-                          if (currentIndex > 0) {
-                            handleMoveCanvasBlock(canvasBlock.id, currentIndex - 1);
-                          }
-                        }}
-                        onMoveDown={() => {
-                          const currentIndex = canvasBlocks.findIndex(b => b.id === canvasBlock.id);
-                          if (currentIndex < canvasBlocks.length - 1) {
-                            handleMoveCanvasBlock(canvasBlock.id, currentIndex + 1);
-                          }
-                        }}
-                        workspace={workspace}
-                        page={page}
-                      />
-                    </div>
-                  ))
-                )}
-              </div>
-
-              {/* Add Block Button at Bottom */}
-              <div className="pt-4 border-t border-gray-100">
-                <Button
-                  onClick={() => handleAddCanvasBlock()}
-                  variant="ghost"
-                  size="sm"
-                  className="w-full h-12 border-2 border-dashed border-gray-200 hover:border-gray-300 hover:bg-gray-50 text-gray-500 hover:text-gray-700 transition-colors"
-                >
-                  <Plus className="h-4 w-4 mr-2" />
-                  Add Block
-                </Button>
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
+      )}
     </div>
   );
 }; 

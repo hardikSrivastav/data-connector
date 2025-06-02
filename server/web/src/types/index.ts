@@ -36,6 +36,8 @@ export interface Block {
       workspaceId: string;
       pageId: string;
       blockId: string;
+      canvasPageId?: string;
+      parentPageId?: string;
       blocks?: Block[];
       // Full analysis data
       fullAnalysis?: string;
@@ -46,22 +48,18 @@ export interface Block {
         totalRows: number;
       };
       preview?: {
-        summary?: string;
-        stats?: {
-          label: string;
-          value: string | number;
-        }[];
-        tablePreview?: {
+        summary: string;
+        stats: Array<{label: string, value: string}>;
+        tablePreview: {
           headers: string[];
-          rows: string[][];
+          rows: any[][];
           totalRows: number;
         };
-        charts?: {
-          type: 'bar' | 'line' | 'pie';
-          data: any;
-        }[];
+        charts?: Array<{type: string, title: string}>;
       };
     };
+    // Canvas page identification
+    isCanvasPage?: boolean;
   };
 }
 

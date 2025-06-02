@@ -1,4 +1,5 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
+import { flushSync } from 'react-dom';
 import { Page, Workspace } from '@/types';
 import { BlockEditor } from './BlockEditor';
 import { EmojiPicker } from './EmojiPicker';
@@ -17,6 +18,8 @@ interface PageEditorProps {
   showAgentPanel: boolean;
   onToggleAgentPanel: (show: boolean) => void;
   workspace: Workspace;
+  onNavigateToPage?: (pageId: string) => void;
+  onCreateCanvasPage?: (canvasData: any) => Promise<string>;
 }
 
 export const PageEditor = ({
@@ -28,11 +31,14 @@ export const PageEditor = ({
   onMoveBlock,
   showAgentPanel,
   onToggleAgentPanel,
-  workspace
+  workspace,
+  onNavigateToPage,
+  onCreateCanvasPage
 }: PageEditorProps) => {
   const [focusedBlockId, setFocusedBlockId] = useState<string | null>(null);
   const [isGlobalDragSelecting, setIsGlobalDragSelecting] = useState(false);
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
+  const [isProcessingKeyboardShortcut, setIsProcessingKeyboardShortcut] = useState(false);
   const [dragSelection, setDragSelection] = useState<{
     startX: number;
     startY: number;
@@ -62,6 +68,123 @@ export const PageEditor = ({
     handleDrop,
     getSelectionInfo,
   } = useBlockSelection(page.blocks);
+
+  // Add logging wrapper for onUpdatePage
+  const loggedOnUpdatePage = useCallback((updates: Partial<Page>) => {
+    console.log('🔧 loggedOnUpdatePage called with:', updates);
+    console.log('🔧 updates.blocks length:', updates.blocks?.length);
+    console.log('🔧 updates.blocks:', updates.blocks?.map(b => ({ id: b.id, content: b.content?.substring(0, 20) })));
+    console.log('🔧 Calling original onUpdatePage...');
+    
+    try {
+      onUpdatePage(updates);
+      console.log('🔧 onUpdatePage completed successfully');
+    } catch (error) {
+      console.error('🔧 Error in onUpdatePage:', error);
+    }
+  }, [onUpdatePage]);
+
+  const handleDeleteSelected = useCallback(() => {
+    console.log('🚨 === STARTING handleDeleteSelected ===');
+    console.log('🚨 selectedBlocks at start:', Array.from(selectedBlocks));
+    console.log('🚨 selectedBlocks.size:', selectedBlocks.size);
+    console.log('🚨 page.blocks at start:', page.blocks.map(b => ({ id: b.id, content: b.content?.substring(0, 20) })));
+    
+    const blocksToDelete = deleteSelected();
+    console.log('🚨 deleteSelected() returned:', blocksToDelete);
+    console.log('🚨 blocksToDelete.length:', blocksToDelete.length);
+    console.log('🚨 Are blocksToDelete in page.blocks?', blocksToDelete.map(id => ({ 
+      id, 
+      exists: page.blocks.some(b => b.id === id) 
+    })));
+    
+    if (blocksToDelete.length === 0) {
+      console.warn('🚨 No blocks to delete! Selection was empty.');
+      console.log('🚨 Final selectedBlocks state:', Array.from(selectedBlocks));
+      return;
+    }
+    
+    console.log('🚨 === STEP 1: PREPARING UI UPDATE ===');
+    
+    // Step 1: Update UI immediately
+    let updatedBlocks = page.blocks.filter(block => !blocksToDelete.includes(block.id));
+    console.log('🚨 Filtered blocks (after removing selected):', updatedBlocks.map(b => ({ id: b.id, content: b.content?.substring(0, 20) })));
+    
+    // If no blocks remain, add a default empty text block
+    if (updatedBlocks.length === 0) {
+      const newBlock = {
+        id: `block_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+        type: 'text' as const,
+        content: '',
+        order: 0
+      };
+      updatedBlocks = [newBlock];
+      console.log('🚨 No blocks remaining, added default block:', newBlock);
+    } else {
+      // Reorder remaining blocks to have clean sequential orders
+      const originalUpdatedBlocks = [...updatedBlocks];
+      updatedBlocks = updatedBlocks.map((block, index) => ({
+        ...block,
+        order: index
+      }));
+      console.log('🚨 Reordered blocks:', {
+        before: originalUpdatedBlocks.map(b => ({ id: b.id, order: b.order })),
+        after: updatedBlocks.map(b => ({ id: b.id, order: b.order }))
+      });
+    }
+    
+    console.log('🚨 === STEP 2: UPDATING UI WITH FLUSHSYNC ===');
+    console.log('🚨 About to call flushSync with blocks:', updatedBlocks.map(b => ({ id: b.id, content: b.content?.substring(0, 20) })));
+    console.log('🚨 Current page.blocks before flushSync:', page.blocks.map(b => ({ id: b.id, content: b.content?.substring(0, 20) })));
+    
+    // Force immediate UI update using flushSync
+    try {
+      flushSync(() => {
+        console.log('🚨 INSIDE flushSync - calling loggedOnUpdatePage');
+        loggedOnUpdatePage({ blocks: updatedBlocks });
+        console.log('🚨 INSIDE flushSync - loggedOnUpdatePage called');
+      });
+      console.log('🚨 flushSync completed successfully');
+      console.log('🚨 page.blocks after flushSync:', page.blocks.map(b => ({ id: b.id, content: b.content?.substring(0, 20) })));
+    } catch (error) {
+      console.error('🚨 Error in flushSync:', error);
+    }
+    
+    console.log('🚨 === STEP 3: STORAGE CLEANUP ===');
+    
+    // Step 2: Clean up storage (without affecting UI since we already updated it)
+    console.log('🚨 Starting storage cleanup for blocks:', blocksToDelete);
+    blocksToDelete.forEach((blockId, index) => {
+      console.log(`🚨 [${index + 1}/${blocksToDelete.length}] Calling onDeleteBlock for: ${blockId}`);
+      console.log(`🚨 [${index + 1}/${blocksToDelete.length}] page.blocks before onDeleteBlock:`, page.blocks.map(b => ({ id: b.id, content: b.content?.substring(0, 20) })));
+      
+      try {
+        onDeleteBlock(blockId);
+        console.log(`🚨 [${index + 1}/${blocksToDelete.length}] onDeleteBlock completed for: ${blockId}`);
+        
+        // Log state after each deletion
+        setTimeout(() => {
+          console.log(`🚨 [${index + 1}/${blocksToDelete.length}] page.blocks after onDeleteBlock for ${blockId}:`, page.blocks.map(b => ({ id: b.id, content: b.content?.substring(0, 20) })));
+        }, 10);
+      } catch (error) {
+        console.error(`🚨 [${index + 1}/${blocksToDelete.length}] Error in onDeleteBlock for ${blockId}:`, error);
+      }
+    });
+    
+    console.log('🚨 === STEP 4: CLEARING SELECTION ===');
+    console.log('🚨 selectedBlocks before clearSelection:', Array.from(selectedBlocks));
+    clearSelection();
+    console.log('🚨 clearSelection called');
+    
+    // Log final state after a short delay
+    setTimeout(() => {
+      console.log('🚨 === FINAL STATE (after 100ms) ===');
+      console.log('🚨 Final page.blocks:', page.blocks.map(b => ({ id: b.id, content: b.content?.substring(0, 20) })));
+      console.log('🚨 Final selectedBlocks:', Array.from(selectedBlocks));
+      console.log('🚨 === END handleDeleteSelected ===');
+    }, 100);
+    
+  }, [deleteSelected, selectedBlocks, page.blocks, loggedOnUpdatePage, onDeleteBlock, clearSelection]);
 
   // AI Query handler - Updated to use real agent API and create Canvas blocks
   const handleAIQuery = async (query: string, blockId: string) => {
@@ -94,7 +217,6 @@ export const PageEditor = ({
       
       // Store the canvas data to update when the block appears in state
       console.log(`💾 PageEditor: Storing Canvas data for delayed update`);
-      console.log(`💾 PageEditor: Canvas data structure being stored:`, canvasData);
       setPendingAIUpdate({ 
         blockId: newBlockId, 
         canvasData: {
@@ -148,24 +270,16 @@ export const PageEditor = ({
 
   // Create canvas preview data from AI response
   const createCanvasPreviewFromResponse = (response: AgentQueryResponse, query: string) => {
-    console.log('🎯 Creating canvas data from response:', response);
-    
     const canvasData: any = {};
     
     // Store full analysis text
     if (response.analysis) {
       canvasData.fullAnalysis = response.analysis;
-      console.log('✅ Added fullAnalysis, length:', response.analysis.length);
-    } else {
-      console.log('❌ No analysis in response');
     }
     
     // Store SQL query
     if (response.sql) {
       canvasData.sqlQuery = response.sql;
-      console.log('✅ Added sqlQuery, length:', response.sql.length);
-    } else {
-      console.log('❌ No SQL in response');
     }
     
     // Store full data
@@ -184,9 +298,6 @@ export const PageEditor = ({
         rows,
         totalRows: response.rows.length
       };
-      console.log('✅ Added fullData:', { headers: headers.length, rows: rows.length, totalRows: response.rows.length });
-    } else {
-      console.log('❌ No rows in response');
     }
     
     // Create preview data for collapsed view
@@ -194,13 +305,23 @@ export const PageEditor = ({
     
     // Create summary from analysis or a default based on query results
     if (response.analysis) {
-      preview.summary = response.analysis.length > 200 
-        ? response.analysis.substring(0, 197) + '...' 
-        : response.analysis;
+      // If the analysis is already markdown or has structured content, use it as-is
+      // Otherwise, enhance it with markdown formatting
+      let formattedSummary = response.analysis;
+      
+      // If summary is too long, truncate but preserve markdown structure
+      if (formattedSummary.length > 300) {
+        formattedSummary = formattedSummary.substring(0, 297) + '...';
+      }
+      
+      preview.summary = formattedSummary;
     } else if (response.rows && response.rows.length > 0) {
-      preview.summary = `Query executed successfully and returned ${response.rows.length} rows of data. Click to expand and explore the results.`;
+      const rowCount = response.rows.length;
+      const columnCount = Object.keys(response.rows[0]).length;
+      
+      preview.summary = `**Query Results Summary**\n\n✅ Query executed successfully\n\n📊 **${rowCount.toLocaleString()}** rows returned across **${columnCount}** columns\n\n*Click to expand and explore the full dataset with interactive charts and analysis.*`;
     } else {
-      preview.summary = `Query executed but returned no data. The SQL query was processed successfully.`;
+      preview.summary = `**Query Executed**\n\n✅ The SQL query processed successfully but returned no data rows.\n\n*This might indicate the query conditions didn't match any records, or the target dataset is empty.*`;
     }
     
     // Create stats
@@ -276,19 +397,17 @@ export const PageEditor = ({
     }
     
     canvasData.preview = preview;
-    console.log('🎯 Final canvas data structure:', {
-      keys: Object.keys(canvasData),
-      hasFullAnalysis: !!canvasData.fullAnalysis,
-      hasFullData: !!canvasData.fullData,
-      hasSqlQuery: !!canvasData.sqlQuery,
-      hasPreview: !!canvasData.preview,
-      previewKeys: canvasData.preview ? Object.keys(canvasData.preview) : []
-    });
     return canvasData;
   };
 
   // Global drag selection handlers
   const handleGlobalMouseDown = (e: React.MouseEvent) => {
+    // Don't interfere if processing keyboard shortcuts
+    if (isProcessingKeyboardShortcut) {
+      console.log('🚨 Skipping global mouse down - processing keyboard shortcut');
+      return;
+    }
+
     // Don't start drag selection if clicking on emoji picker area
     const target = e.target as HTMLElement;
     
@@ -310,11 +429,16 @@ export const PageEditor = ({
     const container = e.currentTarget as HTMLElement;
     const rect = container.getBoundingClientRect();
     
-    const startX = e.clientX - rect.left;
-    const startY = e.clientY - rect.top;
+    // Account for scroll position within the container
+    const startX = e.clientX - rect.left + container.scrollLeft;
+    const startY = e.clientY - rect.top + container.scrollTop;
 
     // Clear existing selection and start global drag selection
-    clearSelection();
+    // But only if we don't have selected blocks (to preserve multi-selection for keyboard shortcuts)
+    if (selectedBlocks.size === 0) {
+      clearSelection();
+    }
+    
     setIsGlobalDragSelecting(true);
     setDragSelection({
       startX,
@@ -331,8 +455,9 @@ export const PageEditor = ({
       const container = e.currentTarget as HTMLElement;
       const rect = container.getBoundingClientRect();
       
-      const currentX = e.clientX - rect.left;
-      const currentY = e.clientY - rect.top;
+      // Account for scroll position within the container
+      const currentX = e.clientX - rect.left + container.scrollLeft;
+      const currentY = e.clientY - rect.top + container.scrollTop;
 
       const newDragSelection = {
         ...dragSelection,
@@ -350,6 +475,12 @@ export const PageEditor = ({
   // Function to update block selection based on rectangle intersection
   const updateBlockSelectionFromRect = (dragRect: typeof dragSelection, container: HTMLElement) => {
     if (!dragRect) return;
+
+    // Don't update selection if processing keyboard shortcuts
+    if (isProcessingKeyboardShortcut) {
+      console.log('🚨 Skipping selection update - processing keyboard shortcut');
+      return;
+    }
 
     // Calculate selection rectangle bounds
     const selectionLeft = Math.min(dragRect.startX, dragRect.currentX);
@@ -464,36 +595,6 @@ export const PageEditor = ({
     }
   };
 
-  const handleDeleteSelected = () => {
-    const blocksToDelete = deleteSelected();
-    console.log('handleDeleteSelected called');
-    console.log('Currently selected blocks:', Array.from(selectedBlocks));
-    console.log('Blocks to delete from deleteSelected():', blocksToDelete);
-    console.log('Page blocks before deletion:', page.blocks.map(b => ({ id: b.id, content: b.content?.substring(0, 20) + '...' })));
-    
-    if (blocksToDelete.length === 0) {
-      console.warn('No blocks to delete!');
-      return;
-    }
-    
-    // Delete blocks in reverse order to avoid index issues
-    const sortedBlocksToDelete = blocksToDelete.sort((a, b) => {
-      const indexA = page.blocks.findIndex(block => block.id === a);
-      const indexB = page.blocks.findIndex(block => block.id === b);
-      return indexB - indexA; // Reverse order
-    });
-    
-    console.log('Deleting blocks in order:', sortedBlocksToDelete);
-    
-    sortedBlocksToDelete.forEach((blockId, index) => {
-      console.log(`Deleting block ${index + 1}/${sortedBlocksToDelete.length}:`, blockId);
-      onDeleteBlock(blockId);
-    });
-    
-    clearSelection();
-    console.log('Deletion complete, selection cleared');
-  };
-
   const handleMoveBlock = (blockId: string, direction: 'up' | 'down') => {
     const currentIndex = page.blocks.findIndex(b => b.id === blockId);
     if (currentIndex === -1) return;
@@ -528,6 +629,14 @@ export const PageEditor = ({
 
   const handleBlockSelect = (blockId: string) => {
     return (e?: React.MouseEvent) => {
+      console.log('🎯 handleBlockSelect called for:', blockId);
+      console.log('🎯 Event details:', { 
+        ctrlKey: e?.ctrlKey, 
+        metaKey: e?.metaKey, 
+        shiftKey: e?.shiftKey 
+      });
+      console.log('🎯 Current selection before click:', Array.from(selectedBlocks));
+      
       if (e) {
         e.preventDefault();
         e.stopPropagation();
@@ -535,6 +644,11 @@ export const PageEditor = ({
       } else {
         selectBlock(blockId);
       }
+      
+      // Log selection after a small delay to see the result
+      setTimeout(() => {
+        console.log('🎯 Selection after click:', Array.from(selectedBlocks));
+      }, 10);
     };
   };
 
@@ -544,15 +658,128 @@ export const PageEditor = ({
     };
   };
 
+  // New function that takes explicit block list instead of relying on current selection state
+  const handleDeleteSelectedWithBlocks = useCallback((blocksToDelete: string[]) => {
+    console.log('🚨 === STARTING handleDeleteSelectedWithBlocks ===');
+    console.log('🚨 blocksToDelete parameter:', blocksToDelete);
+    console.log('🚨 blocksToDelete.length:', blocksToDelete.length);
+    console.log('🚨 page.blocks at start:', page.blocks.map(b => ({ id: b.id, content: b.content?.substring(0, 20) })));
+    console.log('🚨 Are blocksToDelete in page.blocks?', blocksToDelete.map(id => ({ 
+      id, 
+      exists: page.blocks.some(b => b.id === id) 
+    })));
+    
+    if (blocksToDelete.length === 0) {
+      console.warn('🚨 No blocks to delete! blocksToDelete parameter was empty.');
+      return;
+    }
+    
+    console.log('🚨 === STEP 1: PREPARING UI UPDATE ===');
+    
+    // Step 1: Update UI immediately
+    let updatedBlocks = page.blocks.filter(block => !blocksToDelete.includes(block.id));
+    console.log('🚨 Filtered blocks (after removing selected):', updatedBlocks.map(b => ({ id: b.id, content: b.content?.substring(0, 20) })));
+    
+    // If no blocks remain, add a default empty text block
+    if (updatedBlocks.length === 0) {
+      const newBlock = {
+        id: `block_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+        type: 'text' as const,
+        content: '',
+        order: 0
+      };
+      updatedBlocks = [newBlock];
+      console.log('🚨 No blocks remaining, added default block:', newBlock);
+    } else {
+      // Reorder remaining blocks to have clean sequential orders
+      const originalUpdatedBlocks = [...updatedBlocks];
+      updatedBlocks = updatedBlocks.map((block, index) => ({
+        ...block,
+        order: index
+      }));
+      console.log('🚨 Reordered blocks:', {
+        before: originalUpdatedBlocks.map(b => ({ id: b.id, order: b.order })),
+        after: updatedBlocks.map(b => ({ id: b.id, order: b.order }))
+      });
+    }
+    
+    console.log('🚨 === STEP 2: UPDATING UI WITH FLUSHSYNC ===');
+    console.log('🚨 About to call flushSync with blocks:', updatedBlocks.map(b => ({ id: b.id, content: b.content?.substring(0, 20) })));
+    console.log('🚨 Current page.blocks before flushSync:', page.blocks.map(b => ({ id: b.id, content: b.content?.substring(0, 20) })));
+    
+    // Force immediate UI update using flushSync
+    try {
+      flushSync(() => {
+        console.log('🚨 INSIDE flushSync - calling loggedOnUpdatePage');
+        loggedOnUpdatePage({ blocks: updatedBlocks });
+        console.log('🚨 INSIDE flushSync - loggedOnUpdatePage called');
+      });
+      console.log('🚨 flushSync completed successfully');
+      console.log('🚨 page.blocks after flushSync:', page.blocks.map(b => ({ id: b.id, content: b.content?.substring(0, 20) })));
+    } catch (error) {
+      console.error('🚨 Error in flushSync:', error);
+    }
+    
+    console.log('🚨 === STEP 3: CLEARING SELECTION IMMEDIATELY ===');
+    clearSelection();
+    console.log('🚨 clearSelection called');
+    
+    console.log('🚨 === STEP 4: DEFERRED STORAGE CLEANUP ===');
+    
+    // Step 3: Clean up storage (deferred to avoid interfering with UI)
+    console.log('🚨 Scheduling deferred storage cleanup for blocks:', blocksToDelete);
+    setTimeout(() => {
+      console.log('🚨 Starting deferred storage cleanup for blocks:', blocksToDelete);
+      blocksToDelete.forEach((blockId, index) => {
+        console.log(`🚨 [DEFERRED ${index + 1}/${blocksToDelete.length}] Calling onDeleteBlock for: ${blockId}`);
+        
+        try {
+          onDeleteBlock(blockId);
+          console.log(`🚨 [DEFERRED ${index + 1}/${blocksToDelete.length}] onDeleteBlock completed for: ${blockId}`);
+        } catch (error) {
+          console.error(`🚨 [DEFERRED ${index + 1}/${blocksToDelete.length}] Error in onDeleteBlock for ${blockId}:`, error);
+        }
+      });
+      
+      console.log('🚨 === DEFERRED STORAGE CLEANUP COMPLETED ===');
+    }, 50); // Small delay to ensure UI update is processed first
+    
+    // Log final state after a short delay
+    setTimeout(() => {
+      console.log('🚨 === FINAL STATE (after 100ms) ===');
+      console.log('🚨 Final page.blocks:', page.blocks.map(b => ({ id: b.id, content: b.content?.substring(0, 20) })));
+      console.log('🚨 Final selectedBlocks:', Array.from(selectedBlocks));
+      console.log('🚨 === END handleDeleteSelectedWithBlocks ===');
+    }, 100);
+    
+  }, [page.blocks, loggedOnUpdatePage, onDeleteBlock, clearSelection, selectedBlocks]);
+
   // Handle keyboard shortcuts for selection
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if ((e.ctrlKey || e.metaKey) && e.key === 'Backspace' && selectedBlocks.size > 0) {
         e.preventDefault();
-        console.log('Keyboard shortcut triggered - Cmd+Backspace');
-        console.log('Selected blocks at time of deletion:', Array.from(selectedBlocks));
-        console.log('Selected blocks size:', selectedBlocks.size);
-        handleDeleteSelected();
+        console.log('🎯 Keyboard shortcut triggered - Cmd+Backspace');
+        console.log('🎯 Selected blocks at time of keydown:', Array.from(selectedBlocks));
+        console.log('🎯 Selected blocks size at keydown:', selectedBlocks.size);
+        
+        // IMMEDIATELY capture the current selection before any mouse events can interfere
+        const blocksToDeleteNow = Array.from(selectedBlocks);
+        console.log('🎯 Captured blocks for deletion:', blocksToDeleteNow);
+        
+        // Set flag to prevent mouse events from interfering
+        setIsProcessingKeyboardShortcut(true);
+        
+        // Call deletion immediately with captured selection
+        console.log('🎯 About to call handleDeleteSelectedWithBlocks with captured blocks...');
+        handleDeleteSelectedWithBlocks(blocksToDeleteNow);
+        
+        // Clear flag after processing
+        setTimeout(() => {
+          setIsProcessingKeyboardShortcut(false);
+        }, 100);
+        
+        console.log('🎯 handleDeleteSelectedWithBlocks call completed');
       }
       if (e.key === 'Escape' && showEmojiPicker) {
         setShowEmojiPicker(false);
@@ -561,7 +788,7 @@ export const PageEditor = ({
 
     document.addEventListener('keydown', handleKeyDown);
     return () => document.removeEventListener('keydown', handleKeyDown);
-  }, [selectedBlocks, showEmojiPicker, handleDeleteSelected]); // Include selectedBlocks directly instead of just size
+  }, [selectedBlocks, showEmojiPicker, handleDeleteSelectedWithBlocks]);
 
   // Close emoji picker when clicking outside
   useEffect(() => {
@@ -626,16 +853,6 @@ export const PageEditor = ({
         if (canvasData) {
           // Create Canvas block with preview data
           console.log(`🎯 PageEditor: Executing pending Canvas update for blockId='${blockId}'`);
-          console.log(`🎯 PageEditor: Canvas thread name:`, canvasData.threadName);
-          console.log(`🎯 PageEditor: Canvas data being saved:`, {
-            keys: Object.keys(canvasData),
-            hasFullAnalysis: !!canvasData.fullAnalysis,
-            hasFullData: !!canvasData.fullData,
-            hasSqlQuery: !!canvasData.sqlQuery,
-            hasPreview: !!canvasData.preview,
-            fullAnalysisLength: canvasData.fullAnalysis?.length || 0,
-            fullDataRows: canvasData.fullData?.rows?.length || 0
-          });
           
           onUpdateBlock(blockId, {
             content: canvasData.threadName,
@@ -673,13 +890,18 @@ export const PageEditor = ({
       // For now, we'll just log the navigation. In a real app, this would change the current page
       console.log(`Navigating to page: ${targetPage.title} (${pageId})`);
       // You could implement actual navigation here:
-      // onPageChange?.(pageId);
-      alert(`Would navigate to: ${targetPage.title}`);
+      onNavigateToPage?.(pageId);
     }
   };
 
   // Handle clicks in empty space to create new blocks
   const handleEmptySpaceClick = (e: React.MouseEvent) => {
+    // Don't interfere if processing keyboard shortcuts
+    if (isProcessingKeyboardShortcut) {
+      console.log('🚨 Skipping empty space click - processing keyboard shortcut');
+      return;
+    }
+
     // Check if the click was on empty space (not on a block or interactive element)
     const target = e.target as HTMLElement;
     
@@ -921,8 +1143,17 @@ export const PageEditor = ({
                     onAddBlock={() => handleAddBlock(block.id)}
                     onDeleteBlock={() => handleDeleteBlock(block.id)}
                     onFocus={() => {
+                      console.log('🔍 Block focused:', block.id);
+                      console.log('🔍 Current selection before focus:', Array.from(selectedBlocks));
+                      console.log('🔍 Is this block selected?', selectedBlocks.has(block.id));
+                      
                       setFocusedBlockId(block.id);
-                      clearSelection();
+                      if (!selectedBlocks.has(block.id)) {
+                        console.log('🔍 Clearing selection because block is not selected');
+                        clearSelection();
+                      } else {
+                        console.log('🔍 NOT clearing selection because block is selected');
+                      }
                     }}
                     isFocused={focusedBlockId === block.id}
                     onMoveUp={() => handleMoveBlock(block.id, 'up')}
@@ -938,6 +1169,7 @@ export const PageEditor = ({
                     workspace={workspace}
                     page={page}
                     onNavigateToPage={handleNavigateToPage}
+                    onCreateCanvasPage={onCreateCanvasPage}
                   />
                 </div>
               );

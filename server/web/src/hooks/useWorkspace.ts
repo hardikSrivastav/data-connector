@@ -194,9 +194,42 @@ export const useWorkspace = () => {
     if (workspace.pages.length <= 1) return;
     
     const pageIndex = workspace.pages.findIndex(p => p.id === pageId);
+    
+    // First, clean up any canvas references to this page across all pages
+    const updatedPages = workspace.pages.map(page => {
+      const updatedBlocks = page.blocks.map(block => {
+        // Check if this is a canvas block with a reference to the deleted page
+        if (block.type === 'canvas' && 
+            block.properties?.canvasData?.canvasPageId === pageId) {
+          
+          console.log(`Cleaning up canvas reference in block ${block.id} on page ${page.id}`);
+          
+          // Remove the broken reference
+          return {
+            ...block,
+            properties: {
+              ...block.properties,
+              canvasData: {
+                ...block.properties.canvasData,
+                canvasPageId: undefined
+              }
+            }
+          };
+        }
+        return block;
+      });
+      
+      // Only return updated page if blocks were actually changed
+      if (updatedBlocks.some((block, index) => block !== page.blocks[index])) {
+        return { ...page, blocks: updatedBlocks, updatedAt: new Date() };
+      }
+      return page;
+    });
+    
+    // Update workspace with cleaned references and remove the deleted page
     setWorkspace(prev => ({
       ...prev,
-      pages: prev.pages.filter(page => page.id !== pageId)
+      pages: updatedPages.filter(page => page.id !== pageId)
     }));
     
     if (currentPageId === pageId) {
