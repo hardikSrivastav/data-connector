@@ -1,8 +1,7 @@
 import { useState, useEffect } from 'react';
 import { Block, Page, Workspace } from '@/types';
-import { BarChart3, ChevronDown, ChevronRight, Maximize2, Minimize2, TrendingUp, Database, Eye, Activity, Plus } from 'lucide-react';
+import { BarChart3, ChevronRight, Maximize2, Eye, Database, TrendingUp, Activity } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { BlockEditor } from './BlockEditor';
 import { cn } from '@/lib/utils';
 import ReactMarkdown from 'react-markdown';
 
@@ -12,7 +11,6 @@ interface CanvasBlockProps {
   isFocused: boolean;
   workspace: Workspace;
   page: Page;
-  onCanvasQuery?: (query: string, threadId: string) => void;
   onNavigateToPage?: (pageId: string) => void;
   onCreateCanvasPage?: (canvasData: any) => Promise<string>;
 }
@@ -23,179 +21,104 @@ export const CanvasBlock = ({
   isFocused, 
   workspace, 
   page,
-  onCanvasQuery,
   onNavigateToPage,
   onCreateCanvasPage
 }: CanvasBlockProps) => {
-  const canvasData = block.properties?.canvasData;
-  const [showNameEditor, setShowNameEditor] = useState(!canvasData?.threadName);
-  const [tempName, setTempName] = useState(canvasData?.threadName || '');
-  
-  // Canvas-specific blocks state
-  const [canvasBlocks, setCanvasBlocks] = useState<Block[]>([]);
-  const [focusedCanvasBlockId, setFocusedCanvasBlockId] = useState<string | null>(null);
+  // Simplified canvas data - just page reference and name
+  const canvasPageId = block.properties?.canvasPageId;
+  const threadName = block.content || block.properties?.threadName || '';
+  const [showNameEditor, setShowNameEditor] = useState(!threadName);
+  const [tempName, setTempName] = useState(threadName);
 
   useEffect(() => {
-    if (block.properties?.canvasData?.threadName) {
-      setTempName(block.properties.canvasData.threadName);
+    if (block.content) {
+      setTempName(block.content);
       setShowNameEditor(false);
     }
-  }, [block.properties?.canvasData?.threadName]);
+  }, [block.content]);
 
-  // Initialize canvas blocks from stored data or create initial block
-  useEffect(() => {
-    if (canvasData && canvasData.isExpanded) {
-      const storedBlocks = canvasData.blocks || [];
-      setCanvasBlocks(storedBlocks);
-      // Don't automatically create a block - let users see analysis results first
-      // and choose to add blocks when they want to
+  // Find the canvas page in workspace
+  const canvasPage = canvasPageId ? workspace.pages.find(p => p.id === canvasPageId) : null;
+
+  // Generate preview data dynamically from canvas page blocks
+  const generatePreview = () => {
+    if (!canvasPage || canvasPage.blocks.length === 0) {
+      return null;
     }
-  }, [canvasData?.isExpanded]);
+
+    const blocks = canvasPage.blocks;
+    
+    // Find different types of blocks for preview
+    const tableBlocks = blocks.filter(b => b.type === 'table');
+    const textBlocks = blocks.filter(b => b.type === 'text');
+    const quoteBlocks = blocks.filter(b => b.type === 'quote');
+    const headingBlocks = blocks.filter(b => b.type.startsWith('heading'));
+
+    // Generate summary from text/quote blocks
+    const summaryBlocks = [...textBlocks, ...quoteBlocks];
+    const summary = summaryBlocks.length > 0 
+      ? summaryBlocks[0].content.substring(0, 200) + (summaryBlocks[0].content.length > 200 ? '...' : '')
+      : 'Analysis completed successfully.';
+
+    // Generate stats
+    const stats = [
+      { label: 'BLOCKS', value: blocks.length.toString() },
+      { label: 'TABLES', value: tableBlocks.length.toString() },
+      { label: 'INSIGHTS', value: quoteBlocks.length.toString() },
+      { label: 'SECTIONS', value: headingBlocks.length.toString() }
+    ];
+
+    // Get table preview from first table block
+    let tablePreview = null;
+    if (tableBlocks.length > 0) {
+      const tableData = tableBlocks[0].properties?.tableData;
+      if (tableData) {
+        tablePreview = {
+          headers: tableData.headers || [],
+          rows: tableData.data?.slice(0, 3) || [],
+          totalRows: tableData.data?.length || 0
+        };
+      }
+    }
+
+    return {
+      summary,
+      stats,
+      tablePreview,
+      hasCharts: false // Could be enhanced later
+    };
+  };
+
+  const preview = generatePreview();
 
   // Initialize canvas if needed
   useEffect(() => {
-    if (!canvasData) {
-      // Create new canvas thread
-      const newCanvasData = {
-        threadId: `thread_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
-        threadName: '',
-        isExpanded: false,
-        workspaceId: workspace.id,
-        pageId: page.id,
-        blockId: block.id,
-        blocks: [] // Initialize empty blocks array
-      };
-
-      onUpdate({
-        properties: {
-          ...block.properties,
-          canvasData: newCanvasData
-        }
-      });
+    if (!canvasPageId && !threadName) {
       setShowNameEditor(true);
     }
-  }, [canvasData, workspace.id, page.id, block.id, onUpdate, block.properties]);
-
-  const updateCanvasBlocks = (newBlocks: Block[]) => {
-    if (!canvasData) return;
-    
-    onUpdate({
-      properties: {
-        ...block.properties,
-        canvasData: {
-          ...canvasData,
-          blocks: newBlocks
-        }
-      }
-    });
-  };
-
-  const handleCanvasBlockUpdate = (blockId: string, updates: Partial<Block>) => {
-    const newBlocks = canvasBlocks.map(b => 
-      b.id === blockId ? { ...b, ...updates } : b
-    );
-    setCanvasBlocks(newBlocks);
-    updateCanvasBlocks(newBlocks);
-  };
-
-  const handleAddCanvasBlock = (afterBlockId?: string) => {
-    const newBlock: Block = {
-      id: `canvas_block_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
-      type: 'text',
-      content: '',
-      order: canvasBlocks.length
-    };
-
-    let newBlocks;
-    if (afterBlockId) {
-      const afterIndex = canvasBlocks.findIndex(b => b.id === afterBlockId);
-      newBlocks = [
-        ...canvasBlocks.slice(0, afterIndex + 1),
-        newBlock,
-        ...canvasBlocks.slice(afterIndex + 1)
-      ];
-    } else {
-      newBlocks = [...canvasBlocks, newBlock];
-    }
-
-    // Update order numbers
-    newBlocks.forEach((block, index) => {
-      block.order = index;
-    });
-
-    setCanvasBlocks(newBlocks);
-    updateCanvasBlocks(newBlocks);
-    setFocusedCanvasBlockId(newBlock.id);
-    return newBlock.id;
-  };
-
-  const handleDeleteCanvasBlock = (blockId: string) => {
-    const blockIndex = canvasBlocks.findIndex(b => b.id === blockId);
-    const newBlocks = canvasBlocks.filter(b => b.id !== blockId);
-    
-    // Update order numbers
-    newBlocks.forEach((block, index) => {
-      block.order = index;
-    });
-
-    setCanvasBlocks(newBlocks);
-    updateCanvasBlocks(newBlocks);
-    
-    // Focus previous block if available
-    if (blockIndex > 0 && newBlocks.length > 0) {
-      setFocusedCanvasBlockId(newBlocks[blockIndex - 1].id);
-    } else if (newBlocks.length > 0) {
-      setFocusedCanvasBlockId(newBlocks[0].id);
-    } else {
-      setFocusedCanvasBlockId(null);
-    }
-  };
-
-  const handleMoveCanvasBlock = (blockId: string, newIndex: number) => {
-    const currentIndex = canvasBlocks.findIndex(b => b.id === blockId);
-    if (currentIndex === -1) return;
-
-    const newBlocks = [...canvasBlocks];
-    const [movedBlock] = newBlocks.splice(currentIndex, 1);
-    newBlocks.splice(newIndex, 0, movedBlock);
-
-    // Update order numbers
-    newBlocks.forEach((block, index) => {
-      block.order = index;
-    });
-
-    setCanvasBlocks(newBlocks);
-    updateCanvasBlocks(newBlocks);
-  };
+  }, [canvasPageId, threadName]);
 
   const openCanvasPage = async () => {
-    if (!canvasData) return;
-    
     // If canvas has an associated pageId, navigate to it
-    if (canvasData.canvasPageId) {
-      // First check if the page still exists
-      const targetPage = workspace.pages.find(p => p.id === canvasData.canvasPageId);
+    if (canvasPageId) {
+      // Check if the page still exists
+      const targetPage = workspace.pages.find(p => p.id === canvasPageId);
       
       if (targetPage) {
         // Page exists, navigate normally
-        onNavigateToPage?.(canvasData.canvasPageId);
+        onNavigateToPage?.(canvasPageId);
         return;
       } else {
         // Page was deleted - clear the broken reference and recreate
-        console.warn('Canvas page was deleted, recreating...', canvasData.canvasPageId);
+        console.warn('Canvas page was deleted, recreating...', canvasPageId);
         
         // Clear the broken reference
     onUpdate({
       properties: {
         ...block.properties,
-        canvasData: {
-          ...canvasData,
               canvasPageId: undefined
-        }
       }
     });
-        
-        // Fall through to creation logic below
       }
     }
     
@@ -203,7 +126,7 @@ export const CanvasBlock = ({
     if (onCreateCanvasPage) {
       try {
         const canvasPageId = await onCreateCanvasPage({
-          ...canvasData,
+          threadName: threadName || 'Canvas Analysis',
           parentPageId: page.id,
           parentBlockId: block.id
         });
@@ -212,10 +135,7 @@ export const CanvasBlock = ({
         onUpdate({
           properties: {
             ...block.properties,
-            canvasData: {
-              ...canvasData,
               canvasPageId: canvasPageId
-            }
           }
         });
         
@@ -228,17 +148,12 @@ export const CanvasBlock = ({
   };
 
   const updateThreadName = (newName: string) => {
-    if (!canvasData) return;
-    
     setTempName(newName);
     onUpdate({
       content: newName,
       properties: {
         ...block.properties,
-        canvasData: {
-          ...canvasData,
           threadName: newName
-        }
       }
     });
     setShowNameEditor(false);
@@ -248,7 +163,7 @@ export const CanvasBlock = ({
     if (tempName.trim()) {
       updateThreadName(tempName.trim());
     } else {
-      setTempName(canvasData?.threadName || '');
+      setTempName(threadName);
       setShowNameEditor(false);
     }
   };
@@ -258,27 +173,14 @@ export const CanvasBlock = ({
       e.preventDefault();
       handleNameSubmit();
     } else if (e.key === 'Escape') {
-      setTempName(canvasData?.threadName || '');
+      setTempName(threadName);
       setShowNameEditor(false);
     }
   };
 
   // Check if canvas page reference is broken
-  const isCanvasPageMissing = canvasData?.canvasPageId && 
-    !workspace.pages.find(p => p.id === canvasData.canvasPageId);
+  const isCanvasPageMissing = canvasPageId && !canvasPage;
 
-  if (!canvasData) {
-    return (
-      <div className="w-full p-4 border border-gray-200 rounded-lg bg-gray-50">
-        <div className="flex items-center gap-2 text-gray-500">
-          <BarChart3 className="h-4 w-4" />
-          <span className="text-sm">Initializing canvas...</span>
-        </div>
-      </div>
-    );
-  }
-
-  // Always show as collapsed preview - clicking opens dedicated page
     return (
       <div className="w-full canvas-block">
         <div 
@@ -321,7 +223,7 @@ export const CanvasBlock = ({
                   onChange={(e) => setTempName(e.target.value)}
                   onBlur={handleNameSubmit}
                   onKeyDown={handleKeyDown}
-                  placeholder="Name your canvas thread..."
+                placeholder="Name your canvas analysis..."
                   className="font-medium text-gray-900 bg-transparent border-none outline-none focus:ring-0 flex-1 min-w-0"
                   autoFocus
                   onClick={(e) => e.stopPropagation()}
@@ -334,7 +236,7 @@ export const CanvasBlock = ({
                     setShowNameEditor(true);
                   }}
                 >
-                  {canvasData.threadName || 'Untitled Canvas'}
+                {threadName || 'Untitled Canvas'}
                 </span>
               )}
             
@@ -347,7 +249,7 @@ export const CanvasBlock = ({
             
             <div className="flex items-center gap-2">
               <span className="text-xs text-gray-500 bg-white px-2 py-1 rounded">
-                Thread #{canvasData.threadId.split('_')[1]?.substr(0, 6) || 'new'}
+              Canvas
               </span>
             <Maximize2 className={cn(
               "h-4 w-4 transition-colors",
@@ -358,7 +260,7 @@ export const CanvasBlock = ({
           </div>
         </div>
 
-        {/* Preview Content - Show different content if page is missing */}
+        {/* Preview Content */}
         {isCanvasPageMissing ? (
           <div className="p-4 space-y-4">
             <div className="text-sm text-orange-700 bg-orange-100 p-3 rounded-lg border-l-4 border-orange-300">
@@ -369,25 +271,25 @@ export const CanvasBlock = ({
               <p>The dedicated page for this canvas was deleted. Click to recreate it and continue your analysis.</p>
             </div>
           </div>
-        ) : canvasData.preview ? (
+        ) : preview ? (
             <div className="p-4 space-y-4">
               {/* Summary */}
-              {canvasData.preview.summary && (
+            {preview.summary && (
                 <div className="text-sm text-gray-700 bg-blue-50 p-3 rounded-lg border-l-4 border-blue-200">
                   <div className="flex items-center gap-2 font-medium text-blue-900 mb-1">
                     <Eye className="h-4 w-4" />
-                    Summary
+                  Analysis Summary
                   </div>
                   <div className="prose prose-sm max-w-none text-sm text-gray-700">
-                    <ReactMarkdown children={canvasData.preview.summary} />
-                  </div>
+                  <ReactMarkdown children={preview.summary} />
+                </div>
                 </div>
               )}
 
               {/* Stats */}
-              {canvasData.preview.stats && canvasData.preview.stats.length > 0 && (
+            {preview.stats && preview.stats.length > 0 && (
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-                  {canvasData.preview.stats.map((stat, index) => (
+                {preview.stats.map((stat, index) => (
                     <div key={index} className="bg-white border border-gray-200 rounded-lg p-3 text-center">
                       <div className="text-xs text-gray-500 uppercase tracking-wide">{stat.label}</div>
                       <div className="text-lg font-semibold text-gray-900 mt-1">{stat.value}</div>
@@ -397,19 +299,19 @@ export const CanvasBlock = ({
               )}
 
               {/* Table Preview */}
-              {canvasData.preview.tablePreview && (
+            {preview.tablePreview && (
                 <div className="bg-white border border-gray-200 rounded-lg overflow-hidden">
                   <div className="bg-gray-50 px-3 py-2 border-b border-gray-200 flex items-center gap-2">
                     <Database className="h-4 w-4 text-gray-600" />
                     <span className="text-sm font-medium text-gray-700">
-                      Data Preview ({canvasData.preview.tablePreview.totalRows} rows)
+                    Data Preview ({preview.tablePreview.totalRows} rows)
                     </span>
                   </div>
                   <div className="overflow-x-auto">
                     <table className="w-full text-sm">
                       <thead className="bg-gray-50">
                         <tr>
-                          {canvasData.preview.tablePreview.headers.map((header, index) => (
+                        {preview.tablePreview.headers.map((header, index) => (
                             <th key={index} className="px-3 py-2 text-left font-medium text-gray-700 border-b border-gray-200">
                               {header}
                             </th>
@@ -417,7 +319,7 @@ export const CanvasBlock = ({
                         </tr>
                       </thead>
                       <tbody>
-                        {canvasData.preview.tablePreview.rows.slice(0, 3).map((row, rowIndex) => (
+                      {preview.tablePreview.rows.map((row, rowIndex) => (
                           <tr key={rowIndex} className="border-b border-gray-100">
                             {row.map((cell, cellIndex) => (
                               <td key={cellIndex} className="px-3 py-2 text-gray-900">
@@ -429,130 +331,43 @@ export const CanvasBlock = ({
                       </tbody>
                     </table>
                   </div>
-                  {canvasData.preview.tablePreview.rows.length > 3 && (
+                {preview.tablePreview.totalRows > 3 && (
                     <div className="bg-gray-50 px-3 py-2 text-xs text-gray-500 text-center">
-                      +{canvasData.preview.tablePreview.rows.length - 3} more rows
+                    +{preview.tablePreview.totalRows - 3} more rows
                     </div>
                   )}
                 </div>
               )}
-
-              {/* Charts Preview */}
-              {canvasData.preview.charts && canvasData.preview.charts.length > 0 && (
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                  {canvasData.preview.charts.map((chart, index) => (
-                    <div key={index} className="bg-white border border-gray-200 rounded-lg p-3">
-                      <div className="flex items-center gap-2 mb-2">
-                        <TrendingUp className="h-4 w-4 text-green-600" />
-                        <span className="text-sm font-medium text-gray-700">
-                          {chart.type.charAt(0).toUpperCase() + chart.type.slice(1)} Chart
-                        </span>
                       </div>
-                      <div className="h-24 bg-gray-50 rounded flex items-center justify-center text-xs text-gray-500">
-                        Chart preview ({chart.type})
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-          ) : canvasData.threadName ? (
-            // Show demo preview data for named canvases
+        ) : threadName ? (
+          // Show basic preview for named canvases without content yet
             <div className="p-4 space-y-4">
-              {/* Demo Summary */}
               <div className="text-sm text-gray-700 bg-blue-50 p-3 rounded-lg border-l-4 border-blue-200">
                 <div className="flex items-center gap-2 font-medium text-blue-900 mb-1">
                   <Eye className="h-4 w-4" />
-                  Analysis Summary
-                </div>
-                <p>This canvas contains data analysis results. Click to expand and see your queries, visualizations, and insights.</p>
+                Analysis Workspace
+              </div>
+              <p>This canvas is ready for analysis. Click to open the workspace and start building your analysis.</p>
               </div>
 
-              {/* Demo Stats */}
+            {/* Empty state stats */}
               <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
                 <div className="bg-white border border-gray-200 rounded-lg p-3 text-center">
-                  <div className="text-xs text-gray-500 uppercase tracking-wide">Queries</div>
-                  <div className="text-lg font-semibold text-gray-900 mt-1">3</div>
+                <div className="text-xs text-gray-500 uppercase tracking-wide">Blocks</div>
+                <div className="text-lg font-semibold text-gray-900 mt-1">0</div>
                 </div>
                 <div className="bg-white border border-gray-200 rounded-lg p-3 text-center">
-                  <div className="text-xs text-gray-500 uppercase tracking-wide">Results</div>
-                  <div className="text-lg font-semibold text-gray-900 mt-1">1.2k</div>
-                </div>
-                <div className="bg-white border border-gray-200 rounded-lg p-3 text-center">
-                  <div className="text-xs text-gray-500 uppercase tracking-wide">Charts</div>
-                  <div className="text-lg font-semibold text-gray-900 mt-1">2</div>
+                <div className="text-xs text-gray-500 uppercase tracking-wide">Tables</div>
+                <div className="text-lg font-semibold text-gray-900 mt-1">0</div>
                 </div>
                 <div className="bg-white border border-gray-200 rounded-lg p-3 text-center">
                   <div className="text-xs text-gray-500 uppercase tracking-wide">Insights</div>
-                  <div className="text-lg font-semibold text-gray-900 mt-1">5</div>
-                </div>
+                <div className="text-lg font-semibold text-gray-900 mt-1">0</div>
               </div>
-
-              {/* Demo Table Preview */}
-              <div className="bg-white border border-gray-200 rounded-lg overflow-hidden">
-                <div className="bg-gray-50 px-3 py-2 border-b border-gray-200 flex items-center gap-2">
-                  <Database className="h-4 w-4 text-gray-600" />
-                  <span className="text-sm font-medium text-gray-700">
-                    Latest Results (1,247 rows)
-                  </span>
-                </div>
-                <div className="overflow-x-auto">
-                  <table className="w-full text-sm">
-                    <thead className="bg-gray-50">
-                      <tr>
-                        <th className="px-3 py-2 text-left font-medium text-gray-700 border-b border-gray-200">Date</th>
-                        <th className="px-3 py-2 text-left font-medium text-gray-700 border-b border-gray-200">Revenue</th>
-                        <th className="px-3 py-2 text-left font-medium text-gray-700 border-b border-gray-200">Orders</th>
-                        <th className="px-3 py-2 text-left font-medium text-gray-700 border-b border-gray-200">Region</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      <tr className="border-b border-gray-100">
-                        <td className="px-3 py-2 text-gray-900">2024-01-15</td>
-                        <td className="px-3 py-2 text-gray-900">$12,450</td>
-                        <td className="px-3 py-2 text-gray-900">87</td>
-                        <td className="px-3 py-2 text-gray-900">North America</td>
-                      </tr>
-                      <tr className="border-b border-gray-100">
-                        <td className="px-3 py-2 text-gray-900">2024-01-14</td>
-                        <td className="px-3 py-2 text-gray-900">$9,280</td>
-                        <td className="px-3 py-2 text-gray-900">64</td>
-                        <td className="px-3 py-2 text-gray-900">Europe</td>
-                      </tr>
-                      <tr className="border-b border-gray-100">
-                        <td className="px-3 py-2 text-gray-900">2024-01-13</td>
-                        <td className="px-3 py-2 text-gray-900">$15,670</td>
-                        <td className="px-3 py-2 text-gray-900">103</td>
-                        <td className="px-3 py-2 text-gray-900">Asia Pacific</td>
-                      </tr>
-                    </tbody>
-                  </table>
-                </div>
-                <div className="bg-gray-50 px-3 py-2 text-xs text-gray-500 text-center">
-                  +1,244 more rows
-                </div>
+              <div className="bg-white border border-gray-200 rounded-lg p-3 text-center">
+                <div className="text-xs text-gray-500 uppercase tracking-wide">Status</div>
+                <div className="text-lg font-semibold text-gray-900 mt-1">Ready</div>
               </div>
-
-              {/* Demo Charts */}
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                <div className="bg-white border border-gray-200 rounded-lg p-3">
-                  <div className="flex items-center gap-2 mb-2">
-                    <TrendingUp className="h-4 w-4 text-green-600" />
-                    <span className="text-sm font-medium text-gray-700">Revenue Trend</span>
-                  </div>
-                  <div className="h-24 bg-gray-50 rounded flex items-center justify-center text-xs text-gray-500">
-                    📈 Line chart preview
-                  </div>
-                </div>
-                <div className="bg-white border border-gray-200 rounded-lg p-3">
-                  <div className="flex items-center gap-2 mb-2">
-                    <TrendingUp className="h-4 w-4 text-blue-600" />
-                    <span className="text-sm font-medium text-gray-700">Regional Distribution</span>
-                  </div>
-                  <div className="h-24 bg-gray-50 rounded flex items-center justify-center text-xs text-gray-500">
-                    🥧 Pie chart preview
-                  </div>
-                </div>
               </div>
             </div>
           ) : (
@@ -580,7 +395,7 @@ export const CanvasBlock = ({
                 setShowNameEditor(true);
               }}
             >
-              Rename Thread
+            Rename
             </Button>
           {isCanvasPageMissing ? (
             <Button

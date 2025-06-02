@@ -70,8 +70,39 @@ export const useWorkspace = () => {
   useEffect(() => {
     const loadWorkspace = async () => {
       try {
+        console.log('🔄 useWorkspace: Loading workspace from storage...');
         const savedWorkspace = await storageManager.getWorkspace('main');
         if (savedWorkspace) {
+          console.log('✅ useWorkspace: Workspace loaded from storage:', {
+            id: savedWorkspace.id,
+            name: savedWorkspace.name,
+            pagesCount: savedWorkspace.pages.length,
+            pages: savedWorkspace.pages.map(p => ({
+              id: p.id,
+              title: p.title,
+              blocksCount: p.blocks.length,
+              hasCanvasBlocks: p.blocks.some(b => b.properties?.isCanvasPage === true)
+            }))
+          });
+          
+          // Check for canvas pages specifically
+          const canvasPages = savedWorkspace.pages.filter(p => 
+            p.blocks.some(b => b.properties?.isCanvasPage === true)
+          );
+          
+          if (canvasPages.length > 0) {
+            console.log('🎨 useWorkspace: Found canvas pages:', canvasPages.map(p => ({
+              id: p.id,
+              title: p.title,
+              canvasBlocks: p.blocks.filter(b => b.properties?.isCanvasPage === true).map(b => ({
+                id: b.id,
+                type: b.type,
+                hasCanvasData: !!b.properties?.canvasData,
+                canvasDataKeys: b.properties?.canvasData ? Object.keys(b.properties.canvasData) : []
+              }))
+            })));
+          }
+          
           // Ensure all pages have their blocks sorted by order
           const workspaceWithSortedBlocks = {
             ...savedWorkspace,
@@ -84,10 +115,14 @@ export const useWorkspace = () => {
           setWorkspace(workspaceWithSortedBlocks);
           // Set current page to first page or saved current page
           const firstPageId = workspaceWithSortedBlocks.pages[0]?.id || 'default';
-          setCurrentPageId(localStorage.getItem('currentPageId') || firstPageId);
+          const currentPageIdFromStorage = localStorage.getItem('currentPageId') || firstPageId;
+          console.log('🎯 useWorkspace: Setting current page ID:', currentPageIdFromStorage);
+          setCurrentPageId(currentPageIdFromStorage);
+        } else {
+          console.log('⚠️ useWorkspace: No saved workspace found, using default');
         }
       } catch (error) {
-        console.warn('Failed to load workspace from storage:', error);
+        console.warn('❌ useWorkspace: Failed to load workspace from storage:', error);
       } finally {
         setIsLoaded(true);
       }
@@ -167,6 +202,20 @@ export const useWorkspace = () => {
       otherKeys: Object.keys(updates).filter(k => k !== 'blocks' && k !== 'title')
     });
     
+    // Debug canvas-specific data
+    if (updates.blocks) {
+      const canvasBlocks = updates.blocks.filter(b => b.properties?.isCanvasPage === true);
+      if (canvasBlocks.length > 0) {
+        console.log(`📄 useWorkspace: Canvas blocks being saved:`, canvasBlocks.map(b => ({
+          id: b.id,
+          type: b.type,
+          isCanvasPage: b.properties?.isCanvasPage,
+          hasCanvasData: !!b.properties?.canvasData,
+          canvasDataKeys: b.properties?.canvasData ? Object.keys(b.properties.canvasData) : []
+        })));
+      }
+    }
+    
     setWorkspace(prev => {
       const updatedWorkspace = {
         ...prev,
@@ -181,7 +230,8 @@ export const useWorkspace = () => {
       console.log(`📄 useWorkspace: Page after update:`, {
         pageId: updatedPage?.id,
         blocksCount: updatedPage?.blocks?.length,
-        title: updatedPage?.title
+        title: updatedPage?.title,
+        hasCanvasBlocks: updatedPage?.blocks?.some(b => b.properties?.isCanvasPage === true)
       });
       
       return updatedWorkspace;
@@ -433,5 +483,6 @@ export const useWorkspace = () => {
     deleteBlock,
     moveBlock,
     isLoaded, // New: indicates if data has been loaded from storage
+    setWorkspace, // Expose setWorkspace for direct workspace updates
   };
 };

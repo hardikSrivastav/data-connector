@@ -20,36 +20,57 @@ const Index = () => {
     updateBlock,
     addBlock,
     deleteBlock,
-    moveBlock
+    moveBlock,
+    isLoaded,
+    setWorkspace
   } = useWorkspace();
 
   // Create a dedicated canvas page
   const createCanvasPage = async (canvasData: any): Promise<string> => {
-    const newPage = await createPage(canvasData.threadName || 'Canvas Analysis');
+    console.log('🎨 createCanvasPage: Starting with canvasData:', canvasData);
     
-    // Update the new page with canvas-specific content and mark it as a canvas page
-    updatePage(newPage.id, {
+    const newPage = await createPage(canvasData.threadName || 'Canvas Analysis');
+    console.log('🎨 createCanvasPage: Created canvas page:', newPage);
+    
+    // Add an initial heading block to the canvas page
+    const headingBlock = {
+      id: `heading_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+      type: 'heading1' as const,
+      content: canvasData.threadName || 'Canvas Analysis',
+      order: 0
+    };
+    
+    // Update the page with the heading block and canvas icon
+    updatePage(newPage.id, { 
       title: canvasData.threadName || 'Canvas Analysis',
       icon: '🎨',
-      blocks: [{
-        id: `canvas_content_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
-        type: 'text' as const,
-        content: `# ${canvasData.threadName || 'Canvas Analysis'}\n\nThis is a dedicated workspace for your canvas analysis.`,
-        order: 0,
-        properties: {
-          isCanvasPage: true, // Mark this as a canvas page
-          canvasData: canvasData
-        }
-      }]
+      blocks: [headingBlock]
     });
 
+    console.log('🎨 createCanvasPage: Canvas page ready, returning ID:', newPage.id);
     return newPage.id;
   };
 
-  // Check if current page is a canvas page - only for dedicated canvas workspaces
-  const isCanvasPage = currentPage.blocks.some(block => 
-    block.properties?.isCanvasPage === true
+  // Check if current page is a canvas page - check if any CanvasBlock references this page
+  const isCanvasPage = workspace.pages.some(page => 
+    page.blocks.some(block => 
+      block.type === 'canvas' && 
+      block.properties?.canvasPageId === currentPageId
+    )
   );
+  
+  console.log('🎯 Index: Canvas page detection:', {
+    currentPageId,
+    currentPageTitle: currentPage.title,
+    currentPageBlocks: currentPage.blocks.length,
+    isCanvasPage,
+    canvasBlocksPointingHere: workspace.pages.flatMap(page => 
+      page.blocks.filter(block => 
+        block.type === 'canvas' && 
+        block.properties?.canvasPageId === currentPageId
+      )
+    )
+  });
 
   return (
     <div className="flex h-screen bg-white font-baskerville">
@@ -68,16 +89,27 @@ const Index = () => {
             page={currentPage}
             workspace={workspace}
             onNavigateBack={() => {
-              // Navigate back to the parent page or create a new regular page
-              const parentBlock = currentPage.blocks.find(block => block.properties?.canvasData?.parentPageId);
-              if (parentBlock?.properties?.canvasData?.parentPageId) {
-                setCurrentPageId(parentBlock.properties.canvasData.parentPageId);
+              // Navigate back to the parent page that contains the CanvasBlock referencing this page
+              const parentPage = workspace.pages.find(page => 
+                page.blocks.some(block => 
+                  block.type === 'canvas' && 
+                  block.properties?.canvasPageId === currentPageId
+                )
+              );
+              
+              if (parentPage) {
+                setCurrentPageId(parentPage.id);
               } else {
-                // If no parent, just create a new page or go to first available page
+                // If no parent found, go to first non-canvas page or create new one
                 if (workspace.pages.length > 1) {
                   const nonCanvasPage = workspace.pages.find(p => 
                     p.id !== currentPageId && 
-                    !p.blocks.some(b => b.properties?.isCanvasPage)
+                    !workspace.pages.some(page => 
+                      page.blocks.some(block => 
+                        block.type === 'canvas' && 
+                        block.properties?.canvasPageId === p.id
+                      )
+                    )
                   );
                   if (nonCanvasPage) {
                     setCurrentPageId(nonCanvasPage.id);
@@ -94,6 +126,9 @@ const Index = () => {
               }
             }}
             onUpdatePage={(updates) => updatePage(currentPageId, updates)}
+            onAddBlock={addBlock}
+            onUpdateBlock={updateBlock}
+            onDeleteBlock={deleteBlock}
           />
         ) : (
           <PageEditor

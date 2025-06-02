@@ -568,6 +568,16 @@ async def sync_changes(sync_request: SyncRequest, db: Session = Depends(get_db))
     for change in sync_request.changes:
         print(f"📝 Processing change: {change.type} {change.entity} {change.entityId}")
         
+        # Debug canvas-specific changes
+        if change.entity == "block" and change.data and isinstance(change.data, dict):
+            properties = change.data.get('properties', {})
+            if properties.get('isCanvasPage') == True:
+                print(f"🎨 CANVAS BLOCK DETECTED: {change.entityId}")
+                print(f"🎨 Canvas properties keys: {list(properties.keys())}")
+                if 'canvasData' in properties:
+                    canvas_data = properties['canvasData']
+                    print(f"🎨 Canvas data keys: {list(canvas_data.keys()) if isinstance(canvas_data, dict) else 'Not a dict'}")
+        
         # Check if this change already exists to avoid duplicates
         existing_change = db.query(ChangeDB).filter(ChangeDB.id == change.id).first()
         if existing_change:
@@ -744,4 +754,84 @@ async def debug_storage(db: Session = Depends(get_db)):
             "commits": analysis_commits,
             "progress_logs": progress_logs
         }
+    }
+
+@router.get("/storage/canvas-debug")
+async def debug_canvas_storage(db: Session = Depends(get_db)):
+    """Debug endpoint specifically for canvas blocks and their properties"""
+    # Get all blocks with properties
+    blocks_with_properties = db.query(BlockDB).filter(
+        BlockDB.properties != None,
+        BlockDB.properties != {}
+    ).all()
+    
+    # Get all blocks for detailed inspection
+    all_blocks = db.query(BlockDB).all()
+    detailed_blocks = []
+    
+    for block in all_blocks:
+        block_info = {
+            "id": block.id,
+            "page_id": block.page_id,
+            "type": block.type,
+            "content": block.content[:50],
+            "order": block.order,
+            "has_properties": block.properties is not None and block.properties != {},
+            "raw_properties": block.properties,  # Show the full properties object
+            "created_at": block.created_at.isoformat(),
+            "updated_at": block.updated_at.isoformat()
+        }
+        
+        # Analyze properties if they exist
+        if block.properties and isinstance(block.properties, dict):
+            block_info.update({
+                "properties_keys": list(block.properties.keys()),
+                "is_canvas_page": block.properties.get('isCanvasPage'),
+                "has_canvas_data": 'canvasData' in block.properties,
+                "canvas_data_keys": list(block.properties['canvasData'].keys()) if 'canvasData' in block.properties and isinstance(block.properties['canvasData'], dict) else []
+            })
+        
+        detailed_blocks.append(block_info)
+    
+    # Get canvas-specific blocks
+    canvas_blocks = []
+    for block in blocks_with_properties:
+        if block.properties and isinstance(block.properties, dict):
+            if block.properties.get('isCanvasPage') == True:
+                canvas_blocks.append({
+                    "id": block.id,
+                    "page_id": block.page_id,
+                    "type": block.type,
+                    "content": block.content[:100],
+                    "properties_keys": list(block.properties.keys()),
+                    "is_canvas_page": block.properties.get('isCanvasPage'),
+                    "has_canvas_data": 'canvasData' in block.properties,
+                    "canvas_data_keys": list(block.properties['canvasData'].keys()) if 'canvasData' in block.properties and isinstance(block.properties['canvasData'], dict) else [],
+                    "created_at": block.created_at.isoformat(),
+                    "updated_at": block.updated_at.isoformat()
+                })
+    
+    # Get all pages that might contain canvas blocks
+    pages_with_canvas = []
+    for page in db.query(PageDB).all():
+        page_canvas_blocks = [b for b in page.blocks if b.properties and b.properties.get('isCanvasPage') == True]
+        if page_canvas_blocks:
+            pages_with_canvas.append({
+                "id": page.id,
+                "title": page.title,
+                "canvas_blocks_count": len(page_canvas_blocks),
+                "canvas_block_ids": [b.id for b in page_canvas_blocks]
+            })
+    
+    return {
+        "summary": {
+            "total_blocks": len(all_blocks),
+            "blocks_with_properties": len(blocks_with_properties),
+            "canvas_blocks_count": len(canvas_blocks),
+            "pages_with_canvas": len(pages_with_canvas)
+        },
+        "all_blocks": detailed_blocks,
+        "canvas_blocks": canvas_blocks,
+        "pages_with_canvas": pages_with_canvas,
+        "block_types_summary": {block.type: len([b for b in all_blocks if b.type == block.type]) for block in all_blocks}
     } 
