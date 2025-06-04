@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Page, Workspace, Block } from '@/types';
 import { agentClient, AgentQueryResponse } from '@/lib/agent-client';
 import { 
@@ -23,6 +23,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { cn } from '@/lib/utils';
 import ReactMarkdown from 'react-markdown';
+import { TableDisplay } from './TableDisplay';
 
 interface CanvasWorkspaceProps {
   page: Page;
@@ -47,6 +48,138 @@ export const CanvasWorkspace = ({
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedView, setSelectedView] = useState<'analysis' | 'data' | 'history'>('analysis');
   const [isQueryRunning, setIsQueryRunning] = useState(false);
+
+  // Check if page is empty but has canvas data available, and populate it
+  useEffect(() => {
+    console.log('🎨 CanvasWorkspace: Checking if page needs population...');
+    console.log('🎨 CanvasWorkspace: Page blocks count:', page.blocks.length);
+    
+    // If page is empty or only has a basic heading, check for canvas data
+    const hasOnlyBasicContent = page.blocks.length <= 1 || 
+      (page.blocks.length === 1 && page.blocks[0].type === 'heading1');
+    
+    if (hasOnlyBasicContent) {
+      console.log('🎨 CanvasWorkspace: Page appears empty, looking for canvas data...');
+      
+      // Find the CanvasBlock that references this page
+      const canvasBlock = workspace.pages.flatMap(p => p.blocks).find(block => 
+        block.type === 'canvas' && 
+        block.properties?.canvasPageId === page.id &&
+        block.properties?.canvasData
+      );
+      
+      if (canvasBlock?.properties?.canvasData) {
+        console.log('🎯 CanvasWorkspace: Found canvas data, populating page...');
+        const canvasData = canvasBlock.properties.canvasData;
+        
+        // Build blocks from canvas data
+        const blocks = [];
+        let nextOrder = 0;
+        
+        // Add main heading (or keep existing if present)
+        const existingHeading = page.blocks.find(b => b.type === 'heading1');
+        if (existingHeading) {
+          blocks.push(existingHeading);
+          nextOrder = 1;
+        } else {
+          blocks.push({
+            id: `heading_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+            type: 'heading1' as const,
+            content: page.title || 'Canvas Analysis',
+            order: nextOrder++
+          });
+        }
+        
+        // Add analysis data if available
+        if (canvasData.fullAnalysis || canvasData.fullData || canvasData.sqlQuery) {
+          // Add timestamp section
+          const timestamp = new Date().toLocaleString();
+          blocks.push({
+            id: `heading_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+            type: 'heading2' as const,
+            content: `Analysis - ${timestamp}`,
+            order: nextOrder++
+          });
+          
+          // Add SQL query if available
+          if (canvasData.sqlQuery) {
+            blocks.push({
+              id: `query_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+              type: 'text' as const,
+              content: `**Query:** ${canvasData.sqlQuery}`,
+              order: nextOrder++
+            });
+          }
+          
+          // Add analysis if available
+          if (canvasData.fullAnalysis) {
+            blocks.push({
+              id: `analysis_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+              type: 'text' as const,
+              content: canvasData.fullAnalysis,
+              order: nextOrder++
+            });
+          }
+          
+          // Add data table if available
+          if (canvasData.fullData && canvasData.fullData.headers && canvasData.fullData.rows) {
+            blocks.push({
+              id: `table_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+              type: 'table' as const,
+              content: 'Query Results',
+              order: nextOrder++,
+              properties: {
+                tableData: {
+                  rows: canvasData.fullData.rows.length,
+                  cols: canvasData.fullData.headers.length,
+                  headers: canvasData.fullData.headers,
+                  data: canvasData.fullData.rows
+                }
+              }
+            });
+          }
+          
+          // Add key insights from analysis
+          if (canvasData.fullAnalysis) {
+            const insights = canvasData.fullAnalysis.split('\n').filter(line => 
+              line.toLowerCase().includes('insight') || 
+              line.toLowerCase().includes('finding') ||
+              line.toLowerCase().includes('trend') ||
+              line.toLowerCase().includes('pattern')
+            );
+            
+            insights.forEach(insight => {
+              if (insight.trim()) {
+                blocks.push({
+                  id: `insight_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+                  type: 'quote' as const,
+                  content: insight.trim(),
+                  order: nextOrder++
+                });
+              }
+            });
+          }
+          
+          // Add divider for future analyses
+          blocks.push({
+            id: `divider_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+            type: 'divider' as const,
+            content: '---',
+            order: nextOrder++
+          });
+          
+          console.log(`✅ CanvasWorkspace: Populating page with ${blocks.length} blocks from canvas data`);
+          
+          // Update the page with the populated blocks
+          onUpdatePage({ blocks });
+        }
+      } else {
+        console.log('📝 CanvasWorkspace: No canvas data found for this page');
+      }
+    } else {
+      console.log('✅ CanvasWorkspace: Page already has content, skipping population');
+    }
+  }, [page.id, page.blocks.length, workspace.pages, onUpdatePage]);
 
   // Get analysis data from page blocks
   const getAnalysisData = () => {
@@ -147,7 +280,7 @@ export const CanvasWorkspace = ({
           
           onUpdateBlock(tableId, {
             content: 'Query Results',
-            properties: {
+                properties: {
               tableData: {
                 rows: response.rows.length,
                 cols: headers.length,
@@ -278,7 +411,7 @@ export const CanvasWorkspace = ({
                       </div>
                         <div className="text-xs text-gray-500">
                           {new Date().toLocaleString()}
-                        </div>
+                      </div>
                       </div>
                     ))}
                   
@@ -407,62 +540,22 @@ export const CanvasWorkspace = ({
           {selectedView === 'data' && (
             <div className="max-w-6xl mx-auto">
               {analysisData.currentTable ? (
-              <div className="bg-white border border-gray-200 rounded-lg overflow-hidden">
-                <div className="bg-gray-50 px-6 py-4 border-b border-gray-200">
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-2">
-                      <Database className="h-5 w-5 text-gray-600" />
-                        <h3 className="font-medium">Latest Query Results</h3>
-                      <span className="text-sm text-gray-500">
-                          ({analysisData.currentTable.properties?.tableData?.data?.length || 0} rows)
-                      </span>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <Button size="sm" variant="outline">
-                        <Filter className="h-4 w-4 mr-2" />
-                        Filter
-                      </Button>
-                      <Button size="sm" variant="outline">
-                        <Download className="h-4 w-4 mr-2" />
-                        Download CSV
-                      </Button>
-                    </div>
-                  </div>
-                </div>
-                
-                <div className="overflow-x-auto">
-                    {analysisData.currentTable.properties?.tableData && (
-                  <table className="w-full">
-                    <thead className="bg-gray-50 border-b border-gray-200">
-                      <tr>
-                            {analysisData.currentTable.properties.tableData.headers?.map((header, index) => (
-                          <th key={index} className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                            {header}
-                          </th>
-                            ))}
-                      </tr>
-                    </thead>
-                    <tbody className="bg-white divide-y divide-gray-200">
-                          {analysisData.currentTable.properties.tableData.data?.slice(0, 50).map((row, rowIndex) => (
-                        <tr key={rowIndex} className="hover:bg-gray-50">
-                              {row.map((cell, cellIndex) => (
-                            <td key={cellIndex} className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                                    {typeof cell === 'string' && cell.length > 100 ? (
-                                <div className="max-w-md truncate" title={cell}>
-                                  {cell}
-                                </div>
-                              ) : (
-                                      String(cell || '')
-                              )}
-                            </td>
-                          ))}
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                    )}
-                  </div>
-                </div>
+              <TableDisplay
+                headers={analysisData.currentTable.properties?.tableData?.headers || []}
+                rows={analysisData.currentTable.properties?.tableData?.data || []}
+                totalRows={analysisData.currentTable.properties?.tableData?.data?.length || 0}
+                title="Latest Query Results"
+                showControls={true}
+                maxRows={50}
+                onDownload={() => {
+                  // TODO: Implement CSV download
+                  console.log('Download CSV');
+                }}
+                onFilter={() => {
+                  // TODO: Implement filtering
+                  console.log('Filter data');
+                }}
+              />
               ) : (
                 <div className="text-center py-12">
                   <Database className="h-12 w-12 text-gray-400 mx-auto mb-4" />

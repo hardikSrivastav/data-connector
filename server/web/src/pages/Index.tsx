@@ -32,22 +32,131 @@ const Index = () => {
     const newPage = await createPage(canvasData.threadName || 'Canvas Analysis');
     console.log('🎨 createCanvasPage: Created canvas page:', newPage);
     
-    // Add an initial heading block to the canvas page
-    const headingBlock = {
+    // Start with a heading block
+    const blocks = [];
+    let nextOrder = 0;
+    
+    // Add main heading
+    blocks.push({
       id: `heading_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
       type: 'heading1' as const,
       content: canvasData.threadName || 'Canvas Analysis',
-      order: 0
-    };
-    
-    // Update the page with the heading block and canvas icon
-    updatePage(newPage.id, { 
-      title: canvasData.threadName || 'Canvas Analysis',
-      icon: '🎨',
-      blocks: [headingBlock]
+      order: nextOrder++
     });
+    
+    // If we have AI query results from canvasData, populate the page with them
+    if (canvasData.fullAnalysis || canvasData.fullData || canvasData.sqlQuery) {
+      console.log('🎯 createCanvasPage: Found AI query results, populating canvas page...');
+      
+      // Add timestamp section
+      const timestamp = new Date().toLocaleString();
+      blocks.push({
+        id: `heading_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+        type: 'heading2' as const,
+        content: `Analysis - ${timestamp}`,
+        order: nextOrder++
+      });
+      
+      // Add SQL query if available
+      if (canvasData.sqlQuery) {
+        blocks.push({
+          id: `query_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+          type: 'text' as const,
+          content: `**Query:** ${canvasData.sqlQuery}`,
+          order: nextOrder++
+        });
+      }
+      
+      // Add analysis if available
+      if (canvasData.fullAnalysis) {
+        blocks.push({
+          id: `analysis_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+          type: 'text' as const,
+          content: canvasData.fullAnalysis,
+          order: nextOrder++
+        });
+      }
+      
+      // Add data table if available
+      if (canvasData.fullData && canvasData.fullData.headers && canvasData.fullData.rows) {
+        blocks.push({
+          id: `table_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+          type: 'table' as const,
+          content: 'Query Results',
+          order: nextOrder++,
+          properties: {
+            tableData: {
+              rows: canvasData.fullData.rows.length,
+              cols: canvasData.fullData.headers.length,
+              headers: canvasData.fullData.headers,
+              data: canvasData.fullData.rows
+            }
+          }
+        });
+      }
+      
+      // Add key insights from analysis if we can extract them
+      if (canvasData.fullAnalysis) {
+        const insights = canvasData.fullAnalysis.split('\n').filter(line => 
+          line.toLowerCase().includes('insight') || 
+          line.toLowerCase().includes('finding') ||
+          line.toLowerCase().includes('trend') ||
+          line.toLowerCase().includes('pattern')
+        );
+        
+        insights.forEach(insight => {
+          if (insight.trim()) {
+            blocks.push({
+              id: `insight_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+              type: 'quote' as const,
+              content: insight.trim(),
+              order: nextOrder++
+            });
+          }
+        });
+      }
+      
+      // Add divider for future analyses
+      blocks.push({
+        id: `divider_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+        type: 'divider' as const,
+        content: '---',
+        order: nextOrder++
+      });
+      
+      console.log(`✅ createCanvasPage: Populated canvas page with ${blocks.length} blocks from AI results`);
+    } else {
+      console.log('📝 createCanvasPage: No AI query results found, creating empty canvas page');
+    }
+    
+    // Use setWorkspace directly to ensure immediate state update and persistence
+    console.log('🔄 createCanvasPage: Updating workspace with populated canvas page...');
+    setWorkspace(prev => ({
+      ...prev,
+      pages: prev.pages.map(page => 
+        page.id === newPage.id 
+          ? { 
+              ...page, 
+              title: canvasData.threadName || 'Canvas Analysis',
+              icon: '🎨',
+              blocks: blocks,
+              updatedAt: new Date() 
+            }
+          : page
+      )
+    }));
+
+    // Add a small delay to ensure the workspace update is processed
+    await new Promise(resolve => setTimeout(resolve, 100));
 
     console.log('🎨 createCanvasPage: Canvas page ready, returning ID:', newPage.id);
+    console.log('🔍 createCanvasPage: Final blocks in canvas page:', blocks.map(b => ({
+      id: b.id,
+      type: b.type,
+      content: b.content?.substring(0, 50) || 'No content',
+      hasTableData: !!(b.properties?.tableData)
+    })));
+    
     return newPage.id;
   };
 

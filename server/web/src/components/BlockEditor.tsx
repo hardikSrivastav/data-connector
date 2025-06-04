@@ -397,31 +397,32 @@ export const BlockEditor = ({
   };
 
   const getClassName = () => {
-    const baseClasses = "w-full resize-none border-none outline-none bg-transparent font-baskerville overflow-hidden";
+    const baseClasses = "w-full resize-none border-none outline-none bg-transparent overflow-hidden";
     
     switch (block.type) {
       case 'heading1':
-        return `${baseClasses} text-3xl font-bold py-2`;
+        return `${baseClasses} text-3xl font-semibold py-2 leading-tight`;
       case 'heading2':
-        return `${baseClasses} text-2xl font-bold py-2`;
+        return `${baseClasses} text-2xl font-semibold py-2 leading-tight`;
       case 'heading3':
-        return `${baseClasses} text-xl font-bold py-1`;
+        return `${baseClasses} text-xl font-semibold py-1 leading-tight`;
       case 'bullet':
-        return `${baseClasses} pl-6 relative`;
+        return `${baseClasses} pl-6 relative leading-relaxed`;
       case 'numbered':
-        return `${baseClasses} pl-6 relative`;
+        return `${baseClasses} pl-6 relative leading-relaxed`;
       case 'quote':
-        return `${baseClasses} pl-4 border-l-4 border-gray-300 italic text-gray-600`;
+        return `${baseClasses} pl-4 border-l-3 border-gray-300 text-gray-600 leading-relaxed`;
       case 'code':
-        return `${baseClasses} font-mono text-sm bg-gray-100 p-3 rounded`;
+        return `${baseClasses} font-mono text-sm bg-gray-50/50 p-3 rounded-md leading-relaxed`;
       case 'divider':
         return `${baseClasses} text-center text-gray-400`;
       case 'table':
       case 'toggle':
       case 'subpage':
+      case 'canvas':
         return `${baseClasses} hidden`; // Hide textarea for custom components
       default:
-        return `${baseClasses} py-1`;
+        return `${baseClasses} py-1 leading-relaxed`;
     }
   };
 

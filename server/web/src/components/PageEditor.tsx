@@ -498,9 +498,9 @@ export const PageEditor = ({
     blockElements.forEach((blockElement) => {
       const blockRect = blockElement.getBoundingClientRect();
       
-      // Convert block position to container-relative coordinates
-      const blockLeft = blockRect.left - containerRect.left;
-      const blockTop = blockRect.top - containerRect.top;
+      // Convert block position to container-relative coordinates, accounting for scroll
+      const blockLeft = blockRect.left - containerRect.left + container.scrollLeft;
+      const blockTop = blockRect.top - containerRect.top + container.scrollTop;
       const blockRight = blockLeft + blockRect.width;
       const blockBottom = blockTop + blockRect.height;
 
@@ -1044,13 +1044,13 @@ export const PageEditor = ({
         
         <div className="max-w-4xl mx-auto p-8 pb-20 relative page-content-area min-h-screen"> {/* Added min-h-screen to ensure clickable space */}
           {/* Page Header with Emoji */}
-          <div className="mb-6 relative">
-            <div className="flex items-center gap-2 mb-4">
+          <div className="mb-8 relative">
+            <div className="flex items-center gap-3 mb-6">
               <div className="relative emoji-picker-container">
                 <Button
                   variant="ghost"
                   size="sm"
-                  className="h-12 w-12 p-0 text-4xl hover:bg-gray-100 rounded-md transition-colors"
+                  className="h-16 w-16 p-0 text-5xl hover:bg-gray-50/50 rounded-lg transition-colors"
                   onClick={() => setShowEmojiPicker(!showEmojiPicker)}
                 >
                   {page.icon || '📄'}

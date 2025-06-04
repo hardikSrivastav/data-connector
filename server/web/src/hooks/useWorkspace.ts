@@ -80,28 +80,9 @@ export const useWorkspace = () => {
             pages: savedWorkspace.pages.map(p => ({
               id: p.id,
               title: p.title,
-              blocksCount: p.blocks.length,
-              hasCanvasBlocks: p.blocks.some(b => b.properties?.isCanvasPage === true)
+              blocksCount: p.blocks.length
             }))
           });
-          
-          // Check for canvas pages specifically
-          const canvasPages = savedWorkspace.pages.filter(p => 
-            p.blocks.some(b => b.properties?.isCanvasPage === true)
-          );
-          
-          if (canvasPages.length > 0) {
-            console.log('🎨 useWorkspace: Found canvas pages:', canvasPages.map(p => ({
-              id: p.id,
-              title: p.title,
-              canvasBlocks: p.blocks.filter(b => b.properties?.isCanvasPage === true).map(b => ({
-                id: b.id,
-                type: b.type,
-                hasCanvasData: !!b.properties?.canvasData,
-                canvasDataKeys: b.properties?.canvasData ? Object.keys(b.properties.canvasData) : []
-              }))
-            })));
-          }
           
           // Ensure all pages have their blocks sorted by order
           const workspaceWithSortedBlocks = {
@@ -204,16 +185,7 @@ export const useWorkspace = () => {
     
     // Debug canvas-specific data
     if (updates.blocks) {
-      const canvasBlocks = updates.blocks.filter(b => b.properties?.isCanvasPage === true);
-      if (canvasBlocks.length > 0) {
-        console.log(`📄 useWorkspace: Canvas blocks being saved:`, canvasBlocks.map(b => ({
-          id: b.id,
-          type: b.type,
-          isCanvasPage: b.properties?.isCanvasPage,
-          hasCanvasData: !!b.properties?.canvasData,
-          canvasDataKeys: b.properties?.canvasData ? Object.keys(b.properties.canvasData) : []
-        })));
-      }
+      console.log(`📄 useWorkspace: ${updates.blocks.length} blocks being updated`);
     }
     
     setWorkspace(prev => {
@@ -230,8 +202,7 @@ export const useWorkspace = () => {
       console.log(`📄 useWorkspace: Page after update:`, {
         pageId: updatedPage?.id,
         blocksCount: updatedPage?.blocks?.length,
-        title: updatedPage?.title,
-        hasCanvasBlocks: updatedPage?.blocks?.some(b => b.properties?.isCanvasPage === true)
+        title: updatedPage?.title
       });
       
       return updatedWorkspace;

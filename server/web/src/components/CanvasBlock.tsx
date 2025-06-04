@@ -4,6 +4,7 @@ import { BarChart3, ChevronRight, Maximize2, Eye, Database, TrendingUp, Activity
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 import ReactMarkdown from 'react-markdown';
+import { TableDisplay } from './TableDisplay';
 
 interface CanvasBlockProps {
   block: Block;
@@ -40,12 +41,58 @@ export const CanvasBlock = ({
   // Find the canvas page in workspace
   const canvasPage = canvasPageId ? workspace.pages.find(p => p.id === canvasPageId) : null;
 
-  // Generate preview data dynamically from canvas page blocks
+  // Generate preview data dynamically from canvas page blocks OR canvas data
   const generatePreview = () => {
+    // First try to get preview from canvasData if available (for immediate display on reload)
+    const canvasData = block.properties?.canvasData;
+    if (canvasData && (canvasData.fullAnalysis || canvasData.fullData || canvasData.sqlQuery)) {
+      console.log('🎯 CanvasBlock: Generating preview from canvasData properties');
+      
+      // Use the existing preview data if available
+      if (canvasData.preview) {
+        return {
+          summary: canvasData.preview.summary,
+          stats: canvasData.preview.stats || [],
+          tablePreview: canvasData.preview.tablePreview,
+          hasCharts: !!(canvasData.preview.charts && canvasData.preview.charts.length > 0)
+        };
+      }
+      
+      // Otherwise generate preview from the canvas data
+      const summary = canvasData.fullAnalysis 
+        ? canvasData.fullAnalysis.substring(0, 200) + (canvasData.fullAnalysis.length > 200 ? '...' : '')
+        : 'Analysis completed successfully.';
+
+      const stats = [
+        { label: 'ANALYSIS', value: canvasData.fullAnalysis ? '1' : '0' },
+        { label: 'TABLES', value: canvasData.fullData ? '1' : '0' },
+        { label: 'QUERIES', value: canvasData.sqlQuery ? '1' : '0' },
+        { label: 'STATUS', value: 'Ready' }
+      ];
+
+      let tablePreview = null;
+      if (canvasData.fullData && canvasData.fullData.headers && canvasData.fullData.rows) {
+        tablePreview = {
+          headers: canvasData.fullData.headers,
+          rows: canvasData.fullData.rows.slice(0, 3),
+          totalRows: canvasData.fullData.rows.length
+        };
+      }
+
+      return {
+        summary,
+        stats,
+        tablePreview,
+        hasCharts: false
+      };
+    }
+    
+    // Fallback: try to read from canvas page blocks (for when page is already populated)
     if (!canvasPage || canvasPage.blocks.length === 0) {
       return null;
     }
 
+    console.log('🎯 CanvasBlock: Generating preview from canvas page blocks');
     const blocks = canvasPage.blocks;
     
     // Find different types of blocks for preview
@@ -128,7 +175,9 @@ export const CanvasBlock = ({
         const canvasPageId = await onCreateCanvasPage({
           threadName: threadName || 'Canvas Analysis',
           parentPageId: page.id,
-          parentBlockId: block.id
+          parentBlockId: block.id,
+          // Pass through any existing canvas data with AI query results
+          ...block.properties?.canvasData
         });
         
         // Store the canvas page reference in the block
@@ -282,7 +331,7 @@ export const CanvasBlock = ({
                   </div>
                   <div className="prose prose-sm max-w-none text-sm text-gray-700">
                   <ReactMarkdown children={preview.summary} />
-                </div>
+                  </div>
                 </div>
               )}
 
@@ -300,43 +349,14 @@ export const CanvasBlock = ({
 
               {/* Table Preview */}
             {preview.tablePreview && (
-                <div className="bg-white border border-gray-200 rounded-lg overflow-hidden">
-                  <div className="bg-gray-50 px-3 py-2 border-b border-gray-200 flex items-center gap-2">
-                    <Database className="h-4 w-4 text-gray-600" />
-                    <span className="text-sm font-medium text-gray-700">
-                    Data Preview ({preview.tablePreview.totalRows} rows)
-                    </span>
-                  </div>
-                  <div className="overflow-x-auto">
-                    <table className="w-full text-sm">
-                      <thead className="bg-gray-50">
-                        <tr>
-                        {preview.tablePreview.headers.map((header, index) => (
-                            <th key={index} className="px-3 py-2 text-left font-medium text-gray-700 border-b border-gray-200">
-                              {header}
-                            </th>
-                          ))}
-                        </tr>
-                      </thead>
-                      <tbody>
-                      {preview.tablePreview.rows.map((row, rowIndex) => (
-                          <tr key={rowIndex} className="border-b border-gray-100">
-                            {row.map((cell, cellIndex) => (
-                              <td key={cellIndex} className="px-3 py-2 text-gray-900">
-                                {cell}
-                              </td>
-                            ))}
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                {preview.tablePreview.totalRows > 3 && (
-                    <div className="bg-gray-50 px-3 py-2 text-xs text-gray-500 text-center">
-                    +{preview.tablePreview.totalRows - 3} more rows
-                    </div>
-                  )}
-                </div>
+                <TableDisplay
+                  headers={preview.tablePreview.headers}
+                  rows={preview.tablePreview.rows}
+                  totalRows={preview.tablePreview.totalRows}
+                  title="Data Preview"
+                  isPreview={true}
+                  maxRows={3}
+                />
               )}
                       </div>
         ) : threadName ? (
@@ -346,7 +366,7 @@ export const CanvasBlock = ({
                 <div className="flex items-center gap-2 font-medium text-blue-900 mb-1">
                   <Eye className="h-4 w-4" />
                 Analysis Workspace
-              </div>
+                </div>
               <p>This canvas is ready for analysis. Click to open the workspace and start building your analysis.</p>
               </div>
 
@@ -367,7 +387,7 @@ export const CanvasBlock = ({
               <div className="bg-white border border-gray-200 rounded-lg p-3 text-center">
                 <div className="text-xs text-gray-500 uppercase tracking-wide">Status</div>
                 <div className="text-lg font-semibold text-gray-900 mt-1">Ready</div>
-              </div>
+                </div>
               </div>
             </div>
           ) : (
