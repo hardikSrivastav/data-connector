@@ -85,13 +85,78 @@ export const useWorkspace = () => {
           });
           
           // Ensure all pages have their blocks sorted by order
-          const workspaceWithSortedBlocks = {
+          let workspaceWithSortedBlocks = {
             ...savedWorkspace,
             pages: savedWorkspace.pages.map(page => ({
               ...page,
               blocks: [...page.blocks].sort((a, b) => a.order - b.order)
             }))
           };
+          
+          // Clean up orphaned Canvas pages (pages that were referenced by Canvas blocks that no longer exist)
+          console.log('🧹 useWorkspace: Checking for orphaned Canvas pages...');
+          const allCanvasPageIds = new Set<string>();
+          
+          // Collect all canvas page IDs referenced by existing Canvas blocks
+          workspaceWithSortedBlocks.pages.forEach(page => {
+            page.blocks.forEach(block => {
+              if (block.type === 'canvas' && block.properties?.canvasPageId) {
+                allCanvasPageIds.add(block.properties.canvasPageId);
+              }
+            });
+          });
+          
+          // Find pages that might be orphaned Canvas pages
+          const orphanedCanvasPages: string[] = [];
+          workspaceWithSortedBlocks.pages.forEach(page => {
+            // A page is potentially orphaned if:
+            // 1. It's not referenced by any Canvas block
+            // 2. AND it has very little content (suggesting it was auto-generated)
+            // 3. AND its title suggests it was a Canvas page
+            if (!allCanvasPageIds.has(page.id)) {
+              const hasMinimalContent = page.blocks.length <= 2 && 
+                page.blocks.every(block => 
+                  block.type === 'heading1' || 
+                  block.type === 'divider' || 
+                  (block.type === 'text' && block.content.trim().length === 0)
+                );
+              
+              const hasCanvasTitle = page.title.toLowerCase().includes('canvas') || 
+                page.title.toLowerCase().includes('analysis') ||
+                page.icon === '🎨';
+              
+              if (hasMinimalContent && hasCanvasTitle) {
+                console.log('🗑️ useWorkspace: Found orphaned Canvas page:', {
+                  id: page.id,
+                  title: page.title,
+                  icon: page.icon,
+                  blocks: page.blocks.length
+                });
+                orphanedCanvasPages.push(page.id);
+              }
+            }
+          });
+          
+          // Remove orphaned Canvas pages
+          if (orphanedCanvasPages.length > 0) {
+            console.log(`🧹 useWorkspace: Removing ${orphanedCanvasPages.length} orphaned Canvas pages:`, orphanedCanvasPages);
+            workspaceWithSortedBlocks = {
+              ...workspaceWithSortedBlocks,
+              pages: workspaceWithSortedBlocks.pages.filter(page => !orphanedCanvasPages.includes(page.id))
+            };
+            
+            // Also delete them from storage
+            for (const pageId of orphanedCanvasPages) {
+              try {
+                await deletePageFromStorage(pageId);
+                console.log('✅ useWorkspace: Deleted orphaned Canvas page from storage:', pageId);
+              } catch (error) {
+                console.warn('⚠️ useWorkspace: Failed to delete orphaned Canvas page from storage:', pageId, error);
+              }
+            }
+          } else {
+            console.log('✅ useWorkspace: No orphaned Canvas pages found');
+          }
           
           setWorkspace(workspaceWithSortedBlocks);
           // Set current page to first page or saved current page
@@ -110,7 +175,7 @@ export const useWorkspace = () => {
     };
 
     loadWorkspace();
-  }, [storageManager]);
+  }, [storageManager, deletePageFromStorage]);
 
   // Save workspace changes automatically
   useEffect(() => {
@@ -393,6 +458,10 @@ export const useWorkspace = () => {
     console.log('useWorkspace deleteBlock called with:', blockId); // Debug log
     console.log('Current blocks before deletion:', currentPage.blocks.map(b => b.id)); // Debug log
     
+    // Find the block being deleted to check if it's a canvas block
+    const blockToDelete = currentPage.blocks.find(b => b.id === blockId);
+    console.log('Block to delete:', blockToDelete);
+    
     let updatedBlocks = currentPage.blocks.filter(block => block.id !== blockId);
     
     // If no blocks remain, add a default empty text block
@@ -413,6 +482,46 @@ export const useWorkspace = () => {
     
     console.log('Blocks after deletion:', updatedBlocks.map(b => b.id)); // Debug log
     updatePage(currentPageId, { blocks: updatedBlocks });
+    
+    // Special handling for canvas blocks - delete associated canvas page
+    if (blockToDelete?.type === 'canvas' && blockToDelete.properties?.canvasPageId) {
+      const canvasPageId = blockToDelete.properties.canvasPageId;
+      console.log('🎨 Canvas block detected - cleaning up associated canvas page:', canvasPageId);
+      
+      // Check if the canvas page exists
+      const canvasPageExists = workspace.pages.some(p => p.id === canvasPageId);
+      if (canvasPageExists) {
+        console.log('🗑️ Deleting associated canvas page:', canvasPageId);
+        
+        // Remove the canvas page from workspace
+        setWorkspace(prev => ({
+          ...prev,
+          pages: prev.pages.filter(page => page.id !== canvasPageId)
+        }));
+        
+        // Delete from storage
+        try {
+          await deletePageFromStorage(canvasPageId);
+          console.log('✅ Canvas page deleted from storage:', canvasPageId);
+        } catch (error) {
+          console.warn('⚠️ Failed to delete canvas page from storage:', error);
+        }
+        
+        // If we're currently viewing the canvas page that's being deleted, navigate away
+        if (currentPageId === canvasPageId) {
+          const remainingPages = workspace.pages.filter(p => p.id !== canvasPageId);
+          if (remainingPages.length > 0) {
+            setCurrentPageId(remainingPages[0].id);
+          } else {
+            // Create a new page if no pages remain
+            const newPage = await createPage('New Page');
+            setCurrentPageId(newPage.id);
+          }
+        }
+      } else {
+        console.log('📝 Canvas page does not exist or was already deleted:', canvasPageId);
+      }
+    }
     
     // Delete the block from storage properly
     try {

@@ -102,7 +102,15 @@ class ImplementationAgent:
         if source_type.lower() == "postgres":
             return postgres.PostgresAdapter(connection_info)
         elif source_type.lower() in ("mongodb", "mongo"):
-            return mongo.MongoAdapter(connection_info)
+            # MongoDB adapter expects URI as string, not dict
+            if isinstance(connection_info, dict):
+                uri = connection_info.get("uri", "")
+                if not uri:
+                    raise ValueError("MongoDB connection info missing URI")
+                return mongo.MongoAdapter(uri)
+            else:
+                # connection_info is already a URI string
+                return mongo.MongoAdapter(connection_info)
         elif source_type.lower() == "qdrant":
             return qdrant.QdrantAdapter(connection_info)
         elif source_type.lower() == "slack":
@@ -125,22 +133,84 @@ class ImplementationAgent:
         # Check cache first
         if source_id in self._adapter_cache:
             return self._adapter_cache[source_id]
+        
+        # Map collection/table-specific source IDs to database-level source IDs
+        mapped_source_id = self._map_source_id(source_id)
             
         # Get source info from registry
-        source_info = self.registry_client.get_source_by_id(source_id)
+        source_info = self.registry_client.get_source_by_id(mapped_source_id)
         if not source_info:
-            raise ValueError(f"Source {source_id} not found in registry")
+            raise ValueError(f"Source {mapped_source_id} not found in registry (original: {source_id})")
             
         # Create adapter
         source_type = source_info.get("type")
-        connection_info = source_info.get("connection_info", {})
         
-        adapter = self.get_adapter(source_type, connection_info)
+        # For MongoDB, pass the URI directly from source_info instead of connection_info
+        if source_type.lower() in ("mongodb", "mongo"):
+            uri = source_info.get("uri")
+            if not uri:
+                raise ValueError(f"MongoDB source {mapped_source_id} missing URI")
+            adapter = mongo.MongoAdapter(uri)
+        else:
+            # For other adapters, use connection_info
+            connection_info = source_info.get("connection_info", {})
+            adapter = self.get_adapter(source_type, connection_info)
         
-        # Cache adapter for reuse
+        # Cache adapter for reuse using both original and mapped IDs
         self._adapter_cache[source_id] = adapter
+        self._adapter_cache[mapped_source_id] = adapter
         
         return adapter
+    
+    def _map_source_id(self, source_id: str) -> str:
+        """
+        Map collection/table-specific source IDs to database-level source IDs.
+        
+        The planning agent generates specific source IDs like:
+        - mongodb:collection:virtual_products -> mongodb_main
+        - postgres:table:products -> postgres_main
+        
+        Args:
+            source_id: Original source ID from the planning agent
+            
+        Returns:
+            Mapped database-level source ID
+        """
+        # If it's already a simple database-level ID, return as-is
+        if ":" not in source_id:
+            return source_id
+        
+        # Parse the source_id format: {db_type}:{object_type}:{object_name}
+        parts = source_id.split(":")
+        if len(parts) >= 2:
+            db_type = parts[0]
+            
+            # Map to database-level source IDs based on known patterns
+            if db_type == "mongodb":
+                return "mongodb_main"
+            elif db_type == "postgres":
+                return "postgres_main"
+            elif db_type == "qdrant":
+                # Special case: qdrant might have collection-specific sources
+                if len(parts) >= 3:
+                    collection_name = parts[2]
+                    if collection_name in ["product_catalog", "products"]:
+                        return "qdrant_products"
+                    else:
+                        return "qdrant_main"
+                return "qdrant_main"
+            elif db_type == "slack":
+                return "slack_main"
+            elif db_type == "shopify":
+                return "shopify_main"
+            elif db_type == "ga4":
+                return "ga4_489665507"  # Or could be dynamically determined
+            else:
+                # For unknown types, try {db_type}_main
+                return f"{db_type}_main"
+        
+        # If we can't parse it, return the original
+        return source_id
     
     async def _execute_operation(
         self, 
@@ -178,58 +248,116 @@ class ImplementationAgent:
                     
                     # Execute operation with timeout
                     try:
-                        if operation.operation_type == "query":
+                        # Determine operation type from the operation class and content
+                        op_class_name = operation.__class__.__name__
+                        
+                        if op_class_name == "SqlOperation" or operation.operation_type == "query":
+                            # SQL operation - get the SQL query from the operation
+                            if hasattr(operation, 'sql_query'):
+                                sql_query = operation.sql_query
+                                params = getattr(operation, 'params', [])
+                            else:
+                                sql_query = operation.get_adapter_params().get("query", "")
+                                params = operation.get_adapter_params().get("params", [])
+                            
                             if dry_run:
                                 # For dry run, just validate the query
                                 result = await asyncio.wait_for(
-                                    adapter.validate_query(operation.parameters.get("query")),
+                                    adapter.validate_query(sql_query),
                                     timeout=self.operation_timeout_seconds
                                 )
                             else:
-                                # Execute the query
+                                # Execute the SQL query
                                 try:
-                                    # Try execute_query first (backward compatibility)
                                     if hasattr(adapter, 'execute_query'):
                                         result = await asyncio.wait_for(
-                                            adapter.execute_query(operation.parameters.get("query")),
+                                            adapter.execute_query(sql_query, params),
                                             timeout=self.operation_timeout_seconds
                                         )
                                     else:
-                                        # Fall back to execute
                                         result = await asyncio.wait_for(
-                                            adapter.execute(operation.parameters.get("query")),
+                                            adapter.execute(sql_query, params),
                                             timeout=self.operation_timeout_seconds
                                         )
                                 except asyncio.TimeoutError:
-                                    raise TimeoutError(f"Query execution timed out after {self.operation_timeout_seconds}s")
+                                    raise TimeoutError(f"SQL query execution timed out after {self.operation_timeout_seconds}s")
+                                    
+                        elif op_class_name == "MongoOperation":
+                            # MongoDB operation - get collection and query details
+                            adapter_params = operation.get_adapter_params()
+                            collection = adapter_params.get("collection")
+                            pipeline = adapter_params.get("pipeline", [])
+                            query = adapter_params.get("query", {})
+                            projection = adapter_params.get("projection", {})
+                            
+                            if dry_run:
+                                # For dry run, just validate the collection exists
+                                result = {"valid": True, "collection": collection}
+                            else:
+                                # Execute the MongoDB operation
+                                try:
+                                    if pipeline:
+                                        # Use aggregation pipeline
+                                        result = await asyncio.wait_for(
+                                            adapter.aggregate(collection, pipeline),
+                                            timeout=self.operation_timeout_seconds
+                                        )
+                                    else:
+                                        # Use find query
+                                        result = await asyncio.wait_for(
+                                            adapter.find(collection, query, projection),
+                                            timeout=self.operation_timeout_seconds
+                                        )
+                                except asyncio.TimeoutError:
+                                    raise TimeoutError(f"MongoDB operation timed out after {self.operation_timeout_seconds}s")
+                                    
+                        elif op_class_name == "QdrantOperation":
+                            # Qdrant operation - get vector search details
+                            adapter_params = operation.get_adapter_params()
+                            collection = adapter_params.get("collection")
+                            vector_query = adapter_params.get("vector_query", [])
+                            filter_conditions = adapter_params.get("filter", {})
+                            top_k = adapter_params.get("top_k", 10)
+                            
+                            if dry_run:
+                                result = {"valid": True, "collection": collection}
+                            else:
+                                try:
+                                    result = await asyncio.wait_for(
+                                        adapter.search(collection, vector_query, filter_conditions, top_k),
+                                        timeout=self.operation_timeout_seconds
+                                    )
+                                except asyncio.TimeoutError:
+                                    raise TimeoutError(f"Qdrant operation timed out after {self.operation_timeout_seconds}s")
+                                    
                         elif operation.operation_type == "count":
                             result = await asyncio.wait_for(
                                 adapter.count_records(
-                                    operation.parameters.get("table"),
-                                    operation.parameters.get("filter")
+                                    operation.get_adapter_params().get("table"),
+                                    operation.get_adapter_params().get("filter")
                                 ),
                                 timeout=self.operation_timeout_seconds
                             )
                         elif operation.operation_type == "aggregate":
                             result = await asyncio.wait_for(
                                 adapter.aggregate(
-                                    operation.parameters.get("table"),
-                                    operation.parameters.get("aggregations"),
-                                    operation.parameters.get("filter")
+                                    operation.get_adapter_params().get("table"),
+                                    operation.get_adapter_params().get("aggregations"),
+                                    operation.get_adapter_params().get("filter")
                                 ),
                                 timeout=self.operation_timeout_seconds
                             )
                         elif operation.operation_type == "search":
                             result = await asyncio.wait_for(
                                 adapter.search(
-                                    operation.parameters.get("table"),
-                                    operation.parameters.get("query"),
-                                    operation.parameters.get("fields")
+                                    operation.get_adapter_params().get("table"),
+                                    operation.get_adapter_params().get("query"),
+                                    operation.get_adapter_params().get("fields")
                                 ),
                                 timeout=self.operation_timeout_seconds
                             )
                         else:
-                            logger.warning(f"Unsupported operation type: {operation.operation_type}")
+                            logger.warning(f"Unsupported operation type: {operation.operation_type} (class: {op_class_name})")
                             result = {"error": f"Unsupported operation type: {operation.operation_type}"}
                     except asyncio.TimeoutError:
                         # Handle timeout

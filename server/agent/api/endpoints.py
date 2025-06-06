@@ -10,8 +10,16 @@ import traceback
 from ..db.db_orchestrator import Orchestrator
 from ..config.settings import Settings
 from ..llm.client import get_llm_client
-from ..meta.ingest import SchemaSearcher, ensure_index_exists
+from ..meta.ingest import SchemaSearcher, ensure_index_exists, build_and_save_index_for_db
 from ..performance.schema_monitor import ensure_schema_index_updated
+
+# Import the enhanced cross-database query engine
+from ..db.execute import query_engine, process_ai_query
+
+# Import cross-database components
+from ..db.classifier import DatabaseClassifier
+from ..db.orchestrator.cross_db_agent import CrossDatabaseAgent
+from ..tools.state_manager import StateManager
 
 # Set up logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
@@ -26,15 +34,51 @@ class QueryRequest(BaseModel):
     analyze: bool = False
     db_type: Optional[str] = None
     db_uri: Optional[str] = None
+    cross_database: bool = False
+    optimize: bool = False
+    save_session: bool = True
+
+class CrossDatabaseQueryRequest(BaseModel):
+    question: str
+    analyze: bool = False
+    optimize: bool = False
+    save_session: bool = True
+    dry_run: bool = False
+
+class ClassifyRequest(BaseModel):
+    question: str
+    threshold: float = 0.3
 
 class QueryResponse(BaseModel):
     rows: List[Dict[str, Any]]
     sql: str
     analysis: Optional[str] = None
+    success: bool = True
+    session_id: Optional[str] = None
+    plan_info: Optional[Dict[str, Any]] = None
+    execution_summary: Optional[Dict[str, Any]] = None
+
+class ClassifyResponse(BaseModel):
+    question: str
+    sources: List[Dict[str, Any]]
+    reasoning: str
+    is_cross_database: bool
+    error: Optional[str] = None
 
 class HealthResponse(BaseModel):
     status: str
     message: Optional[str] = None
+
+class SessionResponse(BaseModel):
+    sessions: List[Dict[str, Any]]
+
+class SessionDetailResponse(BaseModel):
+    session_id: str
+    user_question: str
+    start_time: float
+    final_analysis: Optional[str] = None
+    generated_queries: List[Dict[str, Any]]
+    executed_tools: List[Dict[str, Any]]
 
 def sanitize_sql(sql: str) -> str:
     """Basic SQL sanitization"""
@@ -91,71 +135,40 @@ async def health_check():
 @router.post("/query", response_model=QueryResponse)
 async def query(request: QueryRequest):
     """
-    Query endpoint for natural language to SQL translation using real database connections
+    Enhanced query endpoint supporting both single-database and cross-database operations
     
     Args:
-        request: QueryRequest containing the question, analyze flag, and optional db settings
+        request: QueryRequest containing the question, analyze flag, and optional settings
         
     Returns:
         QueryResponse containing the results, SQL query, and optional analysis
     """
-    logger.info(f"🚀 API ENDPOINT: /query - Processing request")
-    logger.info(f"📥 Request received: question='{request.question}', analyze={request.analyze}")
+    logger.info(f"🚀 API ENDPOINT: /query - Processing enhanced request")
+    logger.info(f"📥 Request received: question='{request.question}', analyze={request.analyze}, cross_database={request.cross_database}")
     
     try:
-        settings = Settings()
+        # Use the enhanced process_ai_query function
+        result = await process_ai_query(
+            question=request.question,
+            analyze=request.analyze,
+            db_type=request.db_type,
+            db_uri=request.db_uri,
+            cross_database=request.cross_database
+        )
         
-        # Determine database type and URI
-        db_type = request.db_type or settings.DB_TYPE
-        db_uri = request.db_uri or settings.connection_uri
-        
-        logger.info(f"🔄 Using database: type={db_type}, uri={db_uri[:50]}...")
-        
-        # Create orchestrator for the specified database
-        orchestrator = Orchestrator(db_uri, db_type=db_type)
-        
-        # Test connection
-        if not await orchestrator.test_connection():
-            logger.error("❌ Database connection failed")
-            raise HTTPException(status_code=500, detail="Database connection failed")
-        
-        # Ensure schema index exists
-        try:
-            await ensure_index_exists(db_type=db_type, conn_uri=db_uri)
-            await ensure_schema_index_updated(force=False, db_type=db_type, conn_uri=db_uri)
-        except Exception as schema_error:
-            logger.warning(f"⚠️ Schema index setup failed: {schema_error}")
-            # Continue anyway, as the query might still work
-        
-        # Get LLM client
-        llm = get_llm_client()
-        
-        # Execute query based on database type
-        if db_type.lower() in ["postgres", "postgresql"]:
-            result = await execute_postgres_query(llm, request.question, request.analyze, orchestrator, db_type)
-        elif db_type.lower() == "mongodb":
-            result = await execute_mongodb_query(llm, request.question, request.analyze, orchestrator, db_type)
-        elif db_type.lower() == "qdrant":
-            result = await execute_qdrant_query(llm, request.question, request.analyze, orchestrator, db_type)
-        elif db_type.lower() == "slack":
-            result = await execute_slack_query(llm, request.question, request.analyze, orchestrator, db_type)
-        elif db_type.lower() == "shopify":
-            result = await execute_shopify_query(llm, request.question, request.analyze, orchestrator, db_type)
-        elif db_type.lower() == "ga4":
-            result = await execute_ga4_query(llm, request.question, request.analyze, orchestrator, db_type)
-        else:
-            logger.error(f"❌ Unsupported database type: {db_type}")
-            raise HTTPException(status_code=400, detail=f"Unsupported database type: {db_type}")
-        
-        # Build response
+        # Build response from result
         response = QueryResponse(
             rows=result.get("rows", []),
             sql=result.get("sql", "-- No SQL generated"),
-            analysis=result.get("analysis") if request.analyze else None
+            analysis=result.get("analysis") if request.analyze else None,
+            success=result.get("success", True),
+            session_id=result.get("session_id"),
+            plan_info=result.get("plan_info"),
+            execution_summary=result.get("execution_summary")
         )
         
         logger.info(f"✅ Query processed successfully")
-        logger.info(f"📤 Returning response: rows={len(response.rows)}, sql_length={len(response.sql)}")
+        logger.info(f"📤 Returning response: rows={len(response.rows)}, success={response.success}")
         
         return response
         
@@ -168,8 +181,244 @@ async def query(request: QueryRequest):
         logger.error(f"❌ Traceback: {traceback.format_exc()}")
         raise HTTPException(status_code=500, detail=f"Query execution failed: {str(e)}")
 
+@router.post("/cross-database-query", response_model=QueryResponse)
+async def cross_database_query(request: CrossDatabaseQueryRequest):
+    """
+    Dedicated endpoint for cross-database queries with planning and orchestration
+    
+    Args:
+        request: CrossDatabaseQueryRequest with cross-database specific options
+        
+    Returns:
+        QueryResponse with cross-database execution results
+    """
+    logger.info(f"🌐 API ENDPOINT: /cross-database-query - Processing cross-database request")
+    logger.info(f"📥 Request: question='{request.question}', optimize={request.optimize}, dry_run={request.dry_run}")
+    
+    try:
+        if request.dry_run:
+            # For dry run, only create and validate the plan
+            cross_db_agent = CrossDatabaseAgent()
+            result = await cross_db_agent.execute_query(
+                request.question, 
+                optimize_plan=request.optimize, 
+                dry_run=True
+            )
+            
+            # Extract plan information
+            plan_info = None
+            if "plan" in result:
+                plan = result["plan"]
+                plan_info = {
+                    "plan_id": plan.id,
+                    "operations": [
+                        {
+                            "id": op.id,
+                            "type": op.metadata.get("operation_type", "unknown"),
+                            "source_id": op.source_id,
+                            "depends_on": op.depends_on
+                        }
+                        for op in plan.operations
+                    ],
+                    "validation": result.get("validation", {})
+                }
+            
+            response = QueryResponse(
+                rows=[{"message": "Dry run completed - plan generated but not executed"}],
+                sql=f"-- Dry run plan: {json.dumps(plan_info, indent=2) if plan_info else 'No plan generated'}",
+                analysis="Plan generated successfully. Use dry_run=false to execute." if request.analyze else None,
+                success=result.get("plan") is not None,
+                plan_info=plan_info
+            )
+        else:
+            # Execute the cross-database query
+            result = await query_engine.execute_cross_database_query(
+                request.question,
+                analyze=request.analyze,
+                optimize=request.optimize,
+                save_session=request.save_session
+            )
+            
+            response = QueryResponse(
+                rows=result.get("rows", []),
+                sql=result.get("sql", "-- Cross-database query"),
+                analysis=result.get("analysis") if request.analyze else None,
+                success=result.get("success", True),
+                session_id=result.get("session_id"),
+                plan_info=result.get("plan_info"),
+                execution_summary=result.get("execution_summary")
+            )
+        
+        logger.info(f"✅ Cross-database query processed: success={response.success}")
+        return response
+        
+    except Exception as e:
+        logger.error(f"❌ Error in cross-database query: {str(e)}")
+        logger.error(f"❌ Traceback: {traceback.format_exc()}")
+        raise HTTPException(status_code=500, detail=f"Cross-database query failed: {str(e)}")
+
+@router.post("/classify", response_model=ClassifyResponse)
+async def classify_query(request: ClassifyRequest):
+    """
+    Classify which databases are relevant for a given question
+    
+    Args:
+        request: ClassifyRequest with question and threshold
+        
+    Returns:
+        ClassifyResponse with relevant databases and reasoning
+    """
+    logger.info(f"🔍 API ENDPOINT: /classify - Classifying query")
+    logger.info(f"📥 Request: question='{request.question}', threshold={request.threshold}")
+    
+    try:
+        # Use the query engine's classification
+        classification = await query_engine.classify_query(request.question)
+        
+        response = ClassifyResponse(
+            question=classification.get("question", request.question),
+            sources=classification.get("sources", []),
+            reasoning=classification.get("reasoning", ""),
+            is_cross_database=classification.get("is_cross_database", False),
+            error=classification.get("error")
+        )
+        
+        logger.info(f"✅ Classification completed: {len(response.sources)} sources, cross_db={response.is_cross_database}")
+        return response
+        
+    except Exception as e:
+        logger.error(f"❌ Error in classification: {str(e)}")
+        logger.error(f"❌ Traceback: {traceback.format_exc()}")
+        raise HTTPException(status_code=500, detail=f"Classification failed: {str(e)}")
+
+@router.get("/sessions", response_model=SessionResponse)
+async def list_sessions(limit: int = 10):
+    """
+    List recent analysis sessions
+    
+    Args:
+        limit: Maximum number of sessions to return
+        
+    Returns:
+        List of recent sessions
+    """
+    logger.info(f"📋 API ENDPOINT: /sessions - Listing sessions (limit={limit})")
+    
+    try:
+        state_manager = StateManager()
+        sessions = await state_manager.list_sessions(limit=limit)
+        
+        response = SessionResponse(sessions=sessions)
+        
+        logger.info(f"✅ Listed {len(sessions)} sessions")
+        return response
+        
+    except Exception as e:
+        logger.error(f"❌ Error listing sessions: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to list sessions: {str(e)}")
+
+@router.get("/sessions/{session_id}", response_model=SessionDetailResponse)
+async def get_session(session_id: str):
+    """
+    Get details for a specific session
+    
+    Args:
+        session_id: ID of the session to retrieve
+        
+    Returns:
+        Detailed session information
+    """
+    logger.info(f"📄 API ENDPOINT: /sessions/{session_id} - Getting session details")
+    
+    try:
+        state_manager = StateManager()
+        state = await state_manager.get_state(session_id)
+        
+        if not state:
+            raise HTTPException(status_code=404, detail=f"Session {session_id} not found")
+        
+        response = SessionDetailResponse(
+            session_id=session_id,
+            user_question=state.user_question,
+            start_time=state.start_time,
+            final_analysis=state.final_analysis,
+            generated_queries=state.generated_queries,
+            executed_tools=state.executed_tools
+        )
+        
+        logger.info(f"✅ Retrieved session details for {session_id}")
+        return response
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"❌ Error getting session: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to get session: {str(e)}")
+
+@router.delete("/sessions/{session_id}")
+async def delete_session(session_id: str):
+    """
+    Delete a specific session
+    
+    Args:
+        session_id: ID of the session to delete
+        
+    Returns:
+        Success message
+    """
+    logger.info(f"🗑️ API ENDPOINT: DELETE /sessions/{session_id} - Deleting session")
+    
+    try:
+        state_manager = StateManager()
+        
+        # Check if session exists
+        state = await state_manager.get_state(session_id)
+        if not state:
+            raise HTTPException(status_code=404, detail=f"Session {session_id} not found")
+        
+        # Delete the session (implementation depends on StateManager)
+        # This might need to be implemented in StateManager
+        success = await state_manager.delete_session(session_id)
+        
+        if success:
+            logger.info(f"✅ Session {session_id} deleted successfully")
+            return {"message": f"Session {session_id} deleted successfully"}
+        else:
+            raise HTTPException(status_code=500, detail=f"Failed to delete session {session_id}")
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"❌ Error deleting session: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to delete session: {str(e)}")
+
+@router.post("/sessions/cleanup")
+async def cleanup_sessions(max_age_hours: int = 24):
+    """
+    Clean up old sessions
+    
+    Args:
+        max_age_hours: Maximum age of sessions to keep
+        
+    Returns:
+        Number of sessions cleaned up
+    """
+    logger.info(f"🧹 API ENDPOINT: /sessions/cleanup - Cleaning up sessions older than {max_age_hours} hours")
+    
+    try:
+        state_manager = StateManager()
+        cleaned = await state_manager.cleanup_old_sessions(max_age_hours=max_age_hours)
+        
+        logger.info(f"✅ Cleaned up {cleaned} old sessions")
+        return {"message": f"Cleaned up {cleaned} old sessions", "cleaned_count": cleaned}
+        
+    except Exception as e:
+        logger.error(f"❌ Error cleaning up sessions: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to cleanup sessions: {str(e)}")
+
+# Keep the legacy endpoints for backward compatibility
 async def execute_postgres_query(llm, question: str, analyze: bool, orchestrator: Orchestrator, db_type: str) -> Dict[str, Any]:
-    """Execute a PostgreSQL query"""
+    """Execute a PostgreSQL query (legacy)"""
     logger.info(f"🐘 Executing PostgreSQL query: {question}")
     
     try:
@@ -211,7 +460,7 @@ async def execute_postgres_query(llm, question: str, analyze: bool, orchestrator
         }
 
 async def execute_mongodb_query(llm, question: str, analyze: bool, orchestrator: Orchestrator, db_type: str) -> Dict[str, Any]:
-    """Execute a MongoDB query"""
+    """Execute a MongoDB query (legacy)"""
     logger.info(f"🍃 Executing MongoDB query: {question}")
     
     try:
@@ -258,7 +507,7 @@ async def execute_mongodb_query(llm, question: str, analyze: bool, orchestrator:
         }
 
 async def execute_qdrant_query(llm, question: str, analyze: bool, orchestrator: Orchestrator, db_type: str) -> Dict[str, Any]:
-    """Execute a Qdrant vector search query"""
+    """Execute a Qdrant vector search query (legacy)"""
     logger.info(f"🔍 Executing Qdrant query: {question}")
     
     try:
@@ -300,7 +549,7 @@ async def execute_qdrant_query(llm, question: str, analyze: bool, orchestrator: 
         }
 
 async def execute_slack_query(llm, question: str, analyze: bool, orchestrator: Orchestrator, db_type: str) -> Dict[str, Any]:
-    """Execute a Slack query"""
+    """Execute a Slack query (legacy)"""
     logger.info(f"💬 Executing Slack query: {question}")
     
     try:
@@ -333,7 +582,7 @@ async def execute_slack_query(llm, question: str, analyze: bool, orchestrator: O
         }
 
 async def execute_shopify_query(llm, question: str, analyze: bool, orchestrator: Orchestrator, db_type: str) -> Dict[str, Any]:
-    """Execute a Shopify query"""
+    """Execute a Shopify query (legacy)"""
     logger.info(f"🛍️ Executing Shopify query: {question}")
     
     try:
@@ -366,7 +615,7 @@ async def execute_shopify_query(llm, question: str, analyze: bool, orchestrator:
         }
 
 async def execute_ga4_query(llm, question: str, analyze: bool, orchestrator: Orchestrator, db_type: str) -> Dict[str, Any]:
-    """Execute a GA4 query"""
+    """Execute a GA4 query (legacy)"""
     logger.info(f"📊 Executing GA4 query: {question}")
     
     try:
@@ -409,8 +658,9 @@ async def test_real_connection():
         settings = Settings()
         
         test_queries = [
-            {"question": "Show me recent users", "analyze": True, "db_type": "postgres"},
-            {"question": "How many records are in the database?", "analyze": True, "db_type": "postgres"}
+            {"question": "Show me recent users", "analyze": True, "cross_database": False},
+            {"question": "How many records are in the database?", "analyze": True, "cross_database": False},
+            {"question": "Compare data across all databases", "analyze": True, "cross_database": True}
         ]
         
         logger.info(f"🧪 Running {len(test_queries)} test queries")
@@ -419,30 +669,44 @@ async def test_real_connection():
         for i, test_query in enumerate(test_queries):
             logger.info(f"🧪 Test {i+1}/{len(test_queries)}: '{test_query['question']}'")
             
-            # Create a test request
-            request = QueryRequest(
-                question=test_query["question"],
-                analyze=test_query["analyze"],
-                db_type=test_query.get("db_type")
-            )
-            
-            # Execute the query
-            result = await query(request)
-            
-            logger.info(f"🧪 Test {i+1} result: {len(result.rows)} rows")
-            results.append({
-                "query": test_query["question"],
-                "response": {
-                    "rows": result.rows,
-                    "sql": result.sql,
-                    "analysis": result.analysis
-                }
-            })
+            try:
+                # Use the enhanced process_ai_query function
+                result = await process_ai_query(
+                    question=test_query["question"],
+                    analyze=test_query["analyze"],
+                    cross_database=test_query.get("cross_database", False)
+                )
+                
+                logger.info(f"🧪 Test {i+1} result: {len(result.get('rows', []))} rows, success={result.get('success', False)}")
+                results.append({
+                    "query": test_query["question"],
+                    "success": result.get("success", False),
+                    "response": {
+                        "rows": result.get("rows", []),
+                        "sql": result.get("sql", ""),
+                        "analysis": result.get("analysis"),
+                        "session_id": result.get("session_id")
+                    }
+                })
+                
+            except Exception as query_error:
+                logger.error(f"🧪 Test {i+1} failed: {str(query_error)}")
+                results.append({
+                    "query": test_query["question"],
+                    "success": False,
+                    "error": str(query_error)
+                })
         
         response = {
             "status": "success",
-            "message": "Real database connection is working correctly",
-            "test_results": results
+            "message": "Enhanced database connection tests completed",
+            "test_results": results,
+            "capabilities": {
+                "single_database": True,
+                "cross_database": True,
+                "classification": True,
+                "session_management": True
+            }
         }
         
         logger.info(f"✅ Database connection test completed successfully with {len(results)} results")
@@ -456,15 +720,15 @@ async def test_real_connection():
 @router.get("/capabilities")
 async def get_capabilities():
     """
-    Get information about the database connection capabilities
+    Get information about the enhanced database connection capabilities
     """
-    logger.info("ℹ️ API ENDPOINT: /capabilities - Returning capabilities info")
+    logger.info("ℹ️ API ENDPOINT: /capabilities - Returning enhanced capabilities info")
     
     settings = Settings()
     
     capabilities = {
-        "name": "Real Database Agent",
-        "version": "1.0.0",
+        "name": "Enhanced Cross-Database Agent",
+        "version": "2.0.0",
         "default_database": {
             "type": settings.DB_TYPE,
             "host": settings.DB_HOST,
@@ -478,7 +742,20 @@ async def get_capabilities():
             "data_analysis": True,
             "schema_introspection": True,
             "vector_search": True,
-            "multiple_data_sources": True
+            "multiple_data_sources": True,
+            "cross_database_queries": True,
+            "query_planning": True,
+            "query_optimization": True,
+            "session_management": True,
+            "database_classification": True,
+            "dry_run_execution": True
+        },
+        "endpoints": {
+            "/query": "Enhanced query endpoint supporting both single and cross-database queries",
+            "/cross-database-query": "Dedicated cross-database query endpoint with planning",
+            "/classify": "Database relevance classification for queries",
+            "/sessions": "Session management for analysis tracking",
+            "/sessions/{id}": "Individual session details and management"
         },
         "sample_queries": [
             "Show me the latest users",
@@ -486,11 +763,14 @@ async def get_capabilities():
             "Find products with low stock",
             "Search for messages about project updates",
             "What's the revenue trend?",
-            "Show me user analytics from GA4"
+            "Show me user analytics from GA4",
+            "Compare user activity between Slack and Shopify",
+            "Find customer support issues across all platforms",
+            "Correlate sales data with marketing campaigns"
         ]
     }
     
-    logger.info(f"📤 Returning capabilities for {len(capabilities['supported_databases'])} database types")
+    logger.info(f"📤 Returning enhanced capabilities for {len(capabilities['supported_databases'])} database types")
     return capabilities
 
 @router.get("/metadata")
@@ -523,7 +803,9 @@ async def get_metadata():
                 "database": settings.DB_NAME
             },
             "schema_elements": len(schema_metadata),
-            "tables": list(set(item.get("table_name", "") for item in schema_metadata if item.get("table_name")))
+            "tables": list(set(item.get("table_name", "") for item in schema_metadata if item.get("table_name"))),
+            "cross_database_enabled": True,
+            "available_sources": len(query_engine.classifier.get_available_sources() if hasattr(query_engine.classifier, 'get_available_sources') else [])
         }
         
         logger.info(f"📤 Returning metadata for {len(schema_metadata)} schema elements")

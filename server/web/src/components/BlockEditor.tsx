@@ -5,6 +5,7 @@ import { AIQuerySelector } from './AIQuerySelector';
 import { TableBlock } from './TableBlock';
 import { ToggleBlock } from './ToggleBlock';
 import { CanvasBlock } from './CanvasBlock';
+import { StatsBlock } from './StatsBlock';
 import { cn } from '@/lib/utils';
 import { GripVertical, Plus } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -110,7 +111,7 @@ export const BlockEditor = ({
       const isSpecialBlock = specialBlockTypes.includes(block.type);
       
       // For headings, dividers, and custom block types, Enter always creates a new block
-      if (['heading1', 'heading2', 'heading3', 'divider', 'table', 'toggle', 'subpage', 'canvas'].includes(block.type)) {
+      if (['heading1', 'heading2', 'heading3', 'divider', 'table', 'toggle', 'subpage', 'canvas', 'stats'].includes(block.type)) {
         e.preventDefault();
         onAddBlock();
         return;
@@ -181,15 +182,15 @@ export const BlockEditor = ({
       const currentLine = content.substring(currentLineStart, cursorPosition);
       
       // Check if current line starts with '/' for block type selector
-      if (currentLine.startsWith('/')) {
+      if (currentLine.startsWith('/') && !currentLine.startsWith('//')) {
         const query = currentLine.slice(1);
         setTypeSelectorQuery(query);
         setShowTypeSelector(true);
         setShowAIQuery(false); // Close AI query if open
       } 
-      // Check if current line starts with '@' for AI query
-      else if (currentLine.startsWith('@')) {
-        const query = currentLine.slice(1);
+      // Check if current line starts with '//' for AI query
+      else if (currentLine.startsWith('//')) {
+        const query = currentLine.slice(2);
         setAIQuery(query);
         setShowAIQuery(true);
         setShowTypeSelector(false); // Close type selector if open
@@ -204,18 +205,32 @@ export const BlockEditor = ({
         }
       }
     } else {
-      // Fallback to original logic if we can't get cursor position
-      if (content.startsWith('/')) {
-        const query = content.slice(1);
-        setTypeSelectorQuery(query);
-        setShowTypeSelector(true);
-        setShowAIQuery(false);
-      } else if (content.startsWith('@')) {
-        const query = content.slice(1);
-        setAIQuery(query);
-        setShowAIQuery(true);
-        setShowTypeSelector(false);
-      } else {
+      // Fallback: look for commands anywhere in content for better detection
+      const lines = content.split('\n');
+      let foundAIQuery = false;
+      let foundTypeSelector = false;
+      
+      for (const line of lines) {
+        const trimmedLine = line.trim();
+        if (trimmedLine.startsWith('//') && trimmedLine.length > 2) {
+          const query = trimmedLine.slice(2);
+          setAIQuery(query);
+          setShowAIQuery(true);
+          setShowTypeSelector(false);
+          foundAIQuery = true;
+          break;
+        } else if (trimmedLine.startsWith('/') && !trimmedLine.startsWith('//') && trimmedLine.length > 1) {
+          const query = trimmedLine.slice(1);
+          setTypeSelectorQuery(query);
+          setShowTypeSelector(true);
+          setShowAIQuery(false);
+          foundTypeSelector = true;
+          break;
+        }
+      }
+      
+      // Close selectors if no commands found
+      if (!foundAIQuery && !foundTypeSelector) {
         setShowTypeSelector(false);
         setShowAIQuery(false);
         setTypeSelectorQuery('');
@@ -270,86 +285,78 @@ export const BlockEditor = ({
     setIsAILoading(true);
     console.log(`⏳ BlockEditor: AI loading state set to true`);
     
-    // Remove the @ command from the content while preserving line structure
-    const textarea = textareaRef.current;
-    if (textarea) {
-      console.log(`🔧 BlockEditor: Processing @ command removal with textarea`);
-      const cursorPosition = textarea.selectionStart;
-      const content = block.content;
-      const textBeforeCursor = content.substring(0, cursorPosition);
-      const currentLineStart = textBeforeCursor.lastIndexOf('\n') + 1;
-      const currentLine = content.substring(currentLineStart, cursorPosition);
+    // Remove the // command from the content - simplified approach
+    const content = block.content;
+    let newContent = content;
+    let newCursorPosition = 0;
+    
+    // Find all instances of '//' followed by the query text
+    const searchPattern = '//' + query;
+    const patternIndex = content.indexOf(searchPattern);
+    
+    if (patternIndex >= 0) {
+      console.log(`🎯 BlockEditor: Found '//${query}' at position ${patternIndex}`);
       
-      console.log(`📍 BlockEditor: Cursor analysis:`, {
-        cursorPosition,
-        currentLineStart,
-        currentLine,
-        contentLength: content.length
+      // Remove the '//' command and query text
+      const beforePattern = content.substring(0, patternIndex);
+      const afterPattern = content.substring(patternIndex + searchPattern.length);
+      
+      // Check if there's a space or newline after the pattern that should also be removed
+      let extraCharsToRemove = 0;
+      if (afterPattern.startsWith(' ')) {
+        extraCharsToRemove = 1;
+      } else if (afterPattern.startsWith('\n')) {
+        extraCharsToRemove = 1;
+      }
+      
+      newContent = beforePattern + afterPattern.substring(extraCharsToRemove);
+      newCursorPosition = patternIndex;
+      
+      console.log(`🔧 BlockEditor: Content reconstruction:`, {
+        originalLength: content.length,
+        newLength: newContent.length,
+        patternIndex,
+        searchPattern,
+        extraCharsToRemove,
+        newCursorPosition
       });
-      
-      if (currentLine.startsWith('@')) {
-        console.log(`🎯 BlockEditor: Found @ command at line start, removing...`);
-        // Calculate the exact positions to preserve content structure
-        const beforeCommand = content.substring(0, currentLineStart);
-        const afterCursor = content.substring(cursorPosition);
-        
-        // If there's content after the cursor on the same line, preserve it
-        const restOfCurrentLine = content.substring(cursorPosition);
-        const nextLineBreak = restOfCurrentLine.indexOf('\n');
-        const restOfLine = nextLineBreak >= 0 ? restOfCurrentLine.substring(0, nextLineBreak) : restOfCurrentLine;
-        const afterCurrentLine = nextLineBreak >= 0 ? restOfCurrentLine.substring(nextLineBreak) : '';
-        
-        // Reconstruct content: everything before the line + any remaining content on the line + everything after
-        const newContent = beforeCommand + restOfLine + afterCurrentLine;
-        
-        console.log(`🔧 BlockEditor: Content reconstruction:`, {
-          beforeCommand_length: beforeCommand.length,
-          restOfLine_length: restOfLine.length,
-          afterCurrentLine_length: afterCurrentLine.length,
-          newContent_length: newContent.length,
-          originalContent_length: content.length
-        });
-        
-        onUpdate({ content: newContent });
-        console.log(`✅ BlockEditor: Block content updated after @ command removal`);
-        
-        // Set cursor position to where the @ command was (beginning of the line)
-        setTimeout(() => {
-          if (textareaRef.current) {
-            const newCursorPosition = currentLineStart;
-            textareaRef.current.setSelectionRange(newCursorPosition, newCursorPosition);
-            console.log(`📍 BlockEditor: Cursor repositioned to ${newCursorPosition}`);
-          }
-        }, 0);
-      }
     } else {
-      console.log(`🔧 BlockEditor: Processing @ command removal without textarea (fallback)`);
-      // Fallback: if @ was at the beginning of the content, remove just the @ and query
-      if (block.content.startsWith('@')) {
-        const atCommandEnd = block.content.indexOf(' ');
-        if (atCommandEnd >= 0) {
-          const newContent = block.content.substring(atCommandEnd + 1);
-          onUpdate({ content: newContent });
-          console.log(`✅ BlockEditor: Fallback content update (space found at ${atCommandEnd})`);
-        } else {
-          // If there's no space, check for newline after the command
-          const newlineIndex = block.content.indexOf('\n');
-          if (newlineIndex >= 0) {
-            const newContent = block.content.substring(newlineIndex + 1);
-            onUpdate({ content: newContent });
-            console.log(`✅ BlockEditor: Fallback content update (newline found at ${newlineIndex})`);
-          } else {
-            onUpdate({ content: '' });
-            console.log(`✅ BlockEditor: Fallback content cleared (no delimiter found)`);
-          }
+      console.log(`⚠️ BlockEditor: Pattern '//${query}' not found in content`);
+      
+      // Fallback: try to remove just '//' from the beginning of lines
+      const lines = content.split('\n');
+      const newLines = lines.map(line => {
+        if (line.startsWith('//')) {
+          // Remove the '//' and any following whitespace on this line
+          return line.replace(/^\/\/\s*.*$/, '').trim();
         }
-      }
+        return line;
+      });
+      newContent = newLines.join('\n');
+      
+      // Remove any empty lines that resulted from the removal
+      newContent = newContent.replace(/\n\s*\n/g, '\n').trim();
+      
+      console.log(`🔧 BlockEditor: Fallback content cleanup applied`);
     }
+    
+    // Update the block content
+    onUpdate({ content: newContent });
+    console.log(`✅ BlockEditor: Block content updated after // command removal`);
     
     // Close the AI query selector
     setShowAIQuery(false);
     setAIQuery('');
     console.log(`🚪 BlockEditor: AI query selector closed`);
+    
+    // Set cursor position after content update
+    setTimeout(() => {
+      if (textareaRef.current) {
+        textareaRef.current.setSelectionRange(newCursorPosition, newCursorPosition);
+        textareaRef.current.focus();
+        console.log(`📍 BlockEditor: Cursor repositioned to ${newCursorPosition}`);
+      }
+    }, 0);
     
     // Call the parent's AI query handler
     if (onAIQuery) {
@@ -370,7 +377,7 @@ export const BlockEditor = ({
         textareaRef.current.focus();
         console.log(`🎯 BlockEditor: Focus returned to textarea`);
       }
-    }, 0);
+    }, 100); // Slightly longer delay to ensure content update is complete
   };
 
   const getPlaceholder = () => {
@@ -392,7 +399,8 @@ export const BlockEditor = ({
       case 'toggle': return "Toggle list";
       case 'subpage': return "Sub-page link";
       case 'canvas': return "Canvas analysis";
-      default: return "Type '/' for commands, '@' for AI";
+      case 'stats': return "Statistics";
+      default: return "Type '/' for commands, '//' for AI";
     }
   };
 
@@ -421,6 +429,8 @@ export const BlockEditor = ({
       case 'subpage':
       case 'canvas':
         return `${baseClasses} hidden`; // Hide textarea for custom components
+      case 'stats':
+        return `${baseClasses} hidden`; // Hide textarea for custom components
       default:
         return `${baseClasses} py-1 leading-relaxed`;
     }
@@ -437,6 +447,8 @@ export const BlockEditor = ({
       case 'table':
       case 'toggle':
       case 'subpage':
+        return 'auto'; // Let custom components control their height
+      case 'stats':
         return 'auto'; // Let custom components control their height
       default:
         return '24px';
@@ -651,6 +663,16 @@ export const BlockEditor = ({
           />
         )}
         
+        {block.type === 'stats' && (
+          <StatsBlock
+            block={block}
+            onUpdate={onUpdate}
+            isFocused={isFocused}
+            onFocus={onFocus}
+            onAddBlock={onAddBlock}
+          />
+        )}
+        
         <textarea
           ref={textareaRef}
           value={block.content}
@@ -681,7 +703,7 @@ export const BlockEditor = ({
           style={{
             minHeight: getMinHeight(),
             height: 'auto',
-            display: showAIQuery || ['table', 'toggle', 'subpage', 'canvas'].includes(block.type) ? 'none' : 'block' // Hide textarea when AI query is active or for custom components
+            display: showAIQuery || ['table', 'toggle', 'subpage', 'canvas', 'stats'].includes(block.type) ? 'none' : 'block' // Hide textarea when AI query is active or for custom components
           }}
         />
         
@@ -700,11 +722,11 @@ export const BlockEditor = ({
                 if (textareaRef.current) {
                   textareaRef.current.focus();
                   
-                  // Try to restore cursor to the end of the @ command line
+                  // Try to restore cursor to the end of the // command line
                   const content = block.content;
-                  const atIndex = content.lastIndexOf('@');
+                  const atIndex = content.lastIndexOf('//');
                   if (atIndex >= 0) {
-                    // Find the end of the current line where @ command was
+                    // Find the end of the current line where // command was
                     const afterAt = content.substring(atIndex);
                     const nextLineBreak = afterAt.indexOf('\n');
                     const cursorPos = nextLineBreak >= 0 ? atIndex + nextLineBreak : content.length;

@@ -12,6 +12,44 @@ from .base import Operation
 # Configure logging
 logger = logging.getLogger(__name__)
 
+# Set up dedicated logging for cross-database execution
+def setup_cross_db_logger():
+    """Set up a dedicated logger for cross-database execution with file output"""
+    cross_db_logger = logging.getLogger('cross_db_execution')
+    cross_db_logger.setLevel(logging.INFO)
+    
+    # Remove any existing handlers to avoid duplicates
+    cross_db_logger.handlers.clear()
+    
+    # Create file handler for cross-database logs
+    file_handler = logging.FileHandler('cross_db_execution.log', mode='a')  # Append mode
+    file_handler.setLevel(logging.INFO)
+    
+    # Create console handler as well
+    console_handler = logging.StreamHandler()
+    console_handler.setLevel(logging.INFO)
+    
+    # Create formatter
+    formatter = logging.Formatter(
+        '%(asctime)s [%(levelname)s] %(name)s: %(message)s',
+        datefmt='%Y-%m-%d %H:%M:%S'
+    )
+    
+    file_handler.setFormatter(formatter)
+    console_handler.setFormatter(formatter)
+    
+    # Add handlers to logger
+    cross_db_logger.addHandler(file_handler)
+    cross_db_logger.addHandler(console_handler)
+    
+    # Prevent propagation to root logger to avoid SQLAlchemy noise
+    cross_db_logger.propagate = False
+    
+    return cross_db_logger
+
+# Get or create the dedicated logger
+cross_db_logger = setup_cross_db_logger()
+
 # Import the register_operation decorator
 from . import register_operation, OPERATION_REGISTRY
 
@@ -108,23 +146,31 @@ class SqlOperation(Operation):
         Returns:
             True if valid, False otherwise
         """
+        cross_db_logger.info(f"🔍 Validating SQL operation {self.id}")
+        cross_db_logger.info(f"🔍 SQL operation source_id: {self.source_id}")
+        cross_db_logger.info(f"🔍 SQL operation sql_query: {self.sql_query[:100] if self.sql_query else 'None'}...")
+        
         # Call parent validation first
         if not super().validate(schema_registry):
+            cross_db_logger.error(f"🔍 SQL operation {self.id} failed parent validation")
             return False
         
         # Check if we have an SQL query
         if not self.sql_query:
-            logger.error(f"SQL operation {self.id} missing sql_query")
+            cross_db_logger.error(f"🔍 SQL operation {self.id} missing sql_query")
             return False
         
         # Additional validation with schema registry if available
         if schema_registry:
             try:
                 # Check if tables in query exist in schema
-                return schema_registry.validate_sql_query(self.source_id, self.sql_query)
+                result = schema_registry.validate_sql_query(self.source_id, self.sql_query)
+                cross_db_logger.info(f"🔍 SQL operation {self.id} schema validation result: {result}")
+                return result
             except Exception as e:
-                logger.warning(f"Error validating SQL query: {e}")
+                cross_db_logger.warning(f"🔍 Error validating SQL query for {self.id}: {e}")
         
+        cross_db_logger.info(f"🔍 SQL operation {self.id} passed validation")
         return True
 
 
@@ -181,23 +227,31 @@ class MongoOperation(Operation):
         Returns:
             True if valid, False otherwise
         """
+        cross_db_logger.info(f"🔍 Validating MongoDB operation {self.id}")
+        cross_db_logger.info(f"🔍 MongoDB operation source_id: {self.source_id}")
+        cross_db_logger.info(f"🔍 MongoDB operation collection: {self.collection}")
+        
         # Call parent validation first
         if not super().validate(schema_registry):
+            cross_db_logger.error(f"🔍 MongoDB operation {self.id} failed parent validation")
             return False
         
         # Check if we have a collection
         if not self.collection:
-            logger.error(f"MongoDB operation {self.id} missing collection")
+            cross_db_logger.error(f"🔍 MongoDB operation {self.id} missing collection")
             return False
         
         # Additional validation with schema registry if available
         if schema_registry:
             try:
                 # Check if collection exists in schema
-                return schema_registry.validate_mongo_collection(self.source_id, self.collection)
+                result = schema_registry.validate_mongo_collection(self.source_id, self.collection)
+                cross_db_logger.info(f"🔍 MongoDB operation {self.id} schema validation result: {result}")
+                return result
             except Exception as e:
-                logger.warning(f"Error validating MongoDB collection: {e}")
+                cross_db_logger.warning(f"🔍 Error validating MongoDB collection for {self.id}: {e}")
         
+        cross_db_logger.info(f"🔍 MongoDB operation {self.id} passed validation")
         return True
 
 
@@ -254,25 +308,32 @@ class QdrantOperation(Operation):
         Returns:
             True if valid, False otherwise
         """
+        cross_db_logger.info(f"🔍 Validating Qdrant operation {self.id}")
+        cross_db_logger.info(f"🔍 Qdrant operation source_id: {self.source_id}")
+        cross_db_logger.info(f"🔍 Qdrant operation collection: {self.collection}")
+        cross_db_logger.info(f"🔍 Qdrant operation vector_query: {self.vector_query}")
+        cross_db_logger.info(f"🔍 Qdrant operation vector_query type: {type(self.vector_query)}")
+        
         # Call parent validation first
         if not super().validate(schema_registry):
+            cross_db_logger.error(f"🔍 Qdrant operation {self.id} failed parent validation")
             return False
         
         # Check if we have a collection
         if not self.collection:
-            logger.error(f"Qdrant operation {self.id} missing collection")
+            cross_db_logger.error(f"🔍 Qdrant operation {self.id} missing collection")
             return False
         
         # Check if we have a vector query
         if not self.vector_query:
-            logger.error(f"Qdrant operation {self.id} missing vector_query. Found: {self.vector_query}")
+            cross_db_logger.error(f"🔍 Qdrant operation {self.id} missing vector_query. Found: {self.vector_query}")
             # Print params for debugging
-            logger.error(f"Qdrant operation params: collection={self.collection}, filter={self.filter}, top_k={self.top_k}")
+            cross_db_logger.error(f"🔍 Qdrant operation params: collection={self.collection}, filter={self.filter}, top_k={self.top_k}")
             return False
         
         # Validate vector query format
         if not isinstance(self.vector_query, list):
-            logger.error(f"Qdrant operation {self.id} vector_query must be a list, got {type(self.vector_query)}")
+            cross_db_logger.error(f"🔍 Qdrant operation {self.id} vector_query must be a list, got {type(self.vector_query)}")
             return False
         
         # Additional validation with schema registry if available
@@ -281,12 +342,14 @@ class QdrantOperation(Operation):
                 # Check if collection exists in schema
                 valid = schema_registry.validate_qdrant_collection(self.source_id, self.collection)
                 if not valid:
-                    logger.error(f"Collection {self.collection} not found in schema for source {self.source_id}")
+                    cross_db_logger.error(f"🔍 Collection {self.collection} not found in schema for source {self.source_id}")
                     return False
+                cross_db_logger.info(f"🔍 Qdrant operation {self.id} schema validation result: {valid}")
                 return valid
             except Exception as e:
-                logger.warning(f"Error validating Qdrant collection: {e}")
+                cross_db_logger.warning(f"🔍 Error validating Qdrant collection for {self.id}: {e}")
         
+        cross_db_logger.info(f"🔍 Qdrant operation {self.id} passed validation")
         return True
 
 

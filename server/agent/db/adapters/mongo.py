@@ -298,3 +298,65 @@ class MongoAdapter(DBAdapter):
         except Exception as e:
             logger.error(f"MongoDB connection test failed: {e}")
             return False 
+    
+    async def aggregate(self, collection_name: str, pipeline: List[Dict]) -> List[Dict]:
+        """
+        Execute an aggregation pipeline on a specific collection.
+        
+        This method is called directly by the implementation agent.
+        
+        Args:
+            collection_name: Name of the MongoDB collection
+            pipeline: MongoDB aggregation pipeline
+            
+        Returns:
+            List of dictionaries with aggregation results
+        """
+        try:
+            # Get the collection
+            collection = self.db[collection_name]
+            
+            # Execute the aggregation pipeline
+            results = list(collection.aggregate(pipeline))
+            
+            # Convert ObjectId and other BSON types to string representations
+            return json.loads(json_util.dumps(results))
+            
+        except Exception as e:
+            logger.error(f"Error executing MongoDB aggregation on {collection_name}: {e}")
+            raise
+    
+    async def find(self, collection_name: str, query: Dict = None, projection: Dict = None) -> List[Dict]:
+        """
+        Execute a find query on a specific collection.
+        
+        This method is called directly by the implementation agent.
+        
+        Args:
+            collection_name: Name of the MongoDB collection
+            query: MongoDB find query (optional, defaults to {})
+            projection: MongoDB projection (optional)
+            
+        Returns:
+            List of dictionaries with query results
+        """
+        try:
+            # Get the collection
+            collection = self.db[collection_name]
+            
+            # Set defaults
+            if query is None:
+                query = {}
+            
+            # Execute the find query
+            if projection:
+                results = list(collection.find(query, projection))
+            else:
+                results = list(collection.find(query))
+            
+            # Convert ObjectId and other BSON types to string representations
+            return json.loads(json_util.dumps(results))
+            
+        except Exception as e:
+            logger.error(f"Error executing MongoDB find on {collection_name}: {e}")
+            raise 

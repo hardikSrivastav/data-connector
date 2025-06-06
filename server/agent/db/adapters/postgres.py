@@ -9,7 +9,7 @@ import os
 from typing import Any, Dict, List, Optional
 
 from .base import DBAdapter
-from ..execute import execute_query, test_conn, create_connection_pool
+from ..connection_utils import execute_query, test_conn, create_connection_pool
 from ..introspect import get_schema_metadata
 
 # Configure logging
@@ -79,7 +79,7 @@ class PostgresAdapter(DBAdapter):
         """
         return await execute_query(query)
     
-    async def execute_query(self, query: str) -> List[Dict]:
+    async def execute_query(self, query: str, params: Optional[List] = None) -> List[Dict]:
         """
         Execute a SQL query (alias for execute).
         
@@ -87,10 +87,13 @@ class PostgresAdapter(DBAdapter):
         
         Args:
             query: SQL query string
+            params: Optional query parameters (currently not used but accepted for compatibility)
             
         Returns:
             List of dictionaries with query results
         """
+        # Note: params are currently ignored as the existing execute_query function doesn't support them
+        # Future enhancement could add parameter support
         return await self.execute(query)
     
     async def introspect_schema(self) -> List[Dict[str, str]]:

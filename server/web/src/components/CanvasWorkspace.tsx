@@ -69,44 +69,32 @@ export const CanvasWorkspace = ({
       );
       
       if (canvasBlock?.properties?.canvasData) {
-        console.log('🎯 CanvasWorkspace: Found canvas data, populating page...');
-        const canvasData = canvasBlock.properties.canvasData;
+        console.log('🎯 CanvasWorkspace: Found canvas block with data, checking if it still exists...');
         
-        // Build blocks from canvas data
-        const blocks = [];
-        let nextOrder = 0;
+        // Double-check that the canvas block still exists in its page
+        // (it might have been deleted but the canvas page still exists)
+        const canvasBlockStillExists = workspace.pages.some(p => 
+          p.blocks.some(b => b.id === canvasBlock.id && b.type === 'canvas')
+        );
         
-        // Add main heading (or keep existing if present)
-        const existingHeading = page.blocks.find(b => b.type === 'heading1');
-        if (existingHeading) {
-          blocks.push(existingHeading);
-          nextOrder = 1;
-        } else {
-          blocks.push({
-            id: `heading_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
-            type: 'heading1' as const,
-            content: page.title || 'Canvas Analysis',
-            order: nextOrder++
-          });
-        }
-        
-        // Add analysis data if available
-        if (canvasData.fullAnalysis || canvasData.fullData || canvasData.sqlQuery) {
-          // Add timestamp section
-          const timestamp = new Date().toLocaleString();
-          blocks.push({
-            id: `heading_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
-            type: 'heading2' as const,
-            content: `Analysis - ${timestamp}`,
-            order: nextOrder++
-          });
+        if (canvasBlockStillExists) {
+          console.log('✅ CanvasWorkspace: Canvas block still exists, populating page...');
+          const canvasData = canvasBlock.properties.canvasData;
           
-          // Add SQL query if available
-          if (canvasData.sqlQuery) {
+          // Build blocks from canvas data
+          const blocks = [];
+          let nextOrder = 0;
+          
+          // Add main heading (or keep existing if present)
+          const existingHeading = page.blocks.find(b => b.type === 'heading1');
+          if (existingHeading) {
+            blocks.push(existingHeading);
+            nextOrder = 1;
+          } else {
             blocks.push({
-              id: `query_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
-              type: 'text' as const,
-              content: `**Query:** ${canvasData.sqlQuery}`,
+              id: `heading_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+              type: 'heading1' as const,
+              content: page.title || 'Canvas Analysis',
               order: nextOrder++
             });
           }
@@ -121,21 +109,29 @@ export const CanvasWorkspace = ({
             });
           }
           
-          // Add data table if available
+          // Add table if available  
           if (canvasData.fullData && canvasData.fullData.headers && canvasData.fullData.rows) {
             blocks.push({
               id: `table_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
               type: 'table' as const,
-              content: 'Query Results',
+              content: '',
               order: nextOrder++,
               properties: {
                 tableData: {
-                  rows: canvasData.fullData.rows.length,
-                  cols: canvasData.fullData.headers.length,
                   headers: canvasData.fullData.headers,
                   data: canvasData.fullData.rows
                 }
               }
+            });
+          }
+          
+          // Add SQL query if available
+          if (canvasData.sqlQuery) {
+            blocks.push({
+              id: `sql_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+              type: 'code' as const,
+              content: canvasData.sqlQuery,
+              order: nextOrder++
             });
           }
           
@@ -172,6 +168,13 @@ export const CanvasWorkspace = ({
           
           // Update the page with the populated blocks
           onUpdatePage({ blocks });
+        } else {
+          console.log('🗑️ CanvasWorkspace: Canvas block was deleted, not populating page');
+          console.log('🧹 CanvasWorkspace: This canvas page should probably be cleaned up');
+          
+          // The canvas page exists but its associated canvas block was deleted
+          // This suggests the page cleanup didn't happen properly during block deletion
+          // For safety, we won't auto-populate it, but we could log this as an issue
         }
       } else {
         console.log('📝 CanvasWorkspace: No canvas data found for this page');

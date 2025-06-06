@@ -6,7 +6,8 @@ import asyncpg
 import statistics
 import random
 from decimal import Decimal
-from ..db.execute import create_connection_pool
+# Remove the circular import - DataTools uses Orchestrator instead
+# from ..db.execute import create_connection_pool
 from ..meta.ingest import SchemaSearcher
 from ..config.settings import Settings
 # Use lazy import for Orchestrator

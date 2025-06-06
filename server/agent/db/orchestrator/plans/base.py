@@ -85,6 +85,16 @@ class Operation(ABC):
         """String representation of this operation"""
         return f"{self.__class__.__name__}(id={self.id}, source={self.source_id})"
     
+    @property
+    def operation_id(self):
+        """Alias for id to match the implementation agent"""
+        return self.id
+    
+    @property
+    def operation_type(self):
+        """Return operation type from metadata"""
+        return self.metadata.get("operation_type", self.__class__.__name__)
+    
     def to_dict(self) -> Dict[str, Any]:
         """
         Convert operation to dictionary representation

@@ -566,8 +566,6 @@ async def sync_changes(sync_request: SyncRequest, db: Session = Depends(get_db))
     
     # Process each change
     for change in sync_request.changes:
-        print(f"📝 Processing change: {change.type} {change.entity} {change.entityId}")
-        
         # Debug canvas-specific changes
         if change.entity == "block" and change.data and isinstance(change.data, dict):
             properties = change.data.get('properties', {})
@@ -581,32 +579,11 @@ async def sync_changes(sync_request: SyncRequest, db: Session = Depends(get_db))
         # Check if this change already exists to avoid duplicates
         existing_change = db.query(ChangeDB).filter(ChangeDB.id == change.id).first()
         if existing_change:
-            print(f"⚠️  Change {change.id} already exists, skipping...")
             continue
         
         # Store the change for audit log
         try:
-            # For deletion changes, don't store them in the database to avoid foreign key constraint violations
-            # Just process the deletion directly
-            if change.type == "delete":
-                print(f"🗑️  Processing deletion directly without storing change record: {change.entity} {change.entityId}")
-            else:
-                # Store non-deletion changes normally
-                db_change = ChangeDB(
-                    id=change.id,
-                    type=change.type,
-                    entity=change.entity,
-                    entity_id=change.entityId,
-                    user_id=change.userId,
-                    timestamp=change.timestamp,
-                    data=change.data,
-                    workspace_id="main" if change.entity == "workspace" else None,
-                    page_id=change.entityId if change.entity == "page" else None,
-                    block_id=change.entityId if change.entity == "block" else None
-                )
-                db.add(db_change)
-            
-            # Apply the change to storage
+            # Apply the change to storage FIRST, then optionally store the change record
             if change.entity == "page":
                 if change.type in ["create", "update"]:
                     db_page = db.query(PageDB).filter(PageDB.id == change.entityId).first()
@@ -629,9 +606,14 @@ async def sync_changes(sync_request: SyncRequest, db: Session = Depends(get_db))
                         )
                         db.add(db_page)
                 elif change.type == "delete":
+                    print(f"🗑️  Deleting page: {change.entityId}")
                     db_page = db.query(PageDB).filter(PageDB.id == change.entityId).first()
                     if db_page:
+                        print(f"✅ Found page to delete: {db_page.id}")
                         db.delete(db_page)  # Cascade will delete blocks too
+                        print(f"🗑️  Page {change.entityId} marked for deletion")
+                    else:
+                        print(f"❌ Page {change.entityId} not found in database")
                         
             elif change.entity == "block":
                 if change.type in ["create", "update"]:
@@ -660,9 +642,23 @@ async def sync_changes(sync_request: SyncRequest, db: Session = Depends(get_db))
                         db.add(db_block)
                 elif change.type == "delete":
                     print(f"🗑️  Deleting block: {change.entityId}")
+                    
+                    # First check if this is a canvas block with special cleanup needed
                     db_block = db.query(BlockDB).filter(BlockDB.id == change.entityId).first()
                     if db_block:
-                        print(f"✅ Found block to delete: {db_block.id}")
+                        print(f"✅ Found block to delete: {db_block.id} (type: {db_block.type})")
+                        
+                        # Special handling for canvas blocks
+                        if db_block.type == 'canvas':
+                            print(f"🎨 Canvas block detected - performing cleanup")
+                            
+                            # Clean up any associated canvas threads
+                            canvas_thread = db.query(CanvasThreadDB).filter(CanvasThreadDB.block_id == change.entityId).first()
+                            if canvas_thread:
+                                print(f"🧹 Cleaning up canvas thread: {canvas_thread.id}")
+                                db.delete(canvas_thread)  # Cascade will handle commits, logs, cache
+                        
+                        # Delete the block
                         db.delete(db_block)
                         print(f"🗑️  Block {change.entityId} marked for deletion")
                     else:
@@ -682,12 +678,48 @@ async def sync_changes(sync_request: SyncRequest, db: Session = Depends(get_db))
                         )
                         db.add(db_workspace)
                 elif change.type == "delete":
+                    print(f"🗑️  Deleting workspace: {change.entityId}")
                     db_workspace = db.query(WorkspaceDB).filter(WorkspaceDB.id == change.entityId).first()
                     if db_workspace:
+                        print(f"✅ Found workspace to delete: {db_workspace.id}")
                         db.delete(db_workspace)  # Cascade will delete pages and blocks
+                        print(f"🗑️  Workspace {change.entityId} marked for deletion")
+                    else:
+                        print(f"❌ Workspace {change.entityId} not found in database")
+            
+            # Now store the change record for audit (except for deletions to avoid foreign key issues)
+            if change.type != "delete":
+                db_change = ChangeDB(
+                    id=change.id,
+                    type=change.type,
+                    entity=change.entity,
+                    entity_id=change.entityId,
+                    user_id=change.userId,
+                    timestamp=change.timestamp,
+                    data=change.data,
+                    workspace_id="main" if change.entity == "workspace" else None,
+                    page_id=change.entityId if change.entity == "page" else None,
+                    block_id=change.entityId if change.entity == "block" else None
+                )
+                db.add(db_change)
+            else:
+                # For deletion changes, store a simplified record without foreign key references
+                db_change = ChangeDB(
+                    id=change.id,
+                    type=change.type,
+                    entity=change.entity,
+                    entity_id=change.entityId,
+                    user_id=change.userId,
+                    timestamp=change.timestamp,
+                    data={"deleted": True},  # Simple data for deleted entities
+                    # No foreign key references for deleted entities
+                    workspace_id=None,
+                                        page_id=None,
+                    block_id=None
+                )
+                db.add(db_change)
                         
         except Exception as e:
-            print(f"Error processing change {change.id}: {str(e)}")
             # Continue with other changes even if one fails
             continue
     

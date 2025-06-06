@@ -337,24 +337,77 @@ class SchemaRegistryClient:
         
         return "\n".join(summary)
     
+    def _map_source_id(self, source_id: str) -> str:
+        """
+        Map collection/table-specific source IDs to database-level source IDs.
+        
+        The planning agent generates specific source IDs like:
+        - mongodb:collection:sample_products -> mongodb_main
+        - postgres:table:order_items -> postgres_main
+        
+        Args:
+            source_id: Original source ID from the planning agent
+            
+        Returns:
+            Mapped database-level source ID
+        """
+        # If it's already a simple database-level ID, return as-is
+        if ":" not in source_id:
+            return source_id
+        
+        # Parse the source_id format: {db_type}:{object_type}:{object_name}
+        parts = source_id.split(":")
+        if len(parts) >= 2:
+            db_type = parts[0]
+            
+            # Map to database-level source IDs based on known patterns
+            if db_type == "mongodb":
+                return "mongodb_main"
+            elif db_type == "postgres":
+                return "postgres_main"
+            elif db_type == "qdrant":
+                # Special case: qdrant might have collection-specific sources
+                if len(parts) >= 3:
+                    collection_name = parts[2]
+                    if collection_name in ["product_catalog", "products"]:
+                        return "qdrant_products"
+                    else:
+                        return "qdrant_main"
+                return "qdrant_main"
+            elif db_type == "slack":
+                return "slack_main"
+            elif db_type == "shopify":
+                return "shopify_main"
+            elif db_type == "ga4":
+                return "ga4_489665507"  # Or could be dynamically determined
+            else:
+                # For unknown types, try {db_type}_main
+                return f"{db_type}_main"
+        
+        # If we can't parse it, return the original
+        return source_id
+
     def validate_sql_query(self, source_id: str, sql_query: str) -> Dict[str, Any]:
         """
         Validate a SQL query against the schema registry
         
         Args:
-            source_id: The data source ID
+            source_id: The data source ID (can be detailed like 'postgres:table:orders' or simple like 'postgres_main')
             sql_query: The SQL query to validate
             
         Returns:
             Dictionary with validation results
         """
         try:
-            # Check if source exists
-            source = self.get_data_source(source_id)
+            # Map detailed source ID to database-level source ID
+            mapped_source_id = self._map_source_id(source_id)
+            
+            # Check if mapped source exists
+            source = self.get_data_source(mapped_source_id)
             if not source:
                 return {
                     "valid": False,
-                    "errors": [f"Data source '{source_id}' not found in registry"]
+                    "errors": [f"Data source '{mapped_source_id}' (from '{source_id}') not found in registry"]
                 }
             
             # For now, return a basic validation that just checks source existence
@@ -370,6 +423,84 @@ class SchemaRegistryClient:
                 "valid": False, 
                 "errors": [f"Validation error: {str(e)}"]
             }
+    
+    def validate_mongo_collection(self, source_id: str, collection_name: str) -> bool:
+        """
+        Validate that a MongoDB collection exists in the schema registry
+        
+        Args:
+            source_id: The data source ID (can be detailed like 'mongodb:collection:sample_products' or simple like 'mongodb_main')
+            collection_name: The collection name to validate
+            
+        Returns:
+            True if collection exists, False otherwise
+        """
+        try:
+            # Map detailed source ID to database-level source ID
+            mapped_source_id = self._map_source_id(source_id)
+            
+            # Check if mapped source exists
+            source = self.get_data_source(mapped_source_id)
+            if not source:
+                logger.warning(f"Data source '{mapped_source_id}' (from '{source_id}') not found in registry")
+                return False
+            
+            # Check if it's a MongoDB source
+            if source.get("type") != "mongodb":
+                logger.warning(f"Data source '{mapped_source_id}' is not a MongoDB source")
+                return False
+            
+            # Check if collection exists in the schema
+            tables = self.list_tables(mapped_source_id)
+            collection_exists = collection_name in tables
+            
+            if not collection_exists:
+                logger.warning(f"Collection '{collection_name}' not found in source '{mapped_source_id}'. Available collections: {tables}")
+            
+            return collection_exists
+            
+        except Exception as e:
+            logger.error(f"Error validating MongoDB collection '{collection_name}' for source '{source_id}': {e}")
+            return False
+    
+    def validate_qdrant_collection(self, source_id: str, collection_name: str) -> bool:
+        """
+        Validate that a Qdrant collection exists in the schema registry
+        
+        Args:
+            source_id: The data source ID (can be detailed like 'qdrant:collection:products' or simple like 'qdrant_main')
+            collection_name: The collection name to validate
+            
+        Returns:
+            True if collection exists, False otherwise
+        """
+        try:
+            # Map detailed source ID to database-level source ID
+            mapped_source_id = self._map_source_id(source_id)
+            
+            # Check if mapped source exists
+            source = self.get_data_source(mapped_source_id)
+            if not source:
+                logger.warning(f"Data source '{mapped_source_id}' (from '{source_id}') not found in registry")
+                return False
+            
+            # Check if it's a Qdrant source
+            if source.get("type") != "qdrant":
+                logger.warning(f"Data source '{mapped_source_id}' is not a Qdrant source")
+                return False
+            
+            # Check if collection exists in the schema
+            tables = self.list_tables(mapped_source_id)
+            collection_exists = collection_name in tables
+            
+            if not collection_exists:
+                logger.warning(f"Collection '{collection_name}' not found in source '{mapped_source_id}'. Available collections: {tables}")
+            
+            return collection_exists
+            
+        except Exception as e:
+            logger.error(f"Error validating Qdrant collection '{collection_name}' for source '{source_id}': {e}")
+            return False
 
 
 # Singleton instance for easy import

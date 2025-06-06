@@ -1,6 +1,6 @@
 export interface Block {
   id: string;
-  type: 'text' | 'heading1' | 'heading2' | 'heading3' | 'bullet' | 'numbered' | 'quote' | 'divider' | 'image' | 'code' | 'subpage' | 'table' | 'toggle' | 'canvas';
+  type: 'text' | 'heading1' | 'heading2' | 'heading3' | 'bullet' | 'numbered' | 'quote' | 'divider' | 'image' | 'code' | 'subpage' | 'table' | 'toggle' | 'canvas' | 'stats';
   content: string;
   order: number;
   isSelected?: boolean;
@@ -21,6 +21,15 @@ export interface Block {
     toggleData?: {
       isOpen: boolean;
       children: Block[];
+    };
+    // Stats-specific properties
+    statsData?: {
+      stats: Array<{
+        id: string;
+        label: string;
+        value: string;
+      }>;
+      columns: number;
     };
     // Subpage-specific properties
     subpageData?: {

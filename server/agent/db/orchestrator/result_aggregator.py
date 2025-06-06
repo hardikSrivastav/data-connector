@@ -224,30 +224,32 @@ class ResultAggregator:
             else:
                 plan_dict = query_plan
             
-            # Use LLM to aggregate results
-            prompt = self.llm_client.render_template(
-                "result_aggregator.tpl",
-                query_plan=json.dumps(plan_dict, indent=2),
-                operation_results=processed_results,
-                user_question=user_question
+            # Create a summary for LLM analysis
+            summary_data = []
+            for op_id, result in processed_results.items():
+                if isinstance(result, list):
+                    summary_data.extend(result)
+                elif isinstance(result, dict):
+                    summary_data.append(result)
+                else:
+                    summary_data.append({"operation": op_id, "result": result})
+            
+            # Use the existing analyze_results method which properly handles different LLM clients
+            analysis = await self.llm_client.analyze_results(
+                summary_data[:100],  # Limit to 100 items for efficiency
+                is_vector_search=False
             )
             
-            # Call LLM for aggregation
-            response = await self.llm_client.client.chat.completions.create(
-                model=self.llm_client.model_name,
-                messages=[{"role": "user", "content": prompt}],
-                temperature=0.2
-            )
-            
-            # Parse the JSON response
-            content = response.choices[0].message.content
-            # Extract JSON string from content
-            if "```json" in content:
-                json_str = content.split("```json")[1].split("```")[0].strip()
-            else:
-                json_str = content.strip()
-                
-            aggregated_result = json.loads(json_str)
+            # Create a structured aggregated result
+            aggregated_result = {
+                "summary": f"Successfully aggregated results from {len(operation_results)} operations",
+                "total_operations": len(operation_results),
+                "all_results": processed_results,
+                "data": summary_data,
+                "formatted_result": analysis,
+                "aggregation_method": "llm_analysis",
+                "user_question": user_question
+            }
             
             # Record metrics
             end_time = time.time()

@@ -4,6 +4,9 @@ from ..config.settings import Settings
 from urllib.parse import urlparse
 import logging
 
+# Import connection utilities to avoid code duplication
+from .connection_utils import create_connection_pool
+
 # Configure logging
 logger = logging.getLogger(__name__)
 
@@ -190,17 +193,6 @@ async def format_schema_for_embedding(schema_data: Dict[str, Any]) -> List[Dict[
         })
     
     return documents
-
-async def create_connection_pool() -> asyncpg.Pool:
-    """
-    Create and return an asyncpg connection pool
-    """
-    settings = Settings()
-    return await asyncpg.create_pool(
-        dsn=settings.db_dsn,
-        min_size=5,
-        max_size=20
-    )
 
 async def get_schema_metadata(conn_uri: Optional[str] = None, db_type: Optional[str] = None, **kwargs) -> List[Dict[str, str]]:
     """

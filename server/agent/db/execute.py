@@ -8,472 +8,770 @@ from typing import List, Dict, Any, Optional
 from datetime import datetime
 from ..config.settings import Settings
 
-# Set up logging for the demo LLM client
+# Import basic database functions from connection utilities to avoid circular imports
+from .connection_utils import create_connection_pool, execute_query_with_pool, test_postgresql_connection, execute_query, test_conn
+
+# Import cross-database components
+from ..db.classifier import DatabaseClassifier
+from ..db.registry.integrations import registry_client
+from ..db.orchestrator.cross_db_agent import CrossDatabaseAgent
+from ..db.orchestrator.planning_agent import PlanningAgent
+from ..db.orchestrator.implementation_agent import ImplementationAgent
+from ..db.orchestrator.result_aggregator import ResultAggregator
+from ..tools.state_manager import StateManager, AnalysisState
+from ..db.db_orchestrator import Orchestrator
+from ..llm.client import get_llm_client
+from ..meta.ingest import SchemaSearcher, ensure_index_exists
+from ..performance.schema_monitor import ensure_schema_index_updated
+
+# Set up dedicated logging for cross-database execution
+def setup_cross_db_logger():
+    """Set up a dedicated logger for cross-database execution with file output"""
+    cross_db_logger = logging.getLogger('cross_db_execution')
+    cross_db_logger.setLevel(logging.INFO)
+    
+    # Remove any existing handlers to avoid duplicates
+    cross_db_logger.handlers.clear()
+    
+    # Create file handler for cross-database logs
+    file_handler = logging.FileHandler('cross_db_execution.log', mode='w')
+    file_handler.setLevel(logging.INFO)
+    
+    # Create console handler as well
+    console_handler = logging.StreamHandler()
+    console_handler.setLevel(logging.INFO)
+    
+    # Create formatter
+    formatter = logging.Formatter(
+        '%(asctime)s [%(levelname)s] %(name)s: %(message)s',
+        datefmt='%Y-%m-%d %H:%M:%S'
+    )
+    
+    file_handler.setFormatter(formatter)
+    console_handler.setFormatter(formatter)
+    
+    # Add handlers to logger
+    cross_db_logger.addHandler(file_handler)
+    cross_db_logger.addHandler(console_handler)
+    
+    # Prevent propagation to root logger to avoid SQLAlchemy noise
+    cross_db_logger.propagate = False
+    
+    return cross_db_logger
+
+# Initialize the dedicated logger
+cross_db_logger = setup_cross_db_logger()
+
+# Set up logging for the database executor
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-async def test_conn():
+class CrossDatabaseQueryEngine:
     """
-    Test database connection by connecting and executing a simple query
-    """
-    s = Settings()
-    print(f"Connecting to database: {s.DB_HOST}/{s.DB_NAME}")
-    print(f"Connection string: {s.db_dsn}")
-    
-    try:
-        conn = await asyncpg.connect(s.db_dsn)
-        result = await conn.fetchval("SELECT 1")
-        print(f"Connection successful! Test query result: {result}")
-        await conn.close()
-        return True
-    except Exception as e:
-        print(f"Connection failed: {str(e)}")
-        return False
-
-async def create_connection_pool() -> asyncpg.Pool:
-    """
-    Create and return an asyncpg connection pool
-    """
-    settings = Settings()
-    return await asyncpg.create_pool(
-        dsn=settings.db_dsn,
-        min_size=5,
-        max_size=20
-    )
-
-async def execute_query(query: str) -> list:
-    """
-    Execute a SQL query and return the results
-    
-    Args:
-        query: SQL query to execute
-        
-    Returns:
-        List of dictionaries with query results
-    """
-    pool = await create_connection_pool()
-    try:
-        async with pool.acquire() as conn:
-            results = await conn.fetch(query)
-            # Convert to dict list for easier serialization
-            return [dict(row) for row in results]
-    finally:
-        await pool.close()
-
-class DemoLLMClient:
-    """
-    Demo LLM Client that provides intelligent responses to natural language queries
-    without requiring external LLM APIs. This serves as a comprehensive demo for
-    the AI query functionality in the web application.
+    Enhanced query engine that supports both single-database and cross-database queries
     """
     
     def __init__(self):
-        self.model_name = "demo-gpt-4"
-        self.response_patterns = self._initialize_response_patterns()
-        self.sample_data = self._initialize_sample_data()
-        logger.info(f"🤖 Demo LLM Client initialized with model: {self.model_name}")
+        self.cross_db_agent = CrossDatabaseAgent()
+        self.classifier = DatabaseClassifier()
+        self.planning_agent = PlanningAgent()
+        self.implementation_agent = ImplementationAgent()
+        self.result_aggregator = ResultAggregator()
+        self.state_manager = StateManager()
+        self.llm_client = get_llm_client()
+        logger.info("🤖 Cross-Database Query Engine initialized")
         
-    def _initialize_response_patterns(self) -> Dict[str, Any]:
-        """Initialize intelligent response patterns for different query types"""
-        patterns = {
-            "greetings": {
-                "patterns": [r"hello", r"hi", r"hey", r"greetings"],
-                "responses": [
-                    "Hello! I'm your AI assistant. I can help you with data queries, analysis, and insights. What would you like to know?",
-                    "Hi there! I'm ready to help you explore your data. Ask me anything about your database or analytics!",
-                    "Greetings! I can generate SQL queries, analyze data, and provide insights. How can I assist you today?"
-                ]
-            },
-            "data_queries": {
-                "patterns": [r"show", r"list", r"find", r"get", r"fetch", r"select", r"query"],
-                "responses": [
-                    "I'll generate a SQL query to retrieve that data for you.",
-                    "Let me fetch that information from the database.",
-                    "I'll analyze the data and show you the results."
-                ]
-            },
-            "analytics": {
-                "patterns": [r"analyze", r"analysis", r"insights", r"trends", r"statistics", r"stats"],
-                "responses": [
-                    "I'll perform a comprehensive analysis of your data.",
-                    "Let me generate insights and statistics for you.",
-                    "I'll analyze the patterns and provide actionable insights."
-                ]
-            },
-            "performance": {
-                "patterns": [r"performance", r"optimize", r"speed", r"fast", r"slow"],
-                "responses": [
-                    "I'll analyze the performance metrics and suggest optimizations.",
-                    "Let me check the performance data and identify bottlenecks.",
-                    "I'll generate a performance analysis with recommendations."
-                ]
-            },
-            "users": {
-                "patterns": [r"user", r"customer", r"account", r"profile"],
-                "sql_templates": [
-                    "SELECT id, name, email, created_at, last_login FROM users ORDER BY created_at DESC LIMIT 10",
-                    "SELECT COUNT(*) as total_users, COUNT(CASE WHEN last_login > NOW() - INTERVAL '30 days' THEN 1 END) as active_users FROM users",
-                    "SELECT DATE(created_at) as signup_date, COUNT(*) as new_users FROM users WHERE created_at > NOW() - INTERVAL '7 days' GROUP BY DATE(created_at) ORDER BY signup_date"
-                ]
-            },
-            "orders": {
-                "patterns": [r"order", r"purchase", r"sale", r"transaction", r"revenue"],
-                "sql_templates": [
-                    "SELECT id, customer_id, total_amount, status, created_at FROM orders ORDER BY created_at DESC LIMIT 10",
-                    "SELECT DATE(created_at) as order_date, COUNT(*) as order_count, SUM(total_amount) as revenue FROM orders WHERE created_at > NOW() - INTERVAL '7 days' GROUP BY DATE(created_at) ORDER BY order_date",
-                    "SELECT status, COUNT(*) as count, AVG(total_amount) as avg_amount FROM orders GROUP BY status"
-                ]
-            },
-            "products": {
-                "patterns": [r"product", r"item", r"inventory", r"catalog"],
-                "sql_templates": [
-                    "SELECT id, name, price, category, stock_quantity FROM products ORDER BY name LIMIT 10",
-                    "SELECT category, COUNT(*) as product_count, AVG(price) as avg_price FROM products GROUP BY category ORDER BY product_count DESC",
-                    "SELECT name, stock_quantity FROM products WHERE stock_quantity < 10 ORDER BY stock_quantity"
-                ]
-            }
-        }
-        logger.info(f"📝 Initialized {len(patterns)} response pattern categories")
-        return patterns
-    
-    def _initialize_sample_data(self) -> Dict[str, List[Dict]]:
-        """Initialize sample data for different query types"""
-        data = {
-            "users": [
-                {"id": 1, "name": "Alice Johnson", "email": "alice@example.com", "created_at": "2024-01-15", "last_login": "2024-01-20"},
-                {"id": 2, "name": "Bob Smith", "email": "bob@example.com", "created_at": "2024-01-10", "last_login": "2024-01-19"},
-                {"id": 3, "name": "Carol Davis", "email": "carol@example.com", "created_at": "2024-01-12", "last_login": "2024-01-18"},
-                {"id": 4, "name": "David Wilson", "email": "david@example.com", "created_at": "2024-01-14", "last_login": "2024-01-21"},
-                {"id": 5, "name": "Eva Brown", "email": "eva@example.com", "created_at": "2024-01-16", "last_login": "2024-01-20"}
-            ],
-            "orders": [
-                {"id": 101, "customer_id": 1, "total_amount": 299.99, "status": "completed", "created_at": "2024-01-20"},
-                {"id": 102, "customer_id": 2, "total_amount": 149.50, "status": "pending", "created_at": "2024-01-19"},
-                {"id": 103, "customer_id": 3, "total_amount": 89.99, "status": "completed", "created_at": "2024-01-18"},
-                {"id": 104, "customer_id": 1, "total_amount": 199.00, "status": "shipped", "created_at": "2024-01-17"},
-                {"id": 105, "customer_id": 4, "total_amount": 349.99, "status": "completed", "created_at": "2024-01-21"}
-            ],
-            "products": [
-                {"id": 1, "name": "Wireless Headphones", "price": 99.99, "category": "Electronics", "stock_quantity": 25},
-                {"id": 2, "name": "Coffee Maker", "price": 149.99, "category": "Appliances", "stock_quantity": 8},
-                {"id": 3, "name": "Running Shoes", "price": 129.99, "category": "Sports", "stock_quantity": 15},
-                {"id": 4, "name": "Smartphone Case", "price": 29.99, "category": "Electronics", "stock_quantity": 3},
-                {"id": 5, "name": "Yoga Mat", "price": 39.99, "category": "Sports", "stock_quantity": 12}
-            ],
-            "analytics": [
-                {"metric": "Total Users", "value": 1250, "change": "+12%", "period": "Last 30 days"},
-                {"metric": "Active Users", "value": 890, "change": "+8%", "period": "Last 30 days"},
-                {"metric": "Revenue", "value": 25400.50, "change": "+15%", "period": "Last 30 days"},
-                {"metric": "Conversion Rate", "value": 3.2, "change": "+0.5%", "period": "Last 30 days"}
-            ]
-        }
-        logger.info(f"📊 Initialized sample data with {sum(len(v) for v in data.values())} total records")
-        return data
-    
-    def _detect_query_intent(self, query: str) -> str:
-        """Detect the intent of the user's query"""
-        query_lower = query.lower()
-        logger.info(f"🔍 Analyzing query intent for: '{query}'")
-        
-        # Check for specific patterns
-        for intent, config in self.response_patterns.items():
-            if "patterns" in config:
-                for pattern in config["patterns"]:
-                    if re.search(pattern, query_lower):
-                        logger.info(f"✅ Detected intent: {intent} (matched pattern: {pattern})")
-                        return intent
-        
-        # Default to data_queries for unknown patterns
-        logger.info(f"🔄 Using default intent: data_queries")
-        return "data_queries"
-    
-    def _detect_data_type(self, query: str) -> str:
-        """Detect what type of data the user is asking about"""
-        query_lower = query.lower()
-        logger.info(f"📊 Detecting data type for: '{query}'")
-        
-        if any(word in query_lower for word in ["user", "customer", "account", "profile"]):
-            logger.info(f"👥 Detected data type: users")
-            return "users"
-        elif any(word in query_lower for word in ["order", "purchase", "sale", "transaction", "revenue"]):
-            logger.info(f"🛒 Detected data type: orders")
-            return "orders"
-        elif any(word in query_lower for word in ["product", "item", "inventory", "catalog"]):
-            logger.info(f"📦 Detected data type: products")
-            return "products"
-        elif any(word in query_lower for word in ["analytics", "metrics", "stats", "performance"]):
-            logger.info(f"📈 Detected data type: analytics")
-            return "analytics"
-        else:
-            logger.info(f"�� Using default data type: users")
-            return "users"  # Default fallback
-    
-    def _generate_sql_query(self, query: str, data_type: str) -> str:
-        """Generate appropriate SQL query based on the user's request"""
-        logger.info(f"🛠️ Generating SQL query for data_type='{data_type}', query='{query}'")
-        
-        patterns = self.response_patterns.get(data_type, {})
-        sql_templates = patterns.get("sql_templates", [])
-        
-        if sql_templates:
-            # Choose template based on query keywords
-            query_lower = query.lower()
-            
-            if any(word in query_lower for word in ["count", "total", "number", "how many"]):
-                # Return count/aggregate query if available
-                count_queries = [q for q in sql_templates if "COUNT" in q.upper()]
-                if count_queries:
-                    selected_sql = random.choice(count_queries)
-                    logger.info(f"📊 Selected COUNT/aggregate SQL template: {selected_sql[:50]}...")
-                    return selected_sql
-            
-            if any(word in query_lower for word in ["recent", "latest", "new", "last"]):
-                # Return recent data query if available
-                recent_queries = [q for q in sql_templates if "ORDER BY" in q and "DESC" in q]
-                if recent_queries:
-                    selected_sql = random.choice(recent_queries)
-                    logger.info(f"🕒 Selected recent data SQL template: {selected_sql[:50]}...")
-                    return selected_sql
-            
-            if any(word in query_lower for word in ["group", "category", "by"]):
-                # Return grouped data query if available
-                group_queries = [q for q in sql_templates if "GROUP BY" in q.upper()]
-                if group_queries:
-                    selected_sql = random.choice(group_queries)
-                    logger.info(f"📊 Selected GROUP BY SQL template: {selected_sql[:50]}...")
-                    return selected_sql
-            
-            # Default to first template
-            selected_sql = sql_templates[0]
-            logger.info(f"🔄 Selected default SQL template: {selected_sql[:50]}...")
-            return selected_sql
-        
-        # Fallback generic query
-        fallback_sql = f"SELECT * FROM {data_type} LIMIT 10"
-        logger.info(f"⚠️ Using fallback SQL: {fallback_sql}")
-        return fallback_sql
-    
-    def _get_sample_data(self, data_type: str, limit: int = 5) -> List[Dict]:
-        """Get sample data for the specified data type"""
-        logger.info(f"📋 Retrieving sample data for data_type='{data_type}', limit={limit}")
-        
-        data = self.sample_data.get(data_type, [])
-        sample = data[:limit]
-        
-        logger.info(f"✅ Retrieved {len(sample)} sample records")
-        if sample:
-            logger.info(f"📝 Sample data preview: {list(sample[0].keys()) if sample else 'No data'}")
-        
-        return sample
-    
-    def _generate_analysis(self, query: str, data: List[Dict], data_type: str) -> str:
-        """Generate intelligent analysis based on the query and data"""
-        logger.info(f"🧠 Generating analysis for query='{query}', data_type='{data_type}', records={len(data)}")
-        
-        analysis_parts = []
-        
-        # Basic data summary
-        if data:
-            summary = f"📊 **Data Summary**: Found {len(data)} records"
-            analysis_parts.append(summary)
-            logger.info(f"✅ Added basic summary: {summary}")
-            
-            # Type-specific insights
-            if data_type == "users":
-                if "email" in data[0]:
-                    domains = [row["email"].split("@")[1] for row in data if "@" in str(row.get("email", ""))]
-                    unique_domains = len(set(domains))
-                    insight = f"👥 **User Insights**: Users from {unique_domains} different email domains"
-                    analysis_parts.append(insight)
-                    logger.info(f"👥 Added user insight: {insight}")
-                
-                if "created_at" in data[0]:
-                    temporal_insight = "📅 **Temporal Pattern**: Recent user registrations show steady growth"
-                    analysis_parts.append(temporal_insight)
-                    logger.info(f"📅 Added temporal insight: {temporal_insight}")
-            
-            elif data_type == "orders":
-                if "total_amount" in data[0]:
-                    total_revenue = sum(float(row.get("total_amount", 0)) for row in data)
-                    avg_order = total_revenue / len(data) if data else 0
-                    revenue_insight = f"💰 **Revenue Insights**: Average order value: ${avg_order:.2f}"
-                    analysis_parts.append(revenue_insight)
-                    logger.info(f"💰 Added revenue insight: {revenue_insight}")
-                
-                if "status" in data[0]:
-                    statuses = [row.get("status", "") for row in data]
-                    completed = statuses.count("completed")
-                    status_insight = f"✅ **Order Status**: {completed}/{len(data)} orders completed"
-                    analysis_parts.append(status_insight)
-                    logger.info(f"✅ Added status insight: {status_insight}")
-            
-            elif data_type == "products":
-                if "category" in data[0]:
-                    categories = set(row.get("category", "") for row in data)
-                    category_insight = f"🏷️ **Product Diversity**: {len(categories)} different categories"
-                    analysis_parts.append(category_insight)
-                    logger.info(f"🏷️ Added category insight: {category_insight}")
-                
-                if "stock_quantity" in data[0]:
-                    low_stock = sum(1 for row in data if int(row.get("stock_quantity", 0)) < 10)
-                    if low_stock > 0:
-                        stock_insight = f"⚠️ **Inventory Alert**: {low_stock} products with low stock"
-                        analysis_parts.append(stock_insight)
-                        logger.info(f"⚠️ Added inventory insight: {stock_insight}")
-            
-            elif data_type == "analytics":
-                perf_insight = "📈 **Performance Metrics**: Key indicators showing positive trends"
-                analysis_parts.append(perf_insight)
-                logger.info(f"📈 Added performance insight: {perf_insight}")
-                
-                positive_changes = sum(1 for row in data if "+" in str(row.get("change", "")))
-                if positive_changes > 0:
-                    growth_insight = f"📊 **Growth Indicators**: {positive_changes}/{len(data)} metrics showing improvement"
-                    analysis_parts.append(growth_insight)
-                    logger.info(f"📊 Added growth insight: {growth_insight}")
-        
-        # Query-specific insights
-        query_lower = query.lower()
-        if "trend" in query_lower or "growth" in query_lower:
-            trend_insight = "📈 **Trend Analysis**: Data indicates steady upward trajectory with seasonal variations"
-            analysis_parts.append(trend_insight)
-            logger.info(f"📈 Added trend insight: {trend_insight}")
-        
-        if "performance" in query_lower:
-            perf_specific = "⚡ **Performance Insights**: System metrics within optimal ranges, minor optimizations possible"
-            analysis_parts.append(perf_specific)
-            logger.info(f"⚡ Added performance insight: {perf_specific}")
-        
-        if "comparison" in query_lower or "compare" in query_lower:
-            compare_insight = "🔍 **Comparative Analysis**: Current period shows 15% improvement over previous baseline"
-            analysis_parts.append(compare_insight)
-            logger.info(f"🔍 Added comparison insight: {compare_insight}")
-        
-        # Recommendations
-        if data_type in ["users", "orders"]:
-            recommendation = "💡 **Recommendations**: Consider implementing retention campaigns for inactive users"
-            analysis_parts.append(recommendation)
-            logger.info(f"💡 Added recommendation: {recommendation}")
-        elif data_type == "products":
-            recommendation = "💡 **Recommendations**: Monitor low-stock items and optimize inventory levels"
-            analysis_parts.append(recommendation)
-            logger.info(f"💡 Added recommendation: {recommendation}")
-        
-        final_analysis = "\n\n".join(analysis_parts) if analysis_parts else "Analysis completed successfully."
-        logger.info(f"🎯 Generated complete analysis with {len(analysis_parts)} sections")
-        
-        return final_analysis
-    
-    async def process_query(self, question: str, analyze: bool = False) -> Dict[str, Any]:
+    async def classify_query(self, question: str) -> Dict[str, Any]:
         """
-        Process a natural language query and return appropriate response
+        Classify which databases are relevant for a given question
         
         Args:
-            question: User's natural language question
-            analyze: Whether to include analysis in the response
+            question: Natural language question
             
         Returns:
-            Dictionary with rows, sql, and optional analysis
+            Classification results with relevant databases
         """
-        logger.info(f"🚀 PROCESSING QUERY: '{question}' (analyze={analyze})")
+        logger.info(f"🔍 Classifying query: '{question}'")
         
         try:
-            # Detect query intent and data type
-            intent = self._detect_query_intent(question)
-            data_type = self._detect_data_type(question)
+            results = await self.classifier.classify(question)
             
-            logger.info(f"📊 Query classification: intent='{intent}', data_type='{data_type}'")
+            # Get all sources for additional information
+            sources = registry_client.get_all_sources()
+            sources_by_id = {s["id"]: s for s in sources}
             
-            # Handle greetings and general queries
-            if intent == "greetings":
-                greeting_response = random.choice(self.response_patterns["greetings"]["responses"])
-                response = {
-                    "rows": [{"message": greeting_response}],
-                    "sql": "-- No SQL query needed for greetings",
-                    "analysis": "This is a greeting message. Ask me about your data and I'll help you explore it!" if analyze else None
+            # Enhance results with source information
+            selected_sources = results.get("sources", [])
+            enhanced_sources = []
+            
+            for source_id in selected_sources:
+                if source_id in sources_by_id:
+                    source = sources_by_id[source_id]
+                    enhanced_sources.append({
+                        "id": source_id,
+                        "type": source.get("type", "unknown"),
+                        "name": source.get("name", source_id),
+                        "relevance": "high"  # Could implement scoring here
+                    })
+            
+            return {
+                "question": question,
+                "sources": enhanced_sources,
+                "reasoning": results.get("reasoning", ""),
+                "is_cross_database": len(enhanced_sources) > 1
+            }
+            
+        except Exception as e:
+            logger.error(f"❌ Error classifying query: {str(e)}")
+            return {
+                "question": question,
+                "sources": [],
+                "reasoning": f"Classification failed: {str(e)}",
+                "is_cross_database": False,
+                "error": str(e)
+            }
+    
+    async def execute_single_database_query(self, question: str, db_type: str, db_uri: str, analyze: bool = False) -> Dict[str, Any]:
+        """
+        Execute a query against a single database
+        
+        Args:
+            question: Natural language question
+            db_type: Database type (postgres, mongodb, etc.)
+            db_uri: Database connection URI
+            analyze: Whether to include analysis
+            
+        Returns:
+            Query results with optional analysis
+        """
+        logger.info(f"🔄 Executing single DB query: {db_type}")
+        
+        try:
+            # Create orchestrator for the specified database
+            orchestrator = Orchestrator(db_uri, db_type=db_type)
+            
+            # Test connection
+            if not await orchestrator.test_connection():
+                return {
+                    "rows": [{"error": "Database connection failed"}],
+                    "sql": "-- Connection failed",
+                    "analysis": "❌ **Error**: Database connection failed" if analyze else None,
+                    "success": False
                 }
-                logger.info(f"👋 Greeting response generated: {greeting_response[:50]}...")
-                logger.info(f"📤 FINAL RESPONSE: {response}")
-                return response
             
-            # Generate SQL query
-            sql_query = self._generate_sql_query(question, data_type)
-            logger.info(f"🛠️ Generated SQL: {sql_query}")
+            # Ensure schema index exists
+            try:
+                await ensure_index_exists(db_type=db_type, conn_uri=db_uri)
+                await ensure_schema_index_updated(force=False, db_type=db_type, conn_uri=db_uri)
+            except Exception as schema_error:
+                logger.warning(f"⚠️ Schema index setup failed: {schema_error}")
             
-            # Get sample data (simulate database execution)
-            sample_data = self._get_sample_data(data_type)
-            logger.info(f"📋 Retrieved {len(sample_data)} sample records")
+            # Generate and execute query based on database type
+            if db_type.lower() in ["postgres", "postgresql"]:
+                return await self._execute_postgres_query(question, analyze, orchestrator, db_type)
+            elif db_type.lower() == "mongodb":
+                return await self._execute_mongodb_query(question, analyze, orchestrator, db_type)
+            elif db_type.lower() == "qdrant":
+                return await self._execute_qdrant_query(question, analyze, orchestrator, db_type)
+            elif db_type.lower() == "slack":
+                return await self._execute_slack_query(question, analyze, orchestrator, db_type)
+            elif db_type.lower() == "shopify":
+                return await self._execute_shopify_query(question, analyze, orchestrator, db_type)
+            elif db_type.lower() == "ga4":
+                return await self._execute_ga4_query(question, analyze, orchestrator, db_type)
+            else:
+                return {
+                    "rows": [{"error": f"Unsupported database type: {db_type}"}],
+                    "sql": "-- Unsupported database type",
+                    "analysis": f"❌ **Error**: Unsupported database type: {db_type}" if analyze else None,
+                    "success": False
+                }
+                
+        except Exception as e:
+            logger.error(f"❌ Error executing single database query: {str(e)}")
+            return {
+                "rows": [{"error": f"Query execution failed: {str(e)}"}],
+                "sql": "-- Error occurred during execution",
+                "analysis": f"❌ **Error**: {str(e)}" if analyze else None,
+                "success": False
+            }
+    
+    async def execute_cross_database_query(self, question: str, analyze: bool = False, optimize: bool = False, save_session: bool = True) -> Dict[str, Any]:
+        """
+        Execute a cross-database query using orchestration
+        
+        Args:
+            question: Natural language question
+            analyze: Whether to include analysis
+            optimize: Whether to optimize the query plan
+            save_session: Whether to save session state
+            
+        Returns:
+            Cross-database query results
+        """
+        cross_db_logger.info(f"🌐 Executing cross-database query: '{question}'")
+        cross_db_logger.info(f"🔧 Parameters: analyze={analyze}, optimize={optimize}, save_session={save_session}")
+        
+        try:
+            # Create session if saving
+            session_id = None
+            state = None
+            
+            if save_session:
+                cross_db_logger.info(f"💾 Creating session for cross-database query")
+                session_id = await self.state_manager.create_session(question)
+                state = await self.state_manager.get_state(session_id)
+                state.add_executed_tool("cross_db_query", {"question": question, "optimize": optimize}, {})
+                cross_db_logger.info(f"💾 Session created with ID: {session_id}")
+            
+            # Execute the cross-database query
+            cross_db_logger.info(f"🚀 Calling cross_db_agent.execute_query")
+            result = await self.cross_db_agent.execute_query(
+                question, 
+                optimize_plan=optimize, 
+                dry_run=False
+            )
+            
+            cross_db_logger.info(f"📊 Result received from cross_db_agent.execute_query")
+            cross_db_logger.info(f"📊 Result type: {type(result)}")
+            cross_db_logger.info(f"📊 Result keys: {list(result.keys()) if isinstance(result, dict) else 'Not a dict'}")
+            
+            if isinstance(result, dict):
+                cross_db_logger.info(f"📊 Result.success: {result.get('success', 'KEY_NOT_FOUND')}")
+                if "execution" in result:
+                    exec_data = result["execution"]
+                    cross_db_logger.info(f"📊 Execution data type: {type(exec_data)}")
+                    cross_db_logger.info(f"📊 Execution data keys: {list(exec_data.keys()) if isinstance(exec_data, dict) else 'Not a dict'}")
+                    if isinstance(exec_data, dict):
+                        cross_db_logger.info(f"📊 Execution.success: {exec_data.get('success', 'KEY_NOT_FOUND')}")
+                        if "result" in exec_data:
+                            exec_result = exec_data["result"]
+                            cross_db_logger.info(f"📊 Execution result type: {type(exec_result)}")
+                            cross_db_logger.info(f"📊 Execution result keys: {list(exec_result.keys()) if isinstance(exec_result, dict) else 'Not a dict'}")
+                else:
+                    cross_db_logger.warning(f"⚠️ No 'execution' key found in result")
+            
+            # Check if execution was successful
+            execution_success = False
+            if isinstance(result, dict):
+                # Check for success in multiple possible locations
+                if result.get("success", False):
+                    execution_success = True
+                    cross_db_logger.info(f"✅ Top-level success flag is True")
+                elif isinstance(result.get("execution"), dict) and result["execution"].get("success", False):
+                    execution_success = True
+                    cross_db_logger.info(f"✅ Execution-level success flag is True")
+                else:
+                    cross_db_logger.warning(f"❌ No success flag found or success is False")
+                    cross_db_logger.warning(f"❌ Top-level success: {result.get('success', 'KEY_NOT_FOUND')}")
+                    if "execution" in result and isinstance(result["execution"], dict):
+                        cross_db_logger.warning(f"❌ Execution success: {result['execution'].get('success', 'KEY_NOT_FOUND')}")
+            
+            if not execution_success:
+                error_msg = result.get("error", "Unknown error during cross-database execution")
+                cross_db_logger.error(f"❌ Cross-database execution failed: {error_msg}")
+                return {
+                    "rows": [{"error": error_msg}],
+                    "sql": "-- Cross-database query failed",
+                    "analysis": f"❌ **Error**: {error_msg}" if analyze else None,
+                    "success": False,
+                    "session_id": session_id
+                }
+            
+            cross_db_logger.info(f"🔍 Beginning result extraction process")
+            
+            # Extract results
+            rows = []
+            sql_info = "-- Cross-database query executed successfully"
+            
+            # Extract from the correct nested structure: result["execution"]["result"]
+            execution_data = result.get("execution", {})
+            cross_db_logger.info(f"🔍 Execution data extracted: {type(execution_data)}")
+            
+            if "result" in execution_data:
+                cross_db_logger.info(f"🔍 Found 'result' in execution_data")
+                result_data = execution_data["result"]
+                cross_db_logger.info(f"🔍 Result data type: {type(result_data)}")
+                cross_db_logger.info(f"🔍 Result data keys: {list(result_data.keys()) if isinstance(result_data, dict) else 'Not a dict'}")
+                
+                if isinstance(result_data, dict):
+                    # Check for different possible data structures
+                    if "data" in result_data:
+                        rows = result_data["data"]
+                        cross_db_logger.info(f"🔍 Extracted {len(rows) if isinstance(rows, list) else 'N/A'} rows from 'data' field")
+                    elif "aggregated_results" in result_data:
+                        rows = result_data["aggregated_results"]
+                        cross_db_logger.info(f"🔍 Extracted {len(rows) if isinstance(rows, list) else 'N/A'} rows from 'aggregated_results' field")
+                    elif "results" in result_data:
+                        rows = result_data["results"]
+                        cross_db_logger.info(f"🔍 Extracted {len(rows) if isinstance(rows, list) else 'N/A'} rows from 'results' field")
+                    elif "all_results" in result_data:
+                        cross_db_logger.info(f"🔍 Processing 'all_results' field")
+                        # Handle case where we have operation results
+                        all_results = result_data["all_results"]
+                        cross_db_logger.info(f"🔍 all_results type: {type(all_results)}")
+                        cross_db_logger.info(f"🔍 all_results keys: {list(all_results.keys()) if isinstance(all_results, dict) else 'Not a dict'}")
+                        
+                        combined_rows = []
+                        for op_id, op_result in all_results.items():
+                            cross_db_logger.info(f"🔍 Processing operation {op_id}: {type(op_result)}")
+                            if isinstance(op_result, list):
+                                combined_rows.extend(op_result)
+                                cross_db_logger.info(f"🔍 Added {len(op_result)} rows from operation {op_id}")
+                            elif isinstance(op_result, dict) and "data" in op_result:
+                                if isinstance(op_result["data"], list):
+                                    combined_rows.extend(op_result["data"])
+                                    cross_db_logger.info(f"🔍 Added {len(op_result['data'])} rows from operation {op_id} data field")
+                                else:
+                                    combined_rows.append(op_result["data"])
+                                    cross_db_logger.info(f"🔍 Added 1 row from operation {op_id} data field")
+                            else:
+                                cross_db_logger.info(f"🔍 Operation {op_id} result structure not recognized")
+                        rows = combined_rows
+                        cross_db_logger.info(f"🔍 Total combined rows: {len(rows)}")
+                    else:
+                        rows = [result_data]
+                        cross_db_logger.info(f"🔍 Using entire result_data as single row")
+                elif isinstance(result_data, list):
+                    rows = result_data
+                    cross_db_logger.info(f"🔍 Result data is already a list with {len(rows)} items")
+                else:
+                    rows = [{"result": str(result_data)}]
+                    cross_db_logger.info(f"🔍 Converting result_data to string representation")
+            elif execution_data and execution_data.get("success", False):
+                cross_db_logger.info(f"🔍 No 'result' field but execution was successful, checking execution_summary")
+                # If execution was successful but no result field, try to extract from execution summary
+                if "execution_summary" in execution_data and "operation_details" in execution_data["execution_summary"]:
+                    operation_details = execution_data["execution_summary"]["operation_details"]
+                    cross_db_logger.info(f"🔍 Found operation_details with {len(operation_details)} operations")
+                    
+                    combined_rows = []
+                    for op_id, op_detail in operation_details.items():
+                        cross_db_logger.info(f"🔍 Processing operation detail {op_id}: status={op_detail.get('status')}")
+                        if op_detail.get("status") == "COMPLETED" and "result" in op_detail:
+                            op_result = op_detail["result"]
+                            cross_db_logger.info(f"🔍 Operation {op_id} result type: {type(op_result)}")
+                            if isinstance(op_result, list):
+                                combined_rows.extend(op_result)
+                                cross_db_logger.info(f"🔍 Added {len(op_result)} rows from operation {op_id}")
+                            elif isinstance(op_result, dict):
+                                combined_rows.append(op_result)
+                                cross_db_logger.info(f"🔍 Added 1 row from operation {op_id}")
+                    rows = combined_rows
+                    cross_db_logger.info(f"🔍 Total rows from execution summary: {len(rows)}")
+                else:
+                    rows = [{"message": "Query executed successfully but no data returned"}]
+                    cross_db_logger.info(f"🔍 No operation details found, using default message")
+            else:
+                cross_db_logger.warning(f"⚠️ No result extraction method succeeded")
+                rows = [{"error": "Unable to extract results from cross-database query"}]
+            
+            cross_db_logger.info(f"🔍 Final rows count: {len(rows) if isinstance(rows, list) else 'Not a list'}")
+            
+            # Generate plan information as "SQL"
+            if "plan" in result:
+                cross_db_logger.info(f"🔍 Generating plan information")
+                plan = result["plan"]
+                if hasattr(plan, 'id'):
+                    plan_info = {
+                        "plan_id": plan.id,
+                        "operations": len(plan.operations) if hasattr(plan, 'operations') else 0,
+                        "databases": list(set(op.source_id for op in plan.operations if hasattr(op, 'source_id') and op.source_id)) if hasattr(plan, 'operations') else []
+                    }
+                elif isinstance(plan, dict):
+                    plan_info = {
+                        "plan_id": plan.get("id", "unknown"),
+                        "operations": len(plan.get("operations", [])),
+                        "databases": list(set(op.get("source_id") for op in plan.get("operations", []) if op.get("source_id")))
+                    }
+                else:
+                    plan_info = {"plan": str(plan)}
+                sql_info = f"-- Cross-database plan: {json.dumps(plan_info, indent=2)}"
+                cross_db_logger.info(f"🔍 Plan info generated: {plan_info}")
             
             # Prepare response
+            cross_db_logger.info(f"🔧 Building final response")
             response = {
-                "rows": sample_data,
-                "sql": sql_query
+                "rows": rows,
+                "sql": sql_info,
+                "success": True,
+                "session_id": session_id,
+                "plan_info": result.get("plan"),
+                "execution_summary": execution_data.get("execution_summary", {})
+            }
+            cross_db_logger.info(f"🔧 Response built with {len(rows) if isinstance(rows, list) else 'N/A'} rows")
+            
+            # Add analysis if requested
+            if analyze:
+                cross_db_logger.info(f"🧠 Generating analysis")
+                cross_db_logger.info(f"🧠 Generating LLM analysis for {len(rows)} rows")
+                try:
+                    # Note: analyze_results doesn't accept is_cross_database, only is_vector_search
+                    analysis = await self.llm_client.analyze_results(rows, is_vector_search=False)
+                    response["analysis"] = analysis
+                    cross_db_logger.info(f"🧠 Analysis generated successfully")
+                except Exception as e:
+                    cross_db_logger.error(f"🧠 Error generating analysis: {str(e)}")
+                    response["analysis"] = f"Error generating analysis: {str(e)}"
+            
+            # Update session state
+            if save_session and state:
+                cross_db_logger.info(f"💾 Updating session state")
+                formatted_result = execution_data.get("formatted_result", "") or (execution_data.get("result", {}).get("formatted_result", "") if isinstance(execution_data.get("result"), dict) else "")
+                state.set_final_result(result, formatted_result)
+                await self.state_manager.update_state(state)
+                cross_db_logger.info(f"💾 Session state updated")
+            
+            cross_db_logger.info(f"✅ Cross-database query completed successfully")
+            return response
+            
+        except Exception as e:
+            cross_db_logger.error(f"❌ Error executing cross-database query: {str(e)}")
+            cross_db_logger.error(f"❌ Exception type: {type(e)}")
+            import traceback
+            cross_db_logger.error(f"❌ Traceback: {traceback.format_exc()}")
+            return {
+                "rows": [{"error": f"Cross-database query failed: {str(e)}"}],
+                "sql": "-- Error occurred during cross-database execution",
+                "analysis": f"❌ **Error**: {str(e)}" if analyze else None,
+                "success": False,
+                "session_id": session_id
+            }
+    
+    async def _execute_postgres_query(self, question: str, analyze: bool, orchestrator: Orchestrator, db_type: str) -> Dict[str, Any]:
+        """Execute a PostgreSQL query"""
+        try:
+            # Search schema metadata
+            searcher = SchemaSearcher(db_type=db_type)
+            schema_chunks = await searcher.search(question, top_k=10, db_type=db_type)
+            
+            # Render prompt template for PostgreSQL
+            prompt = self.llm_client.render_template("nl2sql.tpl", schema_chunks=schema_chunks, user_question=question)
+            
+            # Generate SQL
+            sql = await self.llm_client.generate_sql(prompt)
+            
+            # Execute query using the orchestrator
+            rows = await orchestrator.execute(sql)
+            
+            result = {
+                "rows": rows,
+                "sql": sql,
+                "success": True
             }
             
             # Add analysis if requested
             if analyze:
-                analysis = self._generate_analysis(question, sample_data, data_type)
-                response["analysis"] = analysis
-                logger.info(f"🧠 Analysis generated: {len(analysis)} characters")
+                analysis = await self.llm_client.analyze_results(rows)
+                result["analysis"] = analysis
             
-            logger.info(f"📤 FINAL RESPONSE: rows={len(response['rows'])}, sql={len(response['sql'])} chars, analysis={len(response.get('analysis', '')) if response.get('analysis') else 0} chars")
-            return response
+            return result
             
         except Exception as e:
-            logger.error(f"❌ Error processing query '{question}': {str(e)}")
-            # Return error response
-            error_response = {
-                "rows": [{"error": f"Query processing failed: {str(e)}"}],
+            logger.error(f"❌ PostgreSQL query error: {str(e)}")
+            return {
+                "rows": [{"error": f"PostgreSQL query failed: {str(e)}"}],
                 "sql": "-- Error occurred during query generation",
-                "analysis": f"❌ **Error**: {str(e)}" if analyze else None
+                "analysis": f"❌ **Error**: {str(e)}" if analyze else None,
+                "success": False
             }
-            logger.info(f"📤 ERROR RESPONSE: {error_response}")
-            return error_response
+    
+    async def _execute_mongodb_query(self, question: str, analyze: bool, orchestrator: Orchestrator, db_type: str) -> Dict[str, Any]:
+        """Execute a MongoDB query"""
+        try:
+            # Search schema metadata
+            searcher = SchemaSearcher(db_type=db_type)
+            schema_chunks = await searcher.search(question, top_k=5, db_type=db_type)
+            
+            # Get default collection (if applicable)
+            default_collection = getattr(orchestrator.adapter, 'default_collection', None)
+            
+            # Render prompt template for MongoDB
+            prompt = self.llm_client.render_template("mongo_query.tpl", 
+                                          schema_chunks=schema_chunks, 
+                                          user_question=question,
+                                          default_collection=default_collection)
+            
+            # Generate MongoDB query
+            raw_response = await self.llm_client.generate_mongodb_query(prompt)
+            query_data = json.loads(raw_response)
+            
+            # Execute query
+            rows = await orchestrator.execute(query_data)
+            
+            result = {
+                "rows": rows,
+                "sql": json.dumps(query_data, indent=2),  # Return formatted query as "sql"
+                "success": True
+            }
+            
+            # Add analysis if requested
+            if analyze:
+                analysis = await self.llm_client.analyze_results(rows)
+                result["analysis"] = analysis
+            
+            return result
+            
+        except Exception as e:
+            logger.error(f"❌ MongoDB query error: {str(e)}")
+            return {
+                "rows": [{"error": f"MongoDB query failed: {str(e)}"}],
+                "sql": "-- Error occurred during query generation",
+                "analysis": f"❌ **Error**: {str(e)}" if analyze else None,
+                "success": False
+            }
+    
+    async def _execute_qdrant_query(self, question: str, analyze: bool, orchestrator: Orchestrator, db_type: str) -> Dict[str, Any]:
+        """Execute a Qdrant vector search query"""
+        try:
+            # Search schema metadata
+            searcher = SchemaSearcher(db_type=db_type)
+            schema_chunks = await searcher.search(question, top_k=5, db_type=db_type)
+            
+            # Generate query using the orchestrator's LLM-to-query method
+            query_data = await orchestrator.llm_to_query(question)
+            
+            # Execute query
+            rows = await orchestrator.execute(query_data)
+            
+            result = {
+                "rows": rows,
+                "sql": json.dumps(query_data, indent=2),  # Return formatted query as "sql"
+                "success": True
+            }
+            
+            # Add analysis if requested
+            if analyze:
+                analysis = await self.llm_client.analyze_results(rows, is_vector_search=True)
+                result["analysis"] = analysis
+            
+            return result
+            
+        except Exception as e:
+            logger.error(f"❌ Qdrant query error: {str(e)}")
+            return {
+                "rows": [{"error": f"Qdrant query failed: {str(e)}"}],
+                "sql": "-- Error occurred during query generation",
+                "analysis": f"❌ **Error**: {str(e)}" if analyze else None,
+                "success": False
+            }
+    
+    async def _execute_slack_query(self, question: str, analyze: bool, orchestrator: Orchestrator, db_type: str) -> Dict[str, Any]:
+        """Execute a Slack query"""
+        try:
+            # Use orchestrator's LLM-to-query method
+            query_data = await orchestrator.llm_to_query(question)
+            
+            # Execute query
+            rows = await orchestrator.execute(query_data)
+            
+            result = {
+                "rows": rows,
+                "sql": json.dumps(query_data, indent=2),  # Return formatted query as "sql"
+                "success": True
+            }
+            
+            # Add analysis if requested
+            if analyze:
+                analysis = await self.llm_client.analyze_results(rows)
+                result["analysis"] = analysis
+            
+            return result
+            
+        except Exception as e:
+            logger.error(f"❌ Slack query error: {str(e)}")
+            return {
+                "rows": [{"error": f"Slack query failed: {str(e)}"}],
+                "sql": "-- Error occurred during query generation",
+                "analysis": f"❌ **Error**: {str(e)}" if analyze else None,
+                "success": False
+            }
+    
+    async def _execute_shopify_query(self, question: str, analyze: bool, orchestrator: Orchestrator, db_type: str) -> Dict[str, Any]:
+        """Execute a Shopify query"""
+        try:
+            # Use orchestrator's LLM-to-query method
+            query_data = await orchestrator.llm_to_query(question)
+            
+            # Execute query
+            rows = await orchestrator.execute(query_data)
+            
+            result = {
+                "rows": rows,
+                "sql": json.dumps(query_data, indent=2),  # Return formatted query as "sql"
+                "success": True
+            }
+            
+            # Add analysis if requested
+            if analyze:
+                analysis = await self.llm_client.analyze_results(rows)
+                result["analysis"] = analysis
+            
+            return result
+            
+        except Exception as e:
+            logger.error(f"❌ Shopify query error: {str(e)}")
+            return {
+                "rows": [{"error": f"Shopify query failed: {str(e)}"}],
+                "sql": "-- Error occurred during query generation",
+                "analysis": f"❌ **Error**: {str(e)}" if analyze else None,
+                "success": False
+            }
+    
+    async def _execute_ga4_query(self, question: str, analyze: bool, orchestrator: Orchestrator, db_type: str) -> Dict[str, Any]:
+        """Execute a GA4 query"""
+        try:
+            # Use orchestrator's LLM-to-query method
+            query_data = await orchestrator.llm_to_query(question)
+            
+            # Execute query
+            rows = await orchestrator.execute(query_data)
+            
+            result = {
+                "rows": rows,
+                "sql": json.dumps(query_data, indent=2),  # Return formatted query as "sql"
+                "success": True
+            }
+            
+            # Add analysis if requested
+            if analyze:
+                analysis = await self.llm_client.analyze_results(rows)
+                result["analysis"] = analysis
+            
+            return result
+            
+        except Exception as e:
+            logger.error(f"❌ GA4 query error: {str(e)}")
+            return {
+                "rows": [{"error": f"GA4 query failed: {str(e)}"}],
+                "sql": "-- Error occurred during query generation",
+                "analysis": f"❌ **Error**: {str(e)}" if analyze else None,
+                "success": False
+            }
 
-# Create global demo client instance
-demo_llm_client = DemoLLMClient()
+# Create global query engine instance
+query_engine = CrossDatabaseQueryEngine()
 
-async def process_ai_query(question: str, analyze: bool = False) -> Dict[str, Any]:
+async def process_ai_query(question: str, analyze: bool = False, db_type: Optional[str] = None, db_uri: Optional[str] = None, cross_database: bool = False) -> Dict[str, Any]:
     """
-    Process an AI query using the demo LLM client
+    Process an AI query with enhanced cross-database capabilities
     
     Args:
         question: Natural language question
         analyze: Whether to include analysis
+        db_type: Specific database type (if targeting single DB)
+        db_uri: Specific database URI (if targeting single DB)
+        cross_database: Whether to force cross-database mode
         
     Returns:
         Formatted response with rows, sql, and optional analysis
     """
-    logger.info(f"🎯 ENTRY POINT: process_ai_query called with question='{question}', analyze={analyze}")
-    result = await demo_llm_client.process_query(question, analyze)
-    logger.info(f"🏁 ENTRY POINT: process_ai_query returning: {type(result)} with keys: {list(result.keys())}")
-    return result
+    cross_db_logger.info(f"🎯 ENTRY POINT: process_ai_query called with question='{question}', analyze={analyze}, cross_database={cross_database}")
+    cross_db_logger.info(f"🎯 Additional params: db_type={db_type}, db_uri={db_uri}")
+    
+    try:
+        # If specific db_type and db_uri provided, use single database mode
+        if db_type and db_uri and not cross_database:
+            cross_db_logger.info(f"🔄 Using single database mode: {db_type}")
+            result = await query_engine.execute_single_database_query(question, db_type, db_uri, analyze)
+        else:
+            # Classify the query first to determine if cross-database is needed
+            cross_db_logger.info(f"🔍 Classifying query to determine database mode")
+            classification = await query_engine.classify_query(question)
+            cross_db_logger.info(f"🔍 Classification result: {classification}")
+            
+            if classification.get("is_cross_database", False) or cross_database:
+                cross_db_logger.info(f"🌐 Using cross-database mode")
+                cross_db_logger.info(f"🌐 is_cross_database: {classification.get('is_cross_database', False)}, force_cross_database: {cross_database}")
+                result = await query_engine.execute_cross_database_query(question, analyze, optimize=False)
+            else:
+                # Single database based on classification
+                sources = classification.get("sources", [])
+                cross_db_logger.info(f"🔄 Single database mode - found {len(sources)} sources")
+                
+                if sources:
+                    # Use the first relevant source
+                    source = sources[0]
+                    cross_db_logger.info(f"🔄 Using source: {source}")
+                    settings = Settings()
+                    
+                    # Get appropriate URI for the source type
+                    if source["type"] == "postgres":
+                        uri = settings.connection_uri
+                    elif source["type"] == "mongodb":
+                        uri = settings.connection_uri  # Adjust based on your config
+                    else:
+                        uri = settings.connection_uri
+                    
+                    cross_db_logger.info(f"🔄 Using single database mode based on classification: {source['type']}")
+                    result = await query_engine.execute_single_database_query(question, source["type"], uri, analyze)
+                else:
+                    # Fallback to default database
+                    settings = Settings()
+                    cross_db_logger.info(f"🔄 Using fallback single database mode: {settings.DB_TYPE}")
+                    result = await query_engine.execute_single_database_query(question, settings.DB_TYPE, settings.connection_uri, analyze)
+        
+        cross_db_logger.info(f"🏁 ENTRY POINT: process_ai_query returning: {type(result)} with keys: {list(result.keys())}")
+        cross_db_logger.info(f"🏁 Result success: {result.get('success', 'KEY_NOT_FOUND')}")
+        cross_db_logger.info(f"🏁 Result rows count: {len(result.get('rows', [])) if isinstance(result.get('rows'), list) else 'Not a list'}")
+        
+        return result
+        
+    except Exception as e:
+        cross_db_logger.error(f"❌ Error in process_ai_query: {str(e)}")
+        cross_db_logger.error(f"❌ Exception type: {type(e)}")
+        import traceback
+        cross_db_logger.error(f"❌ Traceback: {traceback.format_exc()}")
+        return {
+            "rows": [{"error": f"Query processing failed: {str(e)}"}],
+            "sql": "-- Error occurred during query processing",
+            "analysis": f"❌ **Error**: {str(e)}" if analyze else None,
+            "success": False
+        }
 
 if __name__ == "__main__":
-    # Test the demo client
-    async def test_demo():
-        print("🤖 Testing Demo LLM Client")
-        print("=" * 50)
+    # Test the enhanced query engine
+    async def test_enhanced_engine():
+        print("🤖 Testing Enhanced Cross-Database Query Engine")
+        print("=" * 60)
         
         test_queries = [
-            "Hello! What can you help me with?",
-            "Show me the latest users",
-            "How many orders were placed recently?",
-            "Analyze product performance",
-            "Find users with low activity",
-            "What's the revenue trend?",
-            "Show me products with low stock"
+            # Single database queries
+            ("Show me the latest users from PostgreSQL", False, "postgres"),
+            ("Find recent orders in MongoDB", False, "mongodb"),
+            ("Search for product information in Qdrant", False, "qdrant"),
+            
+            # Cross-database queries
+            ("Compare user activity between Slack and Shopify", True, "cross"),
+            ("Show me analytics from GA4 and correlate with orders", True, "cross"),
+            ("Find customer support issues across all platforms", True, "cross")
         ]
         
-        for query in test_queries:
+        for query, analyze, mode in test_queries:
             print(f"\n🔍 Query: {query}")
-            result = await process_ai_query(query, analyze=True)
-            print(f"📊 SQL: {result['sql']}")
-            print(f"📋 Rows: {len(result['rows'])} results")
-            if result.get('analysis'):
-                print(f"🧠 Analysis: {result['analysis'][:100]}...")
-            print("-" * 30)
+            print(f"📊 Mode: {mode}, Analyze: {analyze}")
+            
+            try:
+                if mode == "cross":
+                    result = await process_ai_query(query, analyze=analyze, cross_database=True)
+                else:
+                    # Let classification determine the database
+                    result = await process_ai_query(query, analyze=analyze)
+                
+                print(f"✅ Success: {result.get('success', False)}")
+                print(f"📋 Rows: {len(result.get('rows', []))} results")
+                
+                if result.get('analysis'):
+                    print(f"🧠 Analysis: {result['analysis'][:100]}...")
+                    
+                if result.get('session_id'):
+                    print(f"💾 Session: {result['session_id']}")
+                    
+            except Exception as e:
+                print(f"❌ Error: {str(e)}")
+            
+            print("-" * 40)
     
     # Also test database connection
-    asyncio.run(test_demo())
+    asyncio.run(test_enhanced_engine())
     asyncio.run(test_conn())

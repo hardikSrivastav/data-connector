@@ -14,6 +14,44 @@ import uuid
 # Configure logging
 logger = logging.getLogger(__name__)
 
+# Set up dedicated logging for cross-database execution
+def setup_cross_db_logger():
+    """Set up a dedicated logger for cross-database execution with file output"""
+    cross_db_logger = logging.getLogger('cross_db_execution')
+    cross_db_logger.setLevel(logging.INFO)
+    
+    # Remove any existing handlers to avoid duplicates
+    cross_db_logger.handlers.clear()
+    
+    # Create file handler for cross-database logs
+    file_handler = logging.FileHandler('cross_db_execution.log', mode='a')  # Append mode
+    file_handler.setLevel(logging.INFO)
+    
+    # Create console handler as well
+    console_handler = logging.StreamHandler()
+    console_handler.setLevel(logging.INFO)
+    
+    # Create formatter
+    formatter = logging.Formatter(
+        '%(asctime)s [%(levelname)s] %(name)s: %(message)s',
+        datefmt='%Y-%m-%d %H:%M:%S'
+    )
+    
+    file_handler.setFormatter(formatter)
+    console_handler.setFormatter(formatter)
+    
+    # Add handlers to logger
+    cross_db_logger.addHandler(file_handler)
+    cross_db_logger.addHandler(console_handler)
+    
+    # Prevent propagation to root logger to avoid SQLAlchemy noise
+    cross_db_logger.propagate = False
+    
+    return cross_db_logger
+
+# Get or create the dedicated logger
+cross_db_logger = setup_cross_db_logger()
+
 # Import registry and classes
 from . import OPERATION_REGISTRY
 from .base import Operation, QueryPlan
@@ -46,9 +84,14 @@ def create_operation(
     depends_on = depends_on or []
     metadata = metadata or {}
     
+    cross_db_logger.info(f"🔨 Creating operation: db_type={db_type}, source_id={source_id}, id={id}")
+    cross_db_logger.info(f"🔨 Operation params: {params}")
+    cross_db_logger.info(f"🔨 Available operation types in registry: {list(OPERATION_REGISTRY.keys())}")
+    
     # Get the operation class for this database type
     if db_type in OPERATION_REGISTRY:
         operation_class = OPERATION_REGISTRY[db_type]
+        cross_db_logger.info(f"🔨 Found operation class for {db_type}: {operation_class}")
         
         try:
             # Create the operation
@@ -56,6 +99,7 @@ def create_operation(
             if db_type == "postgres":
                 # SQL operation parameters
                 if "query" in params:
+                    cross_db_logger.info(f"🔨 Creating PostgreSQL operation with query: {params['query'][:100]}...")
                     return operation_class(
                         id=id,
                         source_id=source_id,
@@ -64,8 +108,11 @@ def create_operation(
                         depends_on=depends_on,
                         metadata=metadata
                     )
+                else:
+                    cross_db_logger.warning(f"🔨 PostgreSQL operation missing 'query' parameter. Available: {list(params.keys())}")
             elif db_type == "mongodb":
                 # MongoDB operation parameters
+                cross_db_logger.info(f"🔨 Creating MongoDB operation with collection: {params.get('collection')}")
                 return operation_class(
                     id=id,
                     source_id=source_id,
@@ -78,6 +125,7 @@ def create_operation(
                 )
             elif db_type == "qdrant":
                 # Qdrant operation parameters
+                cross_db_logger.info(f"🔨 Creating Qdrant operation with collection: {params.get('collection')}, vector: {params.get('vector', [])[:3]}...")
                 return operation_class(
                     id=id,
                     source_id=source_id,
@@ -90,11 +138,12 @@ def create_operation(
                 )
             elif db_type == "slack":
                 # Slack operation parameters
+                cross_db_logger.info(f"🔨 Creating Slack operation with channel: {params.get('channels')}")
                 return operation_class(
                     id=id,
                     source_id=source_id,
-                    channel=params.get("channel"),
-                    query=params.get("query"),
+                    channel=params.get("channel") or (params.get("channels", [None])[0] if params.get("channels") else None),
+                    query=params.get("query", ""),
                     time_range=params.get("time_range", {}),
                     limit=params.get("limit", 100),
                     depends_on=depends_on,
@@ -102,31 +151,27 @@ def create_operation(
                 )
             elif db_type == "shopify":
                 # Shopify operation parameters
+                cross_db_logger.info(f"🔨 Creating Shopify operation with endpoint: {params.get('endpoint')}")
                 return operation_class(
                     id=id,
                     source_id=source_id,
-                    endpoint=params.get("endpoint", "orders"),
+                    endpoint=params.get("endpoint", "products"),
                     query_params=params.get("query_params", {}),
-                    api_method=params.get("method", "GET"),
+                    api_method=params.get("api_method", "GET"),
                     limit=params.get("limit", 100),
                     depends_on=depends_on,
                     metadata=metadata
                 )
-            
-            # For other registered database types, use default approach
-            return operation_class(
-                id=id,
-                source_id=source_id,
-                depends_on=depends_on,
-                metadata=metadata,
-                **params
-            )
-            
         except Exception as e:
-            logger.error(f"Error creating operation for {db_type}: {e}")
+            cross_db_logger.error(f"🔨 Error creating {db_type} operation: {str(e)}")
+            cross_db_logger.error(f"🔨 Exception type: {type(e)}")
+            import traceback
+            cross_db_logger.error(f"🔨 Traceback: {traceback.format_exc()}")
+    else:
+        cross_db_logger.warning(f"🔨 Database type {db_type} not found in registry")
     
-    # Default to generic operation if no specific class found
-    logger.warning(f"No operation class found for {db_type}, using GenericOperation")
+    # Fallback to generic operation
+    cross_db_logger.warning(f"🔨 Falling back to GenericOperation for {db_type}")
     return GenericOperation(
         id=id,
         source_id=source_id,
