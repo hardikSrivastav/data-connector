@@ -3,7 +3,8 @@ import logging
 import jinja2
 import json
 import uuid
-from typing import List, Dict, Any, Optional, Callable
+from typing import List, Dict, Any, Optional, Callable, AsyncIterator
+from datetime import datetime
 import openai
 from openai import OpenAI
 import anthropic
@@ -103,6 +104,84 @@ class LLMClient:
             Final analysis result
         """
         raise NotImplementedError("Subclasses must implement orchestrate_analysis")
+
+    # Streaming Methods
+    async def generate_sql_stream(self, prompt: str) -> AsyncIterator[Dict[str, Any]]:
+        """
+        Generate SQL from a natural language prompt with streaming
+        
+        This method should be overridden by subclasses
+        
+        Args:
+            prompt: The prompt to send to the LLM
+            
+        Yields:
+            Streaming events as dictionaries with type, content, and metadata
+        """
+        raise NotImplementedError("Subclasses must implement generate_sql_stream")
+    
+    async def generate_mongodb_query_stream(self, prompt: str) -> AsyncIterator[Dict[str, Any]]:
+        """
+        Generate MongoDB aggregation pipeline from a natural language prompt with streaming
+        
+        This method should be overridden by subclasses
+        
+        Args:
+            prompt: The prompt to send to the LLM
+            
+        Yields:
+            Streaming events as dictionaries with type, content, and metadata
+        """
+        raise NotImplementedError("Subclasses must implement generate_mongodb_query_stream")
+    
+    async def analyze_results_stream(self, rows: List[Dict[str, Any]], is_vector_search: bool = False) -> AsyncIterator[Dict[str, Any]]:
+        """
+        Analyze query results with streaming
+        
+        This method should be overridden by subclasses
+        
+        Args:
+            rows: Query results as a list of dictionaries
+            is_vector_search: Whether the results are from a vector search
+            
+        Yields:
+            Streaming events as dictionaries with type, content, and metadata
+        """
+        raise NotImplementedError("Subclasses must implement analyze_results_stream")
+    
+    async def orchestrate_analysis_stream(self, question: str, db_type: str = "postgres") -> AsyncIterator[Dict[str, Any]]:
+        """
+        Orchestrate a multi-step analysis process using available tools with streaming
+        
+        This method should be overridden by subclasses
+        
+        Args:
+            question: Natural language question from the user
+            db_type: Database type being queried
+            
+        Yields:
+            Streaming events as dictionaries with type, content, and metadata
+        """
+        raise NotImplementedError("Subclasses must implement orchestrate_analysis_stream")
+
+    def _create_stream_event(self, event_type: str, **kwargs) -> Dict[str, Any]:
+        """
+        Create a standardized streaming event
+        
+        Args:
+            event_type: Type of the event (status, partial_sql, sql_complete, etc.)
+            **kwargs: Additional event data
+            
+        Returns:
+            Standardized event dictionary
+        """
+        event = {
+            "type": event_type,
+            "timestamp": datetime.utcnow().isoformat() + "Z",
+            "session_id": kwargs.pop("session_id", str(uuid.uuid4())),
+            **kwargs
+        }
+        return event
 
     async def generate_ga4_query(self, prompt: str) -> str:
         """
@@ -288,6 +367,84 @@ class OpenAIClient(LLMClient):
             logger.error(f"Error generating SQL with OpenAI: {str(e)}")
             raise
     
+    async def generate_sql_stream(self, prompt: str) -> AsyncIterator[Dict[str, Any]]:
+        """
+        Generate SQL from a natural language prompt using OpenAI API with streaming
+        
+        Args:
+            prompt: The prompt to send to the OpenAI API
+            
+        Yields:
+            Streaming events as dictionaries
+        """
+        logger.info("Generating SQL using OpenAI API with streaming")
+        session_id = str(uuid.uuid4())
+        
+        try:
+            # Yield initial status
+            yield self._create_stream_event("status", 
+                                           message="Starting SQL generation...", 
+                                           session_id=session_id)
+            
+            # Create streaming request
+            stream = self.client.chat.completions.create(
+                model=self.model_name,
+                messages=[
+                    {"role": "system", "content": "You are a SQL expert. Generate only SQL code without explanations."},
+                    {"role": "user", "content": prompt}
+                ],
+                temperature=0.1,
+                stream=True
+            )
+            
+            yield self._create_stream_event("status", 
+                                           message="Receiving SQL generation...", 
+                                           session_id=session_id)
+            
+            # Collect partial content
+            partial_content = ""
+            chunk_count = 0
+            
+            # Process streaming response
+            for chunk in stream:
+                if chunk.choices[0].delta.content is not None:
+                    content = chunk.choices[0].delta.content
+                    partial_content += content
+                    chunk_count += 1
+                    
+                    # Yield partial SQL content
+                    yield self._create_stream_event("partial_sql", 
+                                                   content=partial_content, 
+                                                   is_complete=False,
+                                                   chunk_index=chunk_count,
+                                                   session_id=session_id)
+            
+            # Clean up the final SQL
+            sql = partial_content.strip()
+            
+            # Basic validation
+            validation_status = "valid"
+            if not sql or not any(keyword in sql.upper() for keyword in ["SELECT", "INSERT", "UPDATE", "DELETE", "WITH"]):
+                validation_status = "warning"
+            
+            # Yield completion event
+            yield self._create_stream_event("sql_complete", 
+                                           sql=sql, 
+                                           validation_status=validation_status,
+                                           total_chunks=chunk_count,
+                                           session_id=session_id)
+            
+            logger.info("Successfully completed SQL generation streaming")
+            
+        except Exception as e:
+            logger.error(f"Error generating SQL with OpenAI streaming: {str(e)}")
+            yield self._create_stream_event("error", 
+                                           error_code="GENERATION_FAILED",
+                                           message=f"Error generating SQL: {str(e)}",
+                                           recoverable=True,
+                                           session_id=session_id)
+            raise
+    
     async def generate_mongodb_query(self, prompt: str) -> str:
         """
         Generate MongoDB aggregation pipeline from a natural language prompt using OpenAI API
@@ -332,6 +489,96 @@ class OpenAIClient(LLMClient):
             
         except Exception as e:
             logger.error(f"Error generating MongoDB query with OpenAI: {str(e)}")
+            raise
+    
+    async def generate_mongodb_query_stream(self, prompt: str) -> AsyncIterator[Dict[str, Any]]:
+        """
+        Generate MongoDB aggregation pipeline from a natural language prompt using OpenAI API with streaming
+        
+        Args:
+            prompt: The prompt to send to the OpenAI API
+            
+        Yields:
+            Streaming events as dictionaries
+        """
+        logger.info("Generating MongoDB query using OpenAI API with streaming")
+        session_id = str(uuid.uuid4())
+        
+        try:
+            # Yield initial status
+            yield self._create_stream_event("status", 
+                                           message="Starting MongoDB query generation...", 
+                                           session_id=session_id)
+            
+            # Create streaming request
+            stream = self.client.chat.completions.create(
+                model=self.model_name,
+                messages=[
+                    {"role": "system", "content": "You are a MongoDB expert. Generate only JSON representing a valid MongoDB query."},
+                    {"role": "user", "content": prompt}
+                ],
+                temperature=0.1,
+                stream=True
+            )
+            
+            yield self._create_stream_event("status", 
+                                           message="Receiving MongoDB query generation...", 
+                                           session_id=session_id)
+            
+            # Collect partial content
+            partial_content = ""
+            chunk_count = 0
+            
+            # Process streaming response
+            for chunk in stream:
+                if chunk.choices[0].delta.content is not None:
+                    content = chunk.choices[0].delta.content
+                    partial_content += content
+                    chunk_count += 1
+                    
+                    # Yield partial MongoDB query content
+                    yield self._create_stream_event("partial_mongodb_query", 
+                                                   content=partial_content, 
+                                                   is_complete=False,
+                                                   chunk_index=chunk_count,
+                                                   session_id=session_id)
+            
+            # Clean up the final query
+            mongodb_query = partial_content.strip()
+            
+            # Try to validate JSON
+            validation_status = "valid"
+            try:
+                json.loads(mongodb_query)
+            except json.JSONDecodeError:
+                # Try to extract JSON from response if wrapped in code blocks
+                import re
+                json_match = re.search(r'```(?:json)?\s*([\s\S]*?)\s*```', mongodb_query)
+                if json_match:
+                    mongodb_query = json_match.group(1).strip()
+                    try:
+                        json.loads(mongodb_query)
+                    except json.JSONDecodeError:
+                        validation_status = "invalid"
+                else:
+                    validation_status = "invalid"
+            
+            # Yield completion event
+            yield self._create_stream_event("mongodb_query_complete", 
+                                           query=mongodb_query, 
+                                           validation_status=validation_status,
+                                           total_chunks=chunk_count,
+                                           session_id=session_id)
+            
+            logger.info("Successfully completed MongoDB query generation streaming")
+            
+        except Exception as e:
+            logger.error(f"Error generating MongoDB query with OpenAI streaming: {str(e)}")
+            yield self._create_stream_event("error", 
+                                           error_code="GENERATION_FAILED",
+                                           message=f"Error generating MongoDB query: {str(e)}",
+                                           recoverable=True,
+                                           session_id=session_id)
             raise
     
     async def analyze_results(self, rows: List[Dict[str, Any]], is_vector_search: bool = False) -> str:
@@ -397,6 +644,111 @@ class OpenAIClient(LLMClient):
         except Exception as e:
             logger.error(f"Error analyzing results: {str(e)}")
             return f"Error analyzing results: {str(e)}"
+    
+    async def analyze_results_stream(self, rows: List[Dict[str, Any]], is_vector_search: bool = False) -> AsyncIterator[Dict[str, Any]]:
+        """
+        Analyze query results using OpenAI API with streaming
+        
+        Args:
+            rows: Query results as a list of dictionaries
+            is_vector_search: Whether the results are from a vector search
+            
+        Yields:
+            Streaming events as dictionaries
+        """
+        logger.info(f"Analyzing {'vector search' if is_vector_search else 'query'} results using OpenAI API with streaming")
+        session_id = str(uuid.uuid4())
+        
+        try:
+            # Yield initial status
+            yield self._create_stream_event("status", 
+                                           message="Starting results analysis...", 
+                                           session_id=session_id)
+            
+            # Prepare the data for the prompt
+            data_str = json.dumps(rows[:100], indent=2)  # Limit to 100 rows
+            
+            # Choose appropriate prompt based on result type
+            if is_vector_search:
+                prompt = f"""
+                Analyze these vector search results and provide key insights:
+                
+                {data_str}
+                
+                Consider:
+                1. Similarity patterns in the results
+                2. Key information or themes present in the top results
+                3. How well the results match the semantic meaning of the query
+                4. Any patterns in the metadata of the results
+                
+                Format your analysis in markdown with clean sections and bullet points.
+                """
+            else:
+                prompt = f"""
+                Analyze these SQL query results and provide key insights:
+                
+                {data_str}
+                
+                Consider:
+                1. Key patterns and trends
+                2. Notable outliers
+                3. Statistical observations
+                4. Business implications
+                
+                Format your analysis in markdown with clean sections and bullet points.
+                """
+            
+            yield self._create_stream_event("status", 
+                                           message="Generating analysis...", 
+                                           session_id=session_id)
+            
+            # Create streaming request
+            stream = self.client.chat.completions.create(
+                model=self.model_name,
+                messages=[
+                    {"role": "system", "content": "You are a data analyst providing clear, concise insights."},
+                    {"role": "user", "content": prompt}
+                ],
+                temperature=0.1,
+                stream=True
+            )
+            
+            # Collect partial content
+            partial_content = ""
+            chunk_count = 0
+            
+            # Process streaming response
+            for chunk in stream:
+                if chunk.choices[0].delta.content is not None:
+                    content = chunk.choices[0].delta.content
+                    partial_content += content
+                    chunk_count += 1
+                    
+                    # Yield analysis chunk
+                    yield self._create_stream_event("analysis_chunk", 
+                                                   text=partial_content, 
+                                                   chunk_index=chunk_count,
+                                                   is_final=False,
+                                                   session_id=session_id)
+            
+            # Yield final analysis event
+            yield self._create_stream_event("analysis_chunk", 
+                                           text=partial_content.strip(), 
+                                           chunk_index=chunk_count,
+                                           is_final=True,
+                                           total_chunks=chunk_count,
+                                           session_id=session_id)
+            
+            logger.info("Successfully completed analysis streaming")
+            
+        except Exception as e:
+            logger.error(f"Error analyzing results with OpenAI streaming: {str(e)}")
+            yield self._create_stream_event("error", 
+                                           error_code="ANALYSIS_FAILED",
+                                           message=f"Error analyzing results: {str(e)}",
+                                           recoverable=True,
+                                           session_id=session_id)
+            raise
     
     async def orchestrate_analysis(self, question: str, db_type: str = "postgres") -> Dict[str, Any]:
         """
@@ -659,6 +1011,246 @@ class OpenAIClient(LLMClient):
                 "steps_taken": step_count,
                 "state": state.to_dict()
             }
+    
+    async def orchestrate_analysis_stream(self, question: str, db_type: str = "postgres") -> AsyncIterator[Dict[str, Any]]:
+        """
+        Orchestrate a multi-step analysis process using available tools with streaming
+        
+        Args:
+            question: Natural language question from the user
+            db_type: Database type being queried
+            
+        Yields:
+            Streaming events as dictionaries
+        """
+        logger.info(f"Starting orchestrated analysis streaming for question: {question} with database type: {db_type}")
+        session_id = str(uuid.uuid4())
+        
+        try:
+            # Yield initial status
+            yield self._create_stream_event("status", 
+                                           message="Initializing orchestrated analysis...", 
+                                           session_id=session_id)
+            
+            # Create a new session and initialize tools
+            state_session_id = await self.state_manager.create_session(question)
+            
+            # Initialize data tools with the correct database type
+            self.data_tools = DataTools(db_type=db_type)
+            await self.data_tools.initialize(state_session_id)
+            
+            # Get the state for this session
+            state = await self.state_manager.get_state(state_session_id)
+            if not state:
+                raise ValueError(f"Failed to create session state for question: {question}")
+            
+            yield self._create_stream_event("status", 
+                                           message="Loading schema information...", 
+                                           session_id=session_id)
+            
+            # Load prompt template for orchestration
+            system_prompt = self.render_template("orchestration_system.tpl", db_type=db_type)
+            
+            # Pre-load basic schema metadata to provide context to the LLM
+            try:
+                basic_metadata = await self.data_tools.get_metadata()
+                
+                # Extract just the table names for efficiency
+                table_names = []
+                if isinstance(basic_metadata, dict) and 'tables' in basic_metadata:
+                    for table in basic_metadata.get('tables', []):
+                        if 'name' in table:
+                            table_names.append(table['name'])
+                
+                context_message = f"""
+                Available tables in the database: {', '.join(table_names)}
+                
+                When analyzing data, first use get_metadata to understand table structures before running queries.
+                Always check if a table exists before trying to query it.
+                
+                Now analyze the following: {question}
+                """
+            except Exception as e:
+                logger.warning(f"Failed to pre-load schema metadata: {str(e)}")
+                context_message = f"I need to analyze the following: {question}"
+            
+            # Initialize conversation
+            messages = [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": context_message}
+            ]
+            
+            yield self._create_stream_event("status", 
+                                           message="Starting analysis process...", 
+                                           session_id=session_id)
+            
+            # Progress tracking
+            max_steps = 10
+            step_count = 0
+            
+            # Tool execution mapping
+            tool_executors = {
+                "get_metadata": self.data_tools.get_metadata,
+                "run_summary_query": self.data_tools.run_summary_query,
+                "run_targeted_query": self.data_tools.run_targeted_query,
+                "sample_data": self.data_tools.sample_data,
+                "generate_insights": self.data_tools.generate_insights
+            }
+            
+            while step_count < max_steps:
+                step_count += 1
+                
+                # Yield progress update
+                yield self._create_stream_event("progress", 
+                                               step=step_count, 
+                                               total=max_steps,
+                                               percentage=int((step_count / max_steps) * 100),
+                                               current_operation=f"Analysis step {step_count}",
+                                               session_id=session_id)
+                
+                try:
+                    # Call LLM with current conversation
+                    response = self.client.chat.completions.create(
+                        model=self.model_name,
+                        messages=messages,
+                        tools=self.tools,
+                        temperature=0.2
+                    )
+                    
+                    response_message = response.choices[0].message
+                    message_dict = response_message.model_dump()
+                    messages.append(message_dict)
+                    
+                    tool_calls = response_message.tool_calls
+                    
+                    # If no tool calls, check if we've reached a conclusion
+                    if not tool_calls:
+                        content = response_message.content
+                        if content and "FINAL ANALYSIS:" in content:
+                            # Extract final analysis
+                            final_analysis = content.split("FINAL ANALYSIS:")[1].strip()
+                            
+                            yield self._create_stream_event("analysis_chunk", 
+                                                           text=final_analysis, 
+                                                           chunk_index=1,
+                                                           is_final=True,
+                                                           session_id=session_id)
+                            
+                            yield self._create_stream_event("status", 
+                                                           message="Analysis completed successfully", 
+                                                           session_id=session_id)
+                            return
+                        else:
+                            # Continue the conversation
+                            messages.append({
+                                "role": "user", 
+                                "content": "Please continue the analysis. Use available tools to gather more information if needed, or provide the final analysis if you have enough information."
+                            })
+                            continue
+                    
+                    # Process tool calls
+                    tool_results = []
+                    for tool_call in tool_calls:
+                        function_name = tool_call.function.name
+                        tool_use_id = tool_call.id
+                        function_args = json.loads(tool_call.function.arguments)
+                        
+                        yield self._create_stream_event("status", 
+                                                       message=f"Executing {function_name}...", 
+                                                       session_id=session_id)
+                        
+                        try:
+                            if function_name in tool_executors:
+                                result = await tool_executors[function_name](**function_args)
+                                
+                                # Record in state
+                                state.add_executed_tool(function_name, function_args, result)
+                                await self.state_manager.update_state(state)
+                                
+                                tool_results.append({
+                                    "type": "tool_result",
+                                    "tool_use_id": tool_use_id,
+                                    "content": json.dumps(result)
+                                })
+                            else:
+                                tool_results.append({
+                                    "type": "tool_result",
+                                    "tool_use_id": tool_use_id,
+                                    "content": json.dumps({"error": f"Unknown function: {function_name}"})
+                                })
+                        except Exception as e:
+                            logger.error(f"Error executing tool {function_name}: {str(e)}")
+                            tool_results.append({
+                                "type": "tool_result",
+                                "tool_use_id": tool_use_id,
+                                "content": json.dumps({"error": f"Error executing {function_name}: {str(e)}"})
+                            })
+                    
+                    # Add tool results to conversation
+                    if tool_results:
+                        messages.append({
+                            "role": "user",
+                            "content": tool_results
+                        })
+                
+                except Exception as e:
+                    logger.error(f"Error in orchestration step {step_count}: {str(e)}")
+                    yield self._create_stream_event("error", 
+                                                   error_code="ORCHESTRATION_ERROR",
+                                                   message=f"Error in analysis step {step_count}: {str(e)}",
+                                                   recoverable=True,
+                                                   session_id=session_id)
+                    break
+            
+            # If we reach here, we've exceeded the maximum number of steps
+            yield self._create_stream_event("status", 
+                                           message="Generating final analysis from available data...", 
+                                           session_id=session_id)
+            
+            # Generate a final response based on what we have
+            try:
+                final_prompt = "We've reached the maximum number of analysis steps. Please provide your best analysis based on the information gathered so far. Begin with 'FINAL ANALYSIS:'"
+                messages.append({"role": "user", "content": final_prompt})
+                
+                final_response = self.client.chat.completions.create(
+                    model=self.model_name,
+                    messages=messages,
+                    temperature=0.2
+                )
+                
+                final_content = final_response.choices[0].message.content
+                if "FINAL ANALYSIS:" in final_content:
+                    final_analysis = final_content.split("FINAL ANALYSIS:")[1].strip()
+                else:
+                    final_analysis = final_content
+                
+                yield self._create_stream_event("analysis_chunk", 
+                                               text=final_analysis, 
+                                               chunk_index=1,
+                                               is_final=True,
+                                               max_steps_reached=True,
+                                               session_id=session_id)
+                
+                yield self._create_stream_event("status", 
+                                               message="Analysis completed (max steps reached)", 
+                                               session_id=session_id)
+                
+            except Exception as e:
+                logger.error(f"Error generating final analysis: {str(e)}")
+                yield self._create_stream_event("error", 
+                                               error_code="FINAL_ANALYSIS_FAILED",
+                                               message=f"Failed to complete final analysis: {str(e)}",
+                                               recoverable=False,
+                                               session_id=session_id)
+        
+        except Exception as e:
+            logger.error(f"Error in orchestrated analysis streaming: {str(e)}")
+            yield self._create_stream_event("error", 
+                                           error_code="ORCHESTRATION_FAILED",
+                                           message=f"Error in orchestrated analysis: {str(e)}",
+                                           recoverable=False,
+                                           session_id=session_id)
+            raise
 
 class AnthropicClient(LLMClient):
     """Client for Anthropic API"""
@@ -1281,6 +1873,260 @@ class AnthropicClient(LLMClient):
                 "state": state.to_dict()
             }
 
+    # Streaming method implementations for AnthropicClient
+    async def generate_sql_stream(self, prompt: str) -> AsyncIterator[Dict[str, Any]]:
+        """
+        Generate SQL from a natural language prompt using Anthropic API with streaming
+        """
+        logger.info("Generating SQL using Anthropic API with streaming")
+        session_id = str(uuid.uuid4())
+        
+        try:
+            yield self._create_stream_event("status", 
+                                           message="Starting SQL generation with Anthropic...", 
+                                           session_id=session_id)
+            
+            # Anthropic streaming
+            stream = self.client.messages.create(
+                model=self.model_name,
+                messages=[
+                    {"role": "user", "content": prompt}
+                ],
+                system="You are a SQL expert. Generate only SQL code without explanations.",
+                temperature=0.1,
+                max_tokens=1000,
+                stream=True
+            )
+            
+            partial_content = ""
+            chunk_count = 0
+            
+            for chunk in stream:
+                if hasattr(chunk, 'delta') and hasattr(chunk.delta, 'text'):
+                    content = chunk.delta.text
+                    partial_content += content
+                    chunk_count += 1
+                    
+                    yield self._create_stream_event("partial_sql", 
+                                                   content=partial_content, 
+                                                   is_complete=False,
+                                                   chunk_index=chunk_count,
+                                                   session_id=session_id)
+            
+            # Validate SQL
+            sql = partial_content.strip()
+            validation_status = "valid"
+            if not sql or not any(keyword in sql.upper() for keyword in ["SELECT", "INSERT", "UPDATE", "DELETE", "WITH"]):
+                validation_status = "warning"
+            
+            yield self._create_stream_event("sql_complete", 
+                                           sql=sql, 
+                                           validation_status=validation_status,
+                                           total_chunks=chunk_count,
+                                           session_id=session_id)
+            
+        except Exception as e:
+            logger.error(f"Error generating SQL with Anthropic streaming: {str(e)}")
+            yield self._create_stream_event("error", 
+                                           error_code="GENERATION_FAILED",
+                                           message=f"Error generating SQL: {str(e)}",
+                                           recoverable=True,
+                                           session_id=session_id)
+            raise
+
+    async def generate_mongodb_query_stream(self, prompt: str) -> AsyncIterator[Dict[str, Any]]:
+        """
+        Generate MongoDB query using Anthropic API with streaming
+        """
+        logger.info("Generating MongoDB query using Anthropic API with streaming")
+        session_id = str(uuid.uuid4())
+        
+        try:
+            yield self._create_stream_event("status", 
+                                           message="Starting MongoDB query generation with Anthropic...", 
+                                           session_id=session_id)
+            
+            # Anthropic streaming
+            stream = self.client.messages.create(
+                model=self.model_name,
+                messages=[
+                    {"role": "user", "content": prompt}
+                ],
+                system="You are a MongoDB expert. Generate only JSON representing a valid MongoDB query.",
+                temperature=0.1,
+                max_tokens=1000,
+                stream=True
+            )
+            
+            partial_content = ""
+            chunk_count = 0
+            
+            for chunk in stream:
+                if hasattr(chunk, 'delta') and hasattr(chunk.delta, 'text'):
+                    content = chunk.delta.text
+                    partial_content += content
+                    chunk_count += 1
+                    
+                    yield self._create_stream_event("partial_mongodb_query", 
+                                                   content=partial_content, 
+                                                   is_complete=False,
+                                                   chunk_index=chunk_count,
+                                                   session_id=session_id)
+            
+            # Validate JSON
+            mongodb_query = partial_content.strip()
+            validation_status = "valid"
+            try:
+                json.loads(mongodb_query)
+            except json.JSONDecodeError:
+                # Try to extract JSON from code blocks
+                import re
+                json_match = re.search(r'```(?:json)?\s*([\s\S]*?)\s*```', mongodb_query)
+                if json_match:
+                    mongodb_query = json_match.group(1).strip()
+                    try:
+                        json.loads(mongodb_query)
+                    except json.JSONDecodeError:
+                        validation_status = "invalid"
+                else:
+                    validation_status = "invalid"
+            
+            yield self._create_stream_event("mongodb_query_complete", 
+                                           query=mongodb_query, 
+                                           validation_status=validation_status,
+                                           total_chunks=chunk_count,
+                                           session_id=session_id)
+            
+        except Exception as e:
+            logger.error(f"Error generating MongoDB query with Anthropic streaming: {str(e)}")
+            yield self._create_stream_event("error", 
+                                           error_code="GENERATION_FAILED",
+                                           message=f"Error generating MongoDB query: {str(e)}",
+                                           recoverable=True,
+                                           session_id=session_id)
+            raise
+
+    async def analyze_results_stream(self, rows: List[Dict[str, Any]], is_vector_search: bool = False) -> AsyncIterator[Dict[str, Any]]:
+        """
+        Analyze query results using Anthropic API with streaming
+        """
+        logger.info(f"Analyzing {'vector search' if is_vector_search else 'query'} results using Anthropic API with streaming")
+        session_id = str(uuid.uuid4())
+        
+        try:
+            yield self._create_stream_event("status", 
+                                           message="Starting results analysis with Anthropic...", 
+                                           session_id=session_id)
+            
+            # Prepare data
+            data_str = json.dumps(rows[:100], indent=2)
+            
+            if is_vector_search:
+                prompt = f"""
+                Analyze these vector search results and provide key insights:
+                
+                {data_str}
+                
+                Consider:
+                1. Similarity patterns in the results
+                2. Key information or themes present in the top results
+                3. How well the results match the semantic meaning of the query
+                4. Any patterns in the metadata of the results
+                
+                Format your analysis in markdown with clean sections and bullet points.
+                """
+            else:
+                prompt = f"""
+                Analyze these SQL query results and provide key insights:
+                
+                {data_str}
+                
+                Consider:
+                1. Key patterns and trends
+                2. Notable outliers
+                3. Statistical observations
+                4. Business implications
+                
+                Format your analysis in markdown with clean sections and bullet points.
+                """
+            
+            # Anthropic streaming
+            stream = self.client.messages.create(
+                model=self.model_name,
+                messages=[
+                    {"role": "user", "content": prompt}
+                ],
+                system="You are a data analyst providing clear, concise insights.",
+                temperature=0.1,
+                max_tokens=1500,
+                stream=True
+            )
+            
+            partial_content = ""
+            chunk_count = 0
+            
+            for chunk in stream:
+                if hasattr(chunk, 'delta') and hasattr(chunk.delta, 'text'):
+                    content = chunk.delta.text
+                    partial_content += content
+                    chunk_count += 1
+                    
+                    yield self._create_stream_event("analysis_chunk", 
+                                                   text=partial_content, 
+                                                   chunk_index=chunk_count,
+                                                   is_final=False,
+                                                   session_id=session_id)
+            
+            # Final analysis event
+            yield self._create_stream_event("analysis_chunk", 
+                                           text=partial_content.strip(), 
+                                           chunk_index=chunk_count,
+                                           is_final=True,
+                                           total_chunks=chunk_count,
+                                           session_id=session_id)
+            
+        except Exception as e:
+            logger.error(f"Error analyzing results with Anthropic streaming: {str(e)}")
+            yield self._create_stream_event("error", 
+                                           error_code="ANALYSIS_FAILED",
+                                           message=f"Error analyzing results: {str(e)}",
+                                           recoverable=True,
+                                           session_id=session_id)
+            raise
+
+    async def orchestrate_analysis_stream(self, question: str, db_type: str = "postgres") -> AsyncIterator[Dict[str, Any]]:
+        """
+        Orchestrate a multi-step analysis process using available tools with streaming (Anthropic)
+        """
+        logger.info(f"Starting orchestrated analysis streaming with Anthropic for question: {question}")
+        session_id = str(uuid.uuid4())
+        
+        try:
+            yield self._create_stream_event("status", 
+                                           message="Initializing orchestrated analysis with Anthropic...", 
+                                           session_id=session_id)
+            
+            # Note: For brevity, this is a simplified implementation
+            # A full implementation would mirror the OpenAI orchestration but adapted for Anthropic's API
+            yield self._create_stream_event("status", 
+                                           message="Anthropic orchestration streaming is simplified for now", 
+                                           session_id=session_id)
+            
+            yield self._create_stream_event("analysis_chunk", 
+                                           text=f"Anthropic-based analysis for '{question}' using {db_type} database would be implemented here.", 
+                                           chunk_index=1,
+                                           is_final=True,
+                                           session_id=session_id)
+            
+        except Exception as e:
+            logger.error(f"Error in Anthropic orchestration streaming: {str(e)}")
+            yield self._create_stream_event("error", 
+                                           error_code="ORCHESTRATION_FAILED",
+                                           message=f"Error in Anthropic orchestration: {str(e)}",
+                                           recoverable=False,
+                                           session_id=session_id)
+            raise
+
 class LocalLLMClient(LLMClient):
     """Client for local LLM inference"""
     
@@ -1392,6 +2238,31 @@ class LocalLLMClient(LLMClient):
             "analysis": "Orchestrated analysis not implemented for local LLM",
             "error": "Not implemented"
         }
+
+    # Streaming method implementations for LocalLLMClient
+    async def generate_sql_stream(self, prompt: str) -> AsyncIterator[Dict[str, Any]]:
+        """Generate SQL with streaming (placeholder implementation)"""
+        session_id = str(uuid.uuid4())
+        yield self._create_stream_event("status", message="Local LLM SQL generation not implemented", session_id=session_id)
+        yield self._create_stream_event("sql_complete", sql="SELECT * FROM users LIMIT 10", validation_status="warning", session_id=session_id)
+    
+    async def generate_mongodb_query_stream(self, prompt: str) -> AsyncIterator[Dict[str, Any]]:
+        """Generate MongoDB query with streaming (placeholder implementation)"""
+        session_id = str(uuid.uuid4())
+        yield self._create_stream_event("status", message="Local LLM MongoDB generation not implemented", session_id=session_id)
+        yield self._create_stream_event("mongodb_query_complete", query='{"collection": "users", "pipeline": [{"$limit": 10}]}', validation_status="warning", session_id=session_id)
+    
+    async def analyze_results_stream(self, rows: List[Dict[str, Any]], is_vector_search: bool = False) -> AsyncIterator[Dict[str, Any]]:
+        """Analyze results with streaming (placeholder implementation)"""
+        session_id = str(uuid.uuid4())
+        yield self._create_stream_event("status", message="Local LLM analysis not implemented", session_id=session_id)
+        yield self._create_stream_event("analysis_chunk", text="Local LLM analysis not implemented", chunk_index=1, is_final=True, session_id=session_id)
+    
+    async def orchestrate_analysis_stream(self, question: str, db_type: str = "postgres") -> AsyncIterator[Dict[str, Any]]:
+        """Orchestrate analysis with streaming (placeholder implementation)"""
+        session_id = str(uuid.uuid4())
+        yield self._create_stream_event("status", message="Local LLM orchestration not implemented", session_id=session_id)
+        yield self._create_stream_event("analysis_chunk", text="Local LLM orchestration not implemented", chunk_index=1, is_final=True, session_id=session_id)
 
 class DummyLLMClient(LLMClient):
     """
@@ -1768,6 +2639,38 @@ class DummyLLMClient(LLMClient):
             "state": {"status": "completed"}
         }
 
+    # Streaming method implementations for DummyLLMClient
+    async def generate_sql_stream(self, prompt: str) -> AsyncIterator[Dict[str, Any]]:
+        """Generate SQL with streaming (dummy implementation)"""
+        session_id = str(uuid.uuid4())
+        yield self._create_stream_event("status", message="Starting dummy SQL generation...", session_id=session_id)
+        yield self._create_stream_event("partial_sql", content="SELECT * FROM", is_complete=False, chunk_index=1, session_id=session_id)
+        yield self._create_stream_event("partial_sql", content="SELECT * FROM users", is_complete=False, chunk_index=2, session_id=session_id)
+        yield self._create_stream_event("sql_complete", sql="SELECT * FROM users LIMIT 10", validation_status="valid", session_id=session_id)
+    
+    async def generate_mongodb_query_stream(self, prompt: str) -> AsyncIterator[Dict[str, Any]]:
+        """Generate MongoDB query with streaming (dummy implementation)"""
+        session_id = str(uuid.uuid4())
+        yield self._create_stream_event("status", message="Starting dummy MongoDB generation...", session_id=session_id)
+        yield self._create_stream_event("partial_mongodb_query", content='{"collection":', is_complete=False, chunk_index=1, session_id=session_id)
+        yield self._create_stream_event("mongodb_query_complete", query='{"collection": "users", "pipeline": [{"$match": {}}, {"$limit": 10}]}', validation_status="valid", session_id=session_id)
+    
+    async def analyze_results_stream(self, rows: List[Dict[str, Any]], is_vector_search: bool = False) -> AsyncIterator[Dict[str, Any]]:
+        """Analyze results with streaming (dummy implementation)"""
+        session_id = str(uuid.uuid4())
+        yield self._create_stream_event("status", message="Starting dummy analysis...", session_id=session_id)
+        yield self._create_stream_event("analysis_chunk", text=f"Analyzing {len(rows)} rows of data...", chunk_index=1, is_final=False, session_id=session_id)
+        yield self._create_stream_event("analysis_chunk", text=f"Analysis complete: Found {len(rows)} records with sample data.", chunk_index=2, is_final=True, session_id=session_id)
+    
+    async def orchestrate_analysis_stream(self, question: str, db_type: str = "postgres") -> AsyncIterator[Dict[str, Any]]:
+        """Orchestrate analysis with streaming (dummy implementation)"""
+        session_id = str(uuid.uuid4())
+        yield self._create_stream_event("status", message="Starting dummy orchestration...", session_id=session_id)
+        yield self._create_stream_event("progress", step=1, total=3, percentage=33, current_operation="Loading metadata", session_id=session_id)
+        yield self._create_stream_event("progress", step=2, total=3, percentage=66, current_operation="Executing query", session_id=session_id)
+        yield self._create_stream_event("progress", step=3, total=3, percentage=100, current_operation="Generating analysis", session_id=session_id)
+        yield self._create_stream_event("analysis_chunk", text=f"Dummy analysis for '{question}' using {db_type} database: Found relevant data.", chunk_index=1, is_final=True, session_id=session_id)
+
 class FallbackLLMClient(LLMClient):
     """
     Client that implements automatic fallbacks between different LLM providers.
@@ -1851,6 +2754,71 @@ class FallbackLLMClient(LLMClient):
     async def orchestrate_analysis(self, question: str, db_type: str = "postgres") -> Dict[str, Any]:
         """Orchestrate a multi-step analysis"""
         return await self._try_clients("orchestrate_analysis", question, db_type)
+
+    # Streaming method implementations for FallbackLLMClient
+    async def generate_sql_stream(self, prompt: str) -> AsyncIterator[Dict[str, Any]]:
+        """Generate SQL with streaming using fallback clients"""
+        async for event in await self._try_clients_stream("generate_sql_stream", prompt):
+            yield event
+    
+    async def generate_mongodb_query_stream(self, prompt: str) -> AsyncIterator[Dict[str, Any]]:
+        """Generate MongoDB query with streaming using fallback clients"""
+        async for event in await self._try_clients_stream("generate_mongodb_query_stream", prompt):
+            yield event
+    
+    async def analyze_results_stream(self, rows: List[Dict[str, Any]], is_vector_search: bool = False) -> AsyncIterator[Dict[str, Any]]:
+        """Analyze results with streaming using fallback clients"""
+        async for event in await self._try_clients_stream("analyze_results_stream", rows, is_vector_search):
+            yield event
+    
+    async def orchestrate_analysis_stream(self, question: str, db_type: str = "postgres") -> AsyncIterator[Dict[str, Any]]:
+        """Orchestrate analysis with streaming using fallback clients"""
+        async for event in await self._try_clients_stream("orchestrate_analysis_stream", question, db_type):
+            yield event
+
+    async def _try_clients_stream(self, method_name: str, *args, **kwargs) -> AsyncIterator[Dict[str, Any]]:
+        """
+        Try calling a streaming method on each client in order until one succeeds
+        
+        Args:
+            method_name: The name of the streaming method to call
+            *args: Arguments to pass to the method
+            **kwargs: Keyword arguments to pass to the method
+            
+        Yields:
+            Events from the first successful client
+        """
+        errors = []
+        
+        for i, client in enumerate(self.clients):
+            try:
+                method = getattr(client, method_name)
+                
+                # If this is not the primary client, yield a status event about using fallback
+                if i > 0:
+                    yield self._create_stream_event("status", 
+                                                   message=f"Using fallback client {i+1} ({client.__class__.__name__})",
+                                                   session_id=str(uuid.uuid4()))
+                
+                async for event in method(*args, **kwargs):
+                    yield event
+                return  # Success, no need to try more clients
+                
+            except Exception as e:
+                # Log the error and try the next client
+                error_msg = str(e)
+                logger.warning(f"Client {i+1} ({client.__class__.__name__}) failed for {method_name}: {error_msg[:100]}...")
+                errors.append(f"Client {i+1} ({client.__class__.__name__}): {error_msg}")
+                continue
+        
+        # If we get here, all clients failed
+        session_id = str(uuid.uuid4())
+        yield self._create_stream_event("error", 
+                                       error_code="ALL_CLIENTS_FAILED",
+                                       message=f"All LLM clients failed for {method_name}: {'; '.join(errors)}",
+                                       recoverable=False,
+                                       session_id=session_id)
+        raise Exception(f"All LLM clients failed for {method_name}: {'; '.join(errors)}")
 
 def get_llm_client() -> LLMClient:
     """

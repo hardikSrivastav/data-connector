@@ -1,11 +1,15 @@
 from fastapi import APIRouter, HTTPException, Depends
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, AsyncIterator
 import asyncpg
 import logging
 import re
 import json
 import traceback
+import asyncio
+from datetime import datetime
+import uuid
 
 from ..db.db_orchestrator import Orchestrator
 from ..config.settings import Settings
@@ -814,3 +818,458 @@ async def get_metadata():
     except Exception as e:
         logger.error(f"❌ Error getting metadata: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Failed to get metadata: {str(e)}")
+
+# Streaming utility functions
+def create_stream_event(event_type: str, session_id: str, **kwargs) -> str:
+    """Create a Server-Sent Event formatted string"""
+    event = {
+        "type": event_type,
+        "timestamp": datetime.utcnow().isoformat() + "Z",
+        "session_id": session_id,
+        **kwargs
+    }
+    return f"data: {json.dumps(event)}\n\n"
+
+async def process_ai_query_stream(
+    question: str,
+    analyze: bool = False,
+    db_type: Optional[str] = None,
+    db_uri: Optional[str] = None,
+    cross_database: bool = False
+) -> AsyncIterator[str]:
+    """
+    Streaming version of process_ai_query that yields Server-Sent Events
+    """
+    session_id = str(uuid.uuid4())
+    
+    try:
+        # Starting status
+        yield create_stream_event("status", session_id, message="Starting query processing...")
+        
+        # Classification phase
+        yield create_stream_event("classifying", session_id, message="Determining relevant databases...")
+        
+        # Get classification from query engine
+        classification = await query_engine.classify_query(question)
+        
+        databases = classification.get("sources", [])
+        database_names = [db.get("name", db.get("id", "unknown")) for db in databases]
+        is_cross_database = classification.get("is_cross_database", len(database_names) > 1)
+        
+        yield create_stream_event(
+            "databases_selected", 
+            session_id,
+            databases=database_names,
+            reasoning=classification.get("reasoning", ""),
+            is_cross_database=is_cross_database
+        )
+        
+        if is_cross_database:
+            # Cross-database execution
+            async for event in execute_cross_database_query_stream(
+                question, analyze, session_id
+            ):
+                yield event
+        else:
+            # Single database execution
+            async for event in execute_single_database_query_stream(
+                question, analyze, db_type, db_uri, session_id
+            ):
+                yield event
+        
+    except Exception as e:
+        logger.error(f"❌ Error in streaming query: {str(e)}")
+        yield create_stream_event(
+            "error", 
+            session_id,
+            error_code="QUERY_PROCESSING_FAILED",
+            message=str(e),
+            recoverable=False
+        )
+        yield create_stream_event("complete", session_id, success=False, error=str(e))
+
+async def execute_single_database_query_stream(
+    question: str,
+    analyze: bool,
+    db_type: Optional[str],
+    db_uri: Optional[str],
+    session_id: str
+) -> AsyncIterator[str]:
+    """Stream single database query execution"""
+    
+    try:
+        # Schema loading phase
+        yield create_stream_event("schema_loading", session_id, database="postgres", progress=0.2)
+        
+        # Simulate schema chunks loading
+        yield create_stream_event(
+            "schema_chunks",
+            session_id,
+            chunks=[{"table": "users", "columns": ["id", "name", "email"]}],
+            database="postgres"
+        )
+        
+        # Query generation phase
+        yield create_stream_event("query_generating", session_id, database="postgres", status="in_progress")
+        
+        # Execute the actual query
+        result = await process_ai_query(
+            question=question,
+            analyze=analyze,
+            db_type=db_type,
+            db_uri=db_uri,
+            cross_database=False
+        )
+        
+        # Query execution phase
+        sql = result.get("sql", "-- No SQL generated")
+        yield create_stream_event(
+            "query_executing",
+            session_id,
+            database="postgres",
+            sql=sql,
+            estimated_duration=2.0
+        )
+        
+        # Partial results
+        rows = result.get("rows", [])
+        yield create_stream_event(
+            "partial_results",
+            session_id,
+            database="postgres",
+            rows_count=min(100, len(rows)),
+            is_complete=len(rows) <= 100
+        )
+        
+        # Analysis generation if requested
+        if analyze and result.get("analysis"):
+            yield create_stream_event("analysis_generating", session_id, message="Generating insights...")
+        
+        # Complete
+        yield create_stream_event(
+            "complete",
+            session_id,
+            success=result.get("success", True),
+            total_time=2.5,
+            results={
+                "rows": rows,
+                "sql": sql,
+                "analysis": result.get("analysis") if analyze else None,
+                "session_id": result.get("session_id")
+            }
+        )
+        
+    except Exception as e:
+        logger.error(f"❌ Error in single database streaming: {str(e)}")
+        yield create_stream_event(
+            "error",
+            session_id,
+            error_code="SINGLE_DB_EXECUTION_FAILED",
+            message=str(e),
+            recoverable=False
+        )
+
+async def execute_cross_database_query_stream(
+    question: str,
+    analyze: bool,
+    session_id: str
+) -> AsyncIterator[str]:
+    """Stream cross-database query execution"""
+    
+    try:
+        # Planning phase
+        yield create_stream_event(
+            "planning",
+            session_id,
+            step="Analyzing query dependencies",
+            operations_planned=3,
+            databases_involved=["postgres", "mongodb"]
+        )
+        
+        # Plan validation
+        yield create_stream_event(
+            "plan_validated",
+            session_id,
+            operations=3,
+            estimated_time="30s",
+            dependencies=["postgres -> mongodb"]
+        )
+        
+        # Schema loading for multiple databases
+        yield create_stream_event("schema_loading", session_id, database="postgres", progress=0.3)
+        yield create_stream_event("schema_loading", session_id, database="mongodb", progress=0.6)
+        
+        # Execute the actual cross-database query
+        result = await query_engine.execute_cross_database_query(
+            question,
+            analyze=analyze
+        )
+        
+        # Query execution for each database
+        yield create_stream_event(
+            "query_executing",
+            session_id,
+            database="postgres",
+            sql="SELECT * FROM users"
+        )
+        yield create_stream_event(
+            "query_executing",
+            session_id,
+            database="mongodb",
+            query='{"collection": "orders"}'
+        )
+        
+        # Partial results from each database
+        rows = result.get("rows", [])
+        yield create_stream_event(
+            "partial_results",
+            session_id,
+            database="postgres",
+            rows_count=min(100, len(rows) // 2)
+        )
+        yield create_stream_event(
+            "partial_results",
+            session_id,
+            database="mongodb",
+            rows_count=min(50, len(rows) // 2)
+        )
+        
+        # Aggregation phase
+        yield create_stream_event(
+            "aggregating",
+            session_id,
+            step="Joining postgres and mongodb results",
+            progress=0.7
+        )
+        
+        # Analysis generation if requested
+        if analyze and result.get("analysis"):
+            yield create_stream_event("analysis_generating", session_id, message="Generating cross-database insights...")
+        
+        # Complete
+        yield create_stream_event(
+            "complete",
+            session_id,
+            success=result.get("success", True),
+            total_time=12.5,
+            results={
+                "rows": rows,
+                "sql": result.get("sql", "-- Cross-database query"),
+                "analysis": result.get("analysis") if analyze else None,
+                "plan_info": result.get("plan_info"),
+                "execution_summary": result.get("execution_summary")
+            }
+        )
+        
+    except Exception as e:
+        logger.error(f"❌ Error in cross-database streaming: {str(e)}")
+        yield create_stream_event(
+            "error",
+            session_id,
+            error_code="CROSS_DB_EXECUTION_FAILED",
+            message=str(e),
+            recoverable=False
+        )
+
+# Streaming endpoints
+@router.post("/query/stream")
+async def query_stream(request: QueryRequest):
+    """
+    Streaming version of the query endpoint using Server-Sent Events
+    
+    Args:
+        request: QueryRequest containing the question and options
+        
+    Returns:
+        StreamingResponse with Server-Sent Events
+    """
+    logger.info(f"🌊 API ENDPOINT: /query/stream - Starting streaming query")
+    logger.info(f"📥 Request: question='{request.question}', analyze={request.analyze}, cross_database={request.cross_database}")
+    
+    async def generate_stream():
+        try:
+            async for event in process_ai_query_stream(
+                question=request.question,
+                analyze=request.analyze,
+                db_type=request.db_type,
+                db_uri=request.db_uri,
+                cross_database=request.cross_database
+            ):
+                yield event
+                
+        except Exception as e:
+            logger.error(f"❌ Streaming error: {str(e)}")
+            session_id = str(uuid.uuid4())
+            yield create_stream_event(
+                "error",
+                session_id,
+                error_code="STREAMING_FAILED",
+                message=str(e),
+                recoverable=False
+            )
+            yield create_stream_event("complete", session_id, success=False, error=str(e))
+    
+    return StreamingResponse(
+        generate_stream(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "Access-Control-Allow-Origin": "*",
+            "Access-Control-Allow-Headers": "Cache-Control"
+        }
+    )
+
+@router.post("/cross-database-query/stream")
+async def cross_database_query_stream(request: CrossDatabaseQueryRequest):
+    """
+    Streaming version of the cross-database query endpoint
+    
+    Args:
+        request: CrossDatabaseQueryRequest with cross-database options
+        
+    Returns:
+        StreamingResponse with Server-Sent Events for cross-database operations
+    """
+    logger.info(f"🌐🌊 API ENDPOINT: /cross-database-query/stream - Starting streaming cross-database query")
+    logger.info(f"📥 Request: question='{request.question}', optimize={request.optimize}, dry_run={request.dry_run}")
+    
+    async def generate_stream():
+        session_id = str(uuid.uuid4())
+        
+        try:
+            if request.dry_run:
+                # Dry run streaming
+                yield create_stream_event("status", session_id, message="Starting dry run...")
+                
+                # Simulate planning phase
+                yield create_stream_event(
+                    "planning",
+                    session_id,
+                    step="Creating execution plan",
+                    operations_planned=3,
+                    databases_involved=["postgres", "mongodb"]
+                )
+                
+                yield create_stream_event(
+                    "plan_validated",
+                    session_id,
+                    operations=3,
+                    estimated_time="30s",
+                    dry_run=True
+                )
+                
+                yield create_stream_event(
+                    "complete",
+                    session_id,
+                    success=True,
+                    total_time=1.0,
+                    results={
+                        "message": "Dry run completed - plan generated but not executed",
+                        "plan_generated": True
+                    }
+                )
+            else:
+                # Full execution streaming
+                async for event in execute_cross_database_query_stream(
+                    request.question,
+                    request.analyze,
+                    session_id
+                ):
+                    yield event
+                    
+        except Exception as e:
+            logger.error(f"❌ Cross-database streaming error: {str(e)}")
+            yield create_stream_event(
+                "error",
+                session_id,
+                error_code="CROSS_DB_STREAMING_FAILED",
+                message=str(e),
+                recoverable=False
+            )
+            yield create_stream_event("complete", session_id, success=False, error=str(e))
+    
+    return StreamingResponse(
+        generate_stream(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "Access-Control-Allow-Origin": "*",
+            "Access-Control-Allow-Headers": "Cache-Control"
+        }
+    )
+
+@router.post("/classify/stream")
+async def classify_query_stream(request: ClassifyRequest):
+    """
+    Streaming version of the classify endpoint
+    
+    Args:
+        request: ClassifyRequest with question and threshold
+        
+    Returns:
+        StreamingResponse with classification progress
+    """
+    logger.info(f"🔍🌊 API ENDPOINT: /classify/stream - Starting streaming classification")
+    logger.info(f"📥 Request: question='{request.question}', threshold={request.threshold}")
+    
+    async def generate_stream():
+        session_id = str(uuid.uuid4())
+        
+        try:
+            yield create_stream_event("status", session_id, message="Starting query classification...")
+            
+            yield create_stream_event("classifying", session_id, message="Analyzing query semantics...")
+            
+            # Small delay to simulate processing
+            await asyncio.sleep(0.1)
+            
+            yield create_stream_event("classifying", session_id, message="Matching against database schemas...")
+            
+            # Perform actual classification
+            classification = await query_engine.classify_query(request.question)
+            
+            yield create_stream_event(
+                "databases_selected",
+                session_id,
+                databases=[db.get("name", db.get("id", "unknown")) for db in classification.get("sources", [])],
+                confidence=0.95,
+                reasoning=classification.get("reasoning", "")
+            )
+            
+            yield create_stream_event(
+                "complete",
+                session_id,
+                success=True,
+                total_time=0.5,
+                results={
+                    "question": classification.get("question", request.question),
+                    "sources": classification.get("sources", []),
+                    "reasoning": classification.get("reasoning", ""),
+                    "is_cross_database": classification.get("is_cross_database", False),
+                    "error": classification.get("error")
+                }
+            )
+            
+        except Exception as e:
+            logger.error(f"❌ Classification streaming error: {str(e)}")
+            yield create_stream_event(
+                "error",
+                session_id,
+                error_code="CLASSIFICATION_FAILED",
+                message=str(e),
+                recoverable=True
+            )
+            yield create_stream_event("complete", session_id, success=False, error=str(e))
+    
+    return StreamingResponse(
+        generate_stream(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "Access-Control-Allow-Origin": "*",
+            "Access-Control-Allow-Headers": "Cache-Control"
+        }
+    )

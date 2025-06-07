@@ -6,7 +6,8 @@ import { EmojiPicker } from './EmojiPicker';
 import { BottomStatusBar } from './BottomStatusBar';
 import { Button } from '@/components/ui/button';
 import { useBlockSelection } from '@/hooks/useBlockSelection';
-import { agentClient, AgentQueryResponse } from '@/lib/agent-client';
+import { agentClient, AgentQueryResponse, StreamingCallbacks } from '@/lib/agent-client';
+import { StreamingStatusBlock } from './StreamingStatusBlock';
 
 interface PageEditorProps {
   page: Page;
@@ -49,7 +50,23 @@ export const PageEditor = ({
     blockId: string; 
     content?: string;
     canvasData?: any;
+    streamingProps?: {
+      isStreaming: boolean;
+      query: string;
+      status: string;
+      progress: number;
+    };
   } | null>(null);
+  const [streamingState, setStreamingState] = useState<{
+    isStreaming: boolean;
+    status: string;
+    progress: number;
+    blockId?: string;
+  }>({
+    isStreaming: false,
+    status: '',
+    progress: 0
+  });
   const addingBlockRef = useRef(false); // Track if we're currently adding a block to prevent loops
   
   const {
@@ -186,70 +203,232 @@ export const PageEditor = ({
     
   }, [deleteSelected, selectedBlocks, page.blocks, loggedOnUpdatePage, onDeleteBlock, clearSelection]);
 
-  // AI Query handler - Updated to use real agent API and create Canvas blocks
+  // AI Query handler - Updated to use streaming API for real-time progress
   const handleAIQuery = async (query: string, blockId: string) => {
     console.log(`🎯 PageEditor: handleAIQuery called`);
     console.log(`📝 PageEditor: Query='${query}', BlockId='${blockId}'`);
     
+    // Initialize streaming state
+    setStreamingState({
+      isStreaming: true,
+      status: 'Starting query processing...',
+      progress: 0,
+      blockId: blockId
+    });
+
+    // Create new block immediately for streaming progress
+    const newBlockId = onAddBlock(blockId);
+    console.log(`➕ PageEditor: New Canvas block created with id='${newBlockId}'`);
+
+    // Set temporary streaming status block  
+    setPendingAIUpdate({ 
+      blockId: newBlockId, 
+      content: query, // Store query in content for StreamingStatusBlock to read
+    });
+
     try {
-      console.log(`🔄 PageEditor: Calling agentClient.query...`);
+      console.log(`🌊 PageEditor: Starting streaming query...`);
       
-      // Call the real agent API
-      const response: AgentQueryResponse = await agentClient.query({
+      // Accumulate streaming data
+      let accumulatedData: {
+        databases?: string[];
+        sqlQuery?: string;
+        rows?: any[];
+        analysis?: string;
+        isCrossDatabase?: boolean;
+      } = {};
+      
+      // Call the streaming agent API
+      await agentClient.queryStream({
         question: query,
-        analyze: true // Request analysis for richer responses
-      });
-      
-      console.log(`✅ PageEditor: Agent response received!`);
-      console.log(`📊 PageEditor: Response structure:`, {
-        rows_count: response.rows?.length || 0,
-        sql_length: response.sql?.length || 0,
-        has_analysis: !!response.analysis
-      });
-      
-      // Create canvas preview data from the AI response
-      const canvasData = createCanvasPreviewFromResponse(response, query);
-      
-      // Add the AI response as a new Canvas block after the current block
-      console.log(`➕ PageEditor: Adding new Canvas block after blockId='${blockId}'`);
-      const newBlockId = onAddBlock(blockId);
-      console.log(`➕ PageEditor: New Canvas block created with id='${newBlockId}'`);
-      
-      // Store the canvas data to update when the block appears in state
-      console.log(`💾 PageEditor: Storing Canvas data for delayed update`);
-      setPendingAIUpdate({ 
-        blockId: newBlockId, 
-        canvasData: {
-          threadId: `thread_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
-          threadName: generateThreadName(query),
-          isExpanded: false,
-          workspaceId: workspace.id,
-          pageId: page.id,
-          blockId: newBlockId,
-          // Explicitly spread the canvas data to ensure all properties are preserved
-          fullAnalysis: canvasData.fullAnalysis,
-          fullData: canvasData.fullData,
-          sqlQuery: canvasData.sqlQuery,
-          preview: canvasData.preview,
-          blocks: [] // Initialize empty blocks array
+        analyze: true
+      }, {
+        onStatus: (message) => {
+          console.log(`📊 Status: ${message}`);
+          setStreamingState(prev => ({
+            ...prev,
+            status: message,
+            progress: Math.min(prev.progress + 0.1, 0.9)
+          }));
+        },
+        
+        onClassifying: (message) => {
+          console.log(`🔍 Classifying: ${message}`);
+          setStreamingState(prev => ({
+            ...prev,
+            status: `Analyzing query: ${message}`,
+            progress: 0.15
+          }));
+        },
+        
+        onDatabasesSelected: (databases, reasoning, isCrossDatabase) => {
+          console.log(`🎯 Databases selected:`, databases);
+          accumulatedData.databases = databases;
+          accumulatedData.isCrossDatabase = isCrossDatabase;
+          
+          setStreamingState(prev => ({
+            ...prev,
+            status: `Selected databases: ${databases.join(', ')}`,
+            progress: 0.25
+          }));
+        },
+        
+        onSchemaLoading: (database, progress) => {
+          console.log(`📋 Schema loading for ${database}: ${progress}`);
+          setStreamingState(prev => ({
+            ...prev,
+            status: `Loading ${database} schema...`,
+            progress: 0.25 + (progress * 0.2) // 25% to 45%
+          }));
+        },
+        
+        onQueryGenerating: (database) => {
+          console.log(`⚙️ Generating query for ${database}`);
+          setStreamingState(prev => ({
+            ...prev,
+            status: `Generating query for ${database}...`,
+            progress: 0.5
+          }));
+        },
+        
+        onQueryExecuting: (database, sql) => {
+          console.log(`🚀 Executing query on ${database}`);
+          if (sql) accumulatedData.sqlQuery = sql;
+          
+          setStreamingState(prev => ({
+            ...prev,
+            status: `Executing query on ${database}...`,
+            progress: 0.65
+          }));
+        },
+        
+        onPartialResults: (database, rowsCount, isComplete) => {
+          console.log(`📊 Partial results from ${database}: ${rowsCount} rows`);
+          setStreamingState(prev => ({
+            ...prev,
+            status: `Received ${rowsCount} rows from ${database}`,
+            progress: isComplete ? 0.8 : 0.75
+          }));
+        },
+        
+        onAnalysisGenerating: (message) => {
+          console.log(`🧠 Analysis: ${message}`);
+          setStreamingState(prev => ({
+            ...prev,
+            status: message,
+            progress: 0.85
+          }));
+        },
+        
+        onPlanning: (step, operationsPlanned) => {
+          console.log(`📋 Planning: ${step}`);
+          setStreamingState(prev => ({
+            ...prev,
+            status: `Planning: ${step}`,
+            progress: 0.4
+          }));
+        },
+        
+        onAggregating: (step, progress) => {
+          console.log(`🔗 Aggregating: ${step}`);
+          const aggProgress = progress || 0;
+          setStreamingState(prev => ({
+            ...prev,
+            status: `Aggregating data: ${step}`,
+            progress: 0.7 + (aggProgress * 0.1)
+          }));
+        },
+        
+        onComplete: (results, sessionId) => {
+          console.log(`✅ PageEditor: Streaming completed!`);
+          console.log(`📊 PageEditor: Final results:`, results);
+          
+          setStreamingState(prev => ({
+            ...prev,
+            status: 'Processing complete!',
+            progress: 1.0
+          }));
+          
+          // Process final results
+          if (results) {
+            accumulatedData.rows = results.rows;
+            accumulatedData.analysis = results.analysis;
+            accumulatedData.sqlQuery = results.sql || accumulatedData.sqlQuery;
+          }
+          
+          // Create canvas data from accumulated streaming data
+          const response = {
+            rows: accumulatedData.rows || [],
+            sql: accumulatedData.sqlQuery || '',
+            analysis: accumulatedData.analysis || ''
+          };
+          
+          const canvasData = createCanvasPreviewFromResponse(response, query);
+          
+          // Update the block with final canvas data
+          console.log(`💾 PageEditor: Updating with final Canvas data`);
+          setPendingAIUpdate({ 
+            blockId: newBlockId, 
+            canvasData: {
+              threadId: sessionId || `thread_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+              threadName: generateThreadName(query),
+              isExpanded: false,
+              workspaceId: workspace.id,
+              pageId: page.id,
+              blockId: newBlockId,
+              fullAnalysis: canvasData.fullAnalysis,
+              fullData: canvasData.fullData,
+              sqlQuery: canvasData.sqlQuery,
+              preview: canvasData.preview,
+              blocks: []
+            }
+          });
+          
+          // Clear streaming state
+          setTimeout(() => {
+            setStreamingState({
+              isStreaming: false,
+              status: '',
+              progress: 0
+            });
+          }, 1000);
+        },
+        
+        onError: (error, errorCode, recoverable) => {
+          console.error('❌ PageEditor: Streaming error:', error);
+          setStreamingState(prev => ({
+            ...prev,
+            status: `Error: ${error}`,
+            progress: 0
+          }));
+          
+          // Show error in the block
+          const errorMessage = `❌ **Error:** ${error}\n\n${recoverable ? '🔄 You can try again.' : ''}`;
+          setPendingAIUpdate({ blockId: newBlockId, content: errorMessage });
+          
+          // Clear streaming state
+          setTimeout(() => {
+            setStreamingState({
+              isStreaming: false,
+              status: '',
+              progress: 0
+            });
+          }, 2000);
         }
       });
       
     } catch (error) {
-      console.error('❌ PageEditor: AI Query failed:', error);
-      console.error('❌ PageEditor: Error details:', {
-        query,
-        blockId,
-        error: error.message,
-        stack: error.stack
-      });
+      console.error('❌ PageEditor: Streaming setup failed:', error);
       
-      // Add error message as a regular text block
-      console.log(`⚠️ PageEditor: Adding error block after blockId='${blockId}'`);
-      const newBlockId = onAddBlock(blockId);
-      const errorMessage = `❌ **Error:** ${error.message || 'Failed to get AI response. Please check that the agent server is running.'}`;
-      console.log(`⚠️ PageEditor: Storing error message for delayed update`);
+      // Fallback error handling
+      const errorMessage = `❌ **Error:** ${error.message || 'Failed to start streaming query. Please check that the agent server is running.'}`;
       setPendingAIUpdate({ blockId: newBlockId, content: errorMessage });
+      
+      setStreamingState({
+        isStreaming: false,
+        status: '',
+        progress: 0
+      });
     }
   };
 
@@ -1170,6 +1349,7 @@ export const PageEditor = ({
                     page={page}
                     onNavigateToPage={handleNavigateToPage}
                     onCreateCanvasPage={onCreateCanvasPage}
+                    streamingState={block.id === streamingState.blockId ? streamingState : undefined}
                   />
                 </div>
               );

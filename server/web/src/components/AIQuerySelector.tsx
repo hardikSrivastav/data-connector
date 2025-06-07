@@ -8,6 +8,8 @@ interface AIQuerySelectorProps {
   onQuerySubmit: (query: string) => void;
   onClose: () => void;
   isLoading?: boolean;
+  streamingStatus?: string;
+  streamingProgress?: number;
 }
 
 const AI_OPTIONS = [
@@ -34,7 +36,14 @@ const AI_OPTIONS = [
   }
 ];
 
-export const AIQuerySelector = ({ query, onQuerySubmit, onClose, isLoading = false }: AIQuerySelectorProps) => {
+export const AIQuerySelector = ({ 
+  query, 
+  onQuerySubmit, 
+  onClose, 
+  isLoading = false, 
+  streamingStatus,
+  streamingProgress 
+}: AIQuerySelectorProps) => {
   const [inputValue, setInputValue] = useState(query);
   const [showDropdown, setShowDropdown] = useState(true);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -150,12 +159,90 @@ export const AIQuerySelector = ({ query, onQuerySubmit, onClose, isLoading = fal
         </div>
       )}
 
-      {/* Loading State */}
+      {/* Streaming Progress State */}
       {isLoading && (
         <div className="absolute top-full left-0 mt-1 bg-white border border-gray-200 rounded-lg shadow-lg z-50 py-4 w-full">
-          <div className="flex items-center justify-center gap-2 text-sm text-gray-600">
-            <Loader2 className="h-4 w-4 animate-spin" />
-            <span>AI is thinking...</span>
+          <div className="px-4">
+            <div className="flex items-center justify-center gap-3 text-sm text-gray-600 mb-3">
+              <Loader2 className="h-4 w-4 animate-spin text-blue-500" />
+              <span className="font-medium">AI is working...</span>
+            </div>
+            
+            {/* Streaming Status */}
+            {streamingStatus && (
+              <div className="text-center mb-3">
+                <div className="text-xs text-gray-500 mb-1">Current step:</div>
+                <div className="text-sm text-gray-700 font-medium">{streamingStatus}</div>
+              </div>
+            )}
+            
+            {/* Progress Bar */}
+            {streamingProgress !== undefined && (
+              <div className="mb-3">
+                <div className="flex justify-between text-xs text-gray-500 mb-1">
+                  <span>Progress</span>
+                  <span>{Math.round(streamingProgress * 100)}%</span>
+                </div>
+                <div className="w-full bg-gray-200 rounded-full h-1.5">
+                  <div 
+                    className="bg-blue-500 h-1.5 rounded-full transition-all duration-300 ease-out"
+                    style={{ width: `${Math.round(streamingProgress * 100)}%` }}
+                  />
+                </div>
+              </div>
+            )}
+            
+            {/* Streaming Steps Indicator */}
+            <div className="space-y-1">
+              <div className="flex items-center gap-2 text-xs">
+                <div className={`w-2 h-2 rounded-full ${
+                  streamingStatus?.includes('classif') ? 'bg-blue-500' : 
+                  streamingStatus?.includes('databas') ? 'bg-green-500' : 'bg-gray-300'
+                }`} />
+                <span className={streamingStatus?.includes('classif') ? 'text-blue-600 font-medium' : 'text-gray-500'}>
+                  Analyzing query
+                </span>
+              </div>
+              
+              <div className="flex items-center gap-2 text-xs">
+                <div className={`w-2 h-2 rounded-full ${
+                  streamingStatus?.includes('schema') || streamingStatus?.includes('loading') ? 'bg-blue-500' : 
+                  streamingStatus?.includes('generat') ? 'bg-green-500' : 'bg-gray-300'
+                }`} />
+                <span className={streamingStatus?.includes('schema') || streamingStatus?.includes('loading') ? 'text-blue-600 font-medium' : 'text-gray-500'}>
+                  Loading schemas
+                </span>
+              </div>
+              
+              <div className="flex items-center gap-2 text-xs">
+                <div className={`w-2 h-2 rounded-full ${
+                  streamingStatus?.includes('generat') ? 'bg-blue-500' : 
+                  streamingStatus?.includes('execut') ? 'bg-green-500' : 'bg-gray-300'
+                }`} />
+                <span className={streamingStatus?.includes('generat') ? 'text-blue-600 font-medium' : 'text-gray-500'}>
+                  Generating query
+                </span>
+              </div>
+              
+              <div className="flex items-center gap-2 text-xs">
+                <div className={`w-2 h-2 rounded-full ${
+                  streamingStatus?.includes('execut') ? 'bg-blue-500' : 
+                  streamingStatus?.includes('analyz') || streamingStatus?.includes('insight') ? 'bg-green-500' : 'bg-gray-300'
+                }`} />
+                <span className={streamingStatus?.includes('execut') ? 'text-blue-600 font-medium' : 'text-gray-500'}>
+                  Executing query
+                </span>
+              </div>
+              
+              <div className="flex items-center gap-2 text-xs">
+                <div className={`w-2 h-2 rounded-full ${
+                  streamingStatus?.includes('analyz') || streamingStatus?.includes('insight') ? 'bg-blue-500' : 'bg-gray-300'
+                }`} />
+                <span className={streamingStatus?.includes('analyz') || streamingStatus?.includes('insight') ? 'text-blue-600 font-medium' : 'text-gray-500'}>
+                  Generating insights
+                </span>
+              </div>
+            </div>
           </div>
         </div>
       )}

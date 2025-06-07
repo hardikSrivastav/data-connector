@@ -6,6 +6,7 @@ import { TableBlock } from './TableBlock';
 import { ToggleBlock } from './ToggleBlock';
 import { CanvasBlock } from './CanvasBlock';
 import { StatsBlock } from './StatsBlock';
+import { StreamingStatusBlock } from './StreamingStatusBlock';
 import { cn } from '@/lib/utils';
 import { GripVertical, Plus } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -43,6 +44,13 @@ interface BlockEditorProps {
   page?: Page;
   onNavigateToPage?: (pageId: string) => void;
   onCreateCanvasPage?: (canvasData: any) => Promise<string>;
+  // Streaming state
+  streamingState?: {
+    isStreaming: boolean;
+    status: string;
+    progress: number;
+    blockId?: string;
+  };
 }
 
 export const BlockEditor = ({
@@ -69,7 +77,8 @@ export const BlockEditor = ({
   workspace,
   page,
   onNavigateToPage,
-  onCreateCanvasPage
+  onCreateCanvasPage,
+  streamingState
 }: BlockEditorProps) => {
   const [showTypeSelector, setShowTypeSelector] = useState(false);
   const [typeSelectorQuery, setTypeSelectorQuery] = useState('');
@@ -712,6 +721,19 @@ export const BlockEditor = ({
           />
         )}
         
+        {/* Streaming Status Block - shown when AI is processing */}
+        {streamingState?.isStreaming && streamingState?.blockId === block.id && (
+          <StreamingStatusBlock
+            status={streamingState.status}
+            progress={streamingState.progress}
+            query={block.content || ''}
+            onCancel={() => {
+              // TODO: Implement streaming cancellation
+              console.log('Cancel streaming requested');
+            }}
+          />
+        )}
+        
         <textarea
           ref={textareaRef}
           value={block.content}
@@ -743,7 +765,10 @@ export const BlockEditor = ({
           style={{
             minHeight: getMinHeight(),
             height: 'auto',
-            display: showAIQuery || ['table', 'toggle', 'subpage', 'canvas', 'stats'].includes(block.type) ? 'none' : 'block' // Hide textarea when AI query is active or for custom components
+            display: showAIQuery || 
+                    ['table', 'toggle', 'subpage', 'canvas', 'stats'].includes(block.type) || 
+                    (streamingState?.isStreaming && streamingState?.blockId === block.id) 
+                    ? 'none' : 'block' // Hide textarea when AI query is active, for custom components, or when streaming
           }}
         />
         
@@ -788,7 +813,9 @@ export const BlockEditor = ({
                   }
                 }, 0);
               }}
-              isLoading={isAILoading}
+              isLoading={isAILoading || (streamingState?.isStreaming && streamingState?.blockId === block.id)}
+              streamingStatus={streamingState?.isStreaming && streamingState?.blockId === block.id ? streamingState.status : undefined}
+              streamingProgress={streamingState?.isStreaming && streamingState?.blockId === block.id ? streamingState.progress : undefined}
             />
           </div>
         )}
