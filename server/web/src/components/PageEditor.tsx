@@ -62,6 +62,7 @@ export const PageEditor = ({
     status: string;
     progress: number;
     blockId?: string;
+    query?: string;
   }>({
     isStreaming: false,
     status: '',
@@ -213,7 +214,8 @@ export const PageEditor = ({
       isStreaming: true,
       status: 'Starting query processing...',
       progress: 0,
-      blockId: blockId
+      blockId: blockId,
+      query: query
     });
 
     // Create new block immediately for streaming progress
@@ -367,19 +369,19 @@ export const PageEditor = ({
           
           // Update the block with final canvas data
           console.log(`💾 PageEditor: Updating with final Canvas data`);
-          setPendingAIUpdate({ 
-            blockId: newBlockId, 
-            canvasData: {
+      setPendingAIUpdate({ 
+        blockId: newBlockId, 
+        canvasData: {
               threadId: sessionId || `thread_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
-              threadName: generateThreadName(query),
-              isExpanded: false,
-              workspaceId: workspace.id,
-              pageId: page.id,
-              blockId: newBlockId,
-              fullAnalysis: canvasData.fullAnalysis,
-              fullData: canvasData.fullData,
-              sqlQuery: canvasData.sqlQuery,
-              preview: canvasData.preview,
+          threadName: generateThreadName(query),
+          isExpanded: false,
+          workspaceId: workspace.id,
+          pageId: page.id,
+          blockId: newBlockId,
+          fullAnalysis: canvasData.fullAnalysis,
+          fullData: canvasData.fullData,
+          sqlQuery: canvasData.sqlQuery,
+          preview: canvasData.preview,
               blocks: []
             }
           });
@@ -404,7 +406,7 @@ export const PageEditor = ({
           
           // Show error in the block
           const errorMessage = `❌ **Error:** ${error}\n\n${recoverable ? '🔄 You can try again.' : ''}`;
-          setPendingAIUpdate({ blockId: newBlockId, content: errorMessage });
+      setPendingAIUpdate({ blockId: newBlockId, content: errorMessage });
           
           // Clear streaming state
           setTimeout(() => {

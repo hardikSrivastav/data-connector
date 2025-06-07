@@ -50,6 +50,7 @@ interface BlockEditorProps {
     status: string;
     progress: number;
     blockId?: string;
+    query?: string;
   };
 }
 
@@ -726,7 +727,7 @@ export const BlockEditor = ({
           <StreamingStatusBlock
             status={streamingState.status}
             progress={streamingState.progress}
-            query={block.content || ''}
+            query={streamingState.query || block.content || ''}
             onCancel={() => {
               // TODO: Implement streaming cancellation
               console.log('Cancel streaming requested');
