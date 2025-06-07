@@ -75,11 +75,39 @@ export const BlockEditor = ({
   const [typeSelectorQuery, setTypeSelectorQuery] = useState('');
   const [showAIQuery, setShowAIQuery] = useState(false);
   const [aiQuery, setAIQuery] = useState('');
+  const [aiQueryPosition, setAIQueryPosition] = useState<{ top: number; left: number } | null>(null);
   const [isAILoading, setIsAILoading] = useState(false);
   const [showAddButton, setShowAddButton] = useState(false);
   const [justCreatedFromSlash, setJustCreatedFromSlash] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const blockRef = useRef<HTMLDivElement>(null);
+
+  // Calculate cursor position in pixels
+  const calculateCursorPosition = () => {
+    if (!textareaRef.current) return { top: 0, left: 0 };
+    
+    const textarea = textareaRef.current;
+    const cursorPosition = textarea.selectionStart;
+    const content = textarea.value;
+    
+    // Find the current line that contains the cursor
+    const textBeforeCursor = content.substring(0, cursorPosition);
+    const lines = textBeforeCursor.split('\n');
+    const currentLineIndex = lines.length - 1;
+    
+    // Get computed style
+    const computedStyle = window.getComputedStyle(textarea);
+    const lineHeight = parseFloat(computedStyle.lineHeight) || parseFloat(computedStyle.fontSize) * 1.2;
+    const paddingTop = parseFloat(computedStyle.paddingTop) || 0;
+    
+    // Calculate the top position based on line number
+    const top = currentLineIndex * lineHeight + paddingTop;
+    
+    // For left position, we can just use 0 since we want full width
+    const left = 0;
+    
+    return { top, left };
+  };
 
   const adjustTextareaHeight = () => {
     if (textareaRef.current) {
@@ -192,6 +220,10 @@ export const BlockEditor = ({
       else if (currentLine.startsWith('//')) {
         const query = currentLine.slice(2);
         setAIQuery(query);
+        
+        // Calculate position for AI query selector
+        const position = calculateCursorPosition();
+        setAIQueryPosition(position);
         setShowAIQuery(true);
         setShowTypeSelector(false); // Close type selector if open
       } 
@@ -202,6 +234,7 @@ export const BlockEditor = ({
           setShowAIQuery(false);
           setTypeSelectorQuery('');
           setAIQuery('');
+          setAIQueryPosition(null);
         }
       }
     } else {
@@ -215,6 +248,10 @@ export const BlockEditor = ({
         if (trimmedLine.startsWith('//') && trimmedLine.length > 2) {
           const query = trimmedLine.slice(2);
           setAIQuery(query);
+          
+          // Calculate position for AI query selector
+          const position = calculateCursorPosition();
+          setAIQueryPosition(position);
           setShowAIQuery(true);
           setShowTypeSelector(false);
           foundAIQuery = true;
@@ -235,6 +272,7 @@ export const BlockEditor = ({
         setShowAIQuery(false);
         setTypeSelectorQuery('');
         setAIQuery('');
+        setAIQueryPosition(null);
       }
     }
     
@@ -347,6 +385,7 @@ export const BlockEditor = ({
     // Close the AI query selector
     setShowAIQuery(false);
     setAIQuery('');
+    setAIQueryPosition(null);
     console.log(`🚪 BlockEditor: AI query selector closed`);
     
     // Set cursor position after content update
@@ -686,6 +725,7 @@ export const BlockEditor = ({
             if (showAIQuery) {
               setShowAIQuery(false);
               setAIQuery('');
+              setAIQueryPosition(null);
               // Don't modify content when clicking away from AI query
               setTimeout(() => {
                 if (textareaRef.current) {
@@ -707,39 +747,50 @@ export const BlockEditor = ({
           }}
         />
         
-        {/* Inline AI Query Selector - replaces the textarea when active */}
-        {showAIQuery && (
-          <AIQuerySelector
-            query={aiQuery}
-            onQuerySubmit={handleAIQuerySubmit}
-            onClose={() => {
-              // Don't modify content when just closing, preserve everything
-              setShowAIQuery(false);
-              setAIQuery('');
-              
-              // Focus back to textarea and restore cursor position
-              setTimeout(() => {
-                if (textareaRef.current) {
-                  textareaRef.current.focus();
-                  
-                  // Try to restore cursor to the end of the // command line
-                  const content = block.content;
-                  const atIndex = content.lastIndexOf('//');
-                  if (atIndex >= 0) {
-                    // Find the end of the current line where // command was
-                    const afterAt = content.substring(atIndex);
-                    const nextLineBreak = afterAt.indexOf('\n');
-                    const cursorPos = nextLineBreak >= 0 ? atIndex + nextLineBreak : content.length;
-                    textareaRef.current.setSelectionRange(cursorPos, cursorPos);
-                  } else {
-                    // Fallback: position at end of content
-                    textareaRef.current.setSelectionRange(content.length, content.length);
-                  }
-                }
-              }, 0);
+        {/* Inline AI Query Selector - positioned at cursor location */}
+        {showAIQuery && aiQueryPosition && (
+          <div
+            style={{
+              position: 'absolute',
+              top: aiQueryPosition.top,
+              left: 0,
+              right: 0,
+              zIndex: 1000,
             }}
-            isLoading={isAILoading}
-          />
+          >
+            <AIQuerySelector
+              query={aiQuery}
+              onQuerySubmit={handleAIQuerySubmit}
+              onClose={() => {
+                // Don't modify content when just closing, preserve everything
+                setShowAIQuery(false);
+                setAIQuery('');
+                setAIQueryPosition(null);
+                
+                // Focus back to textarea and restore cursor position
+                setTimeout(() => {
+                  if (textareaRef.current) {
+                    textareaRef.current.focus();
+                    
+                    // Try to restore cursor to the end of the // command line
+                    const content = block.content;
+                    const atIndex = content.lastIndexOf('//');
+                    if (atIndex >= 0) {
+                      // Find the end of the current line where // command was
+                      const afterAt = content.substring(atIndex);
+                      const nextLineBreak = afterAt.indexOf('\n');
+                      const cursorPos = nextLineBreak >= 0 ? atIndex + nextLineBreak : content.length;
+                      textareaRef.current.setSelectionRange(cursorPos, cursorPos);
+                    } else {
+                      // Fallback: position at end of content
+                      textareaRef.current.setSelectionRange(content.length, content.length);
+                    }
+                  }
+                }, 0);
+              }}
+              isLoading={isAILoading}
+            />
+          </div>
         )}
         
         {showTypeSelector && (
