@@ -162,7 +162,7 @@ export const BlockEditor = ({
         return;
       }
       
-      // For special block types: Enter creates new block, Shift+Enter creates line break
+      // For special block types: Enter creates new block, Shift+Enter creates line break (unchanged)
       if (isSpecialBlock) {
         if (e.shiftKey) {
           // Shift+Enter: create line break within the special block
@@ -176,15 +176,17 @@ export const BlockEditor = ({
         }
       }
       
-      // For regular text blocks (paragraph): Enter creates line break, Shift+Enter creates new block
+      // For regular text blocks (paragraph): Enter creates new block, Shift+Enter creates line break
       if (e.shiftKey) {
+        // Shift+Enter: create line break within the block
+        // Don't preventDefault, let textarea handle it naturally
+        return;
+      } else {
+        // Enter: create new block
         e.preventDefault();
         onAddBlock();
         return;
       }
-      
-      // Default behavior for regular blocks: allow Enter to create line breaks within the block
-      // (don't preventDefault, let the textarea handle it naturally)
       
     } else if (e.key === 'Backspace' && block.content === '') {
       e.preventDefault();

@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useWorkspace } from '@/hooks/useWorkspace';
 import { useAuth } from '@/contexts/AuthContext';
 import { Sidebar } from '@/components/Sidebar';
@@ -27,6 +27,23 @@ const Index = () => {
     isLoaded,
     setWorkspace
   } = useWorkspace();
+
+  // Add keyboard shortcut for sidebar toggle (Cmd+\ or Ctrl+\)
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      // Check for Cmd+\ on Mac or Ctrl+\ on Windows/Linux
+      if (e.key === '\\' && (e.metaKey || e.ctrlKey)) {
+        e.preventDefault();
+        setSidebarCollapsed(prev => !prev);
+      }
+    };
+
+    document.addEventListener('keydown', handleKeyDown);
+    
+    return () => {
+      document.removeEventListener('keydown', handleKeyDown);
+    };
+  }, []);
 
   // Create a dedicated canvas page
   const createCanvasPage = async (canvasData: any): Promise<string> => {

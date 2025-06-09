@@ -63,14 +63,14 @@ export const BlockTypeSelector = ({ onSelect, onClose, query }: BlockTypeSelecto
 
   if (filteredTypes.length === 0) {
     return (
-      <div className="absolute top-full left-0 bg-white border border-gray-200 rounded-lg shadow-lg p-2 min-w-80 z-50">
-        <div className="text-sm text-gray-500 p-2">No matching blocks found</div>
+      <div className="absolute top-full left-0 bg-background border border-border rounded-lg shadow-lg p-2 min-w-80 z-50">
+        <div className="text-sm text-muted-foreground p-2">No matching blocks found</div>
       </div>
     );
   }
 
   return (
-    <div className="absolute top-full left-0 bg-white border border-gray-200 rounded-lg shadow-lg p-1 min-w-80 z-50">
+    <div className="absolute top-full left-0 bg-background border border-border rounded-lg shadow-lg p-1 min-w-80 z-50">
       {filteredTypes.map((blockType, index) => {
         const Icon = blockType.icon;
         return (
@@ -78,17 +78,17 @@ export const BlockTypeSelector = ({ onSelect, onClose, query }: BlockTypeSelecto
             key={blockType.type}
             className={cn(
               "flex items-center gap-3 p-2 rounded-md cursor-pointer transition-colors",
-              index === selectedIndex && "bg-gray-100"
+              index === selectedIndex && "bg-accent"
             )}
             onClick={() => onSelect(blockType.type)}
             onMouseEnter={() => setSelectedIndex(index)}
           >
             <div className="flex-shrink-0">
-              <Icon className="h-4 w-4 text-gray-600" />
+              <Icon className="h-4 w-4 text-muted-foreground" />
             </div>
             <div className="flex-1 min-w-0">
-              <div className="text-sm font-medium text-gray-900">{blockType.label}</div>
-              <div className="text-xs text-gray-500">{blockType.description}</div>
+              <div className="text-sm font-medium text-foreground">{blockType.label}</div>
+              <div className="text-xs text-muted-foreground">{blockType.description}</div>
             </div>
           </div>
         );
