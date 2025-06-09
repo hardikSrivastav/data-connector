@@ -55,6 +55,18 @@ def create_app():
             logger.error(f"❌ Failed to initialize authentication: {e}")
             logger.info("🔓 Continuing without authentication")
             app.state.auth_enabled = False
+            
+        # Initialize database availability monitoring
+        try:
+            from agent.services.database_availability import initialize_availability_service
+            
+            logger.info("🔍 Initializing database availability monitoring...")
+            await initialize_availability_service()
+            logger.info("✅ Database availability monitoring started")
+            
+        except Exception as e:
+            logger.error(f"❌ Failed to initialize database availability monitoring: {e}")
+            logger.info("⚠️ Continuing without database availability monitoring")
     
     @app.on_event("shutdown")
     async def cleanup_auth():
@@ -65,6 +77,17 @@ def create_app():
             logger.info("🔐 Authentication system cleaned up")
         except Exception as e:
             logger.error(f"Error cleaning up authentication: {e}")
+            
+        # Clean up database availability monitoring
+        try:
+            from agent.services.database_availability import get_availability_service
+            
+            service = get_availability_service()
+            await service.stop_monitoring()
+            logger.info("🔍 Database availability monitoring stopped")
+            
+        except Exception as e:
+            logger.error(f"Error cleaning up database availability monitoring: {e}")
     
     # Add IP filtering middleware for VPN restriction
     settings = get_settings()

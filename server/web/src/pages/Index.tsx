@@ -184,7 +184,7 @@ const Index = () => {
   });
 
   return (
-    <div className="flex h-screen bg-white font-baskerville">
+    <div className="flex h-full font-baskerville">
       <Sidebar
         pages={workspace.pages}
         currentPageId={currentPageId}
@@ -194,54 +194,54 @@ const Index = () => {
         onPageTitleUpdate={(pageId, title) => updatePage(pageId, { title })}
       />
       
-      <div className="flex-1 flex">
-        {isCanvasPage ? (
-          <CanvasWorkspace
-            page={currentPage}
-            workspace={workspace}
-            onNavigateBack={() => {
-              // Navigate back to the parent page that contains the CanvasBlock referencing this page
-              const parentPage = workspace.pages.find(page => 
-                page.blocks.some(block => 
-                  block.type === 'canvas' && 
-                  block.properties?.canvasPageId === currentPageId
-                )
-              );
-              
-              if (parentPage) {
-                setCurrentPageId(parentPage.id);
-              } else {
-                // If no parent found, go to first non-canvas page or create new one
-                if (workspace.pages.length > 1) {
-                  const nonCanvasPage = workspace.pages.find(p => 
-                    p.id !== currentPageId && 
-                    !workspace.pages.some(page => 
-                      page.blocks.some(block => 
-                        block.type === 'canvas' && 
-                        block.properties?.canvasPageId === p.id
-                      )
+      {isCanvasPage ? (
+        <CanvasWorkspace
+          page={currentPage}
+          workspace={workspace}
+          onNavigateBack={() => {
+            // Navigate back to the parent page that contains the CanvasBlock referencing this page
+            const parentPage = workspace.pages.find(page => 
+              page.blocks.some(block => 
+                block.type === 'canvas' && 
+                block.properties?.canvasPageId === currentPageId
+              )
+            );
+            
+            if (parentPage) {
+              setCurrentPageId(parentPage.id);
+            } else {
+              // If no parent found, go to first non-canvas page or create new one
+              if (workspace.pages.length > 1) {
+                const nonCanvasPage = workspace.pages.find(p => 
+                  p.id !== currentPageId && 
+                  !workspace.pages.some(page => 
+                    page.blocks.some(block => 
+                      block.type === 'canvas' && 
+                      block.properties?.canvasPageId === p.id
                     )
-                  );
-                  if (nonCanvasPage) {
-                    setCurrentPageId(nonCanvasPage.id);
-                  } else {
-                    createPage('New Page').then(newPage => {
-                      setCurrentPageId(newPage.id);
-                    });
-                  }
+                  )
+                );
+                if (nonCanvasPage) {
+                  setCurrentPageId(nonCanvasPage.id);
                 } else {
                   createPage('New Page').then(newPage => {
                     setCurrentPageId(newPage.id);
                   });
                 }
+              } else {
+                createPage('New Page').then(newPage => {
+                  setCurrentPageId(newPage.id);
+                });
               }
-            }}
-            onUpdatePage={(updates) => updatePage(currentPageId, updates)}
-            onAddBlock={addBlock}
-            onUpdateBlock={updateBlock}
-            onDeleteBlock={deleteBlock}
-          />
-        ) : (
+            }
+          }}
+          onUpdatePage={(updates) => updatePage(currentPageId, updates)}
+          onAddBlock={addBlock}
+          onUpdateBlock={updateBlock}
+          onDeleteBlock={deleteBlock}
+        />
+      ) : (
+        <div className="flex flex-1">
           <PageEditor
             page={currentPage}
             onUpdateBlock={updateBlock}
@@ -255,24 +255,24 @@ const Index = () => {
             onNavigateToPage={setCurrentPageId}
             onCreateCanvasPage={createCanvasPage}
           />
-        )}
-        
-        {/* Agent Test Panel - only show for regular pages */}
-        {!isCanvasPage && showAgentPanel && (
-          <div className="w-96 border-l border-gray-200 bg-gray-50 p-4 overflow-y-auto">
-            <div className="flex items-center justify-between mb-4">
-              <h2 className="text-lg font-semibold">AI Agent Testing</h2>
-              <button
-                onClick={() => setShowAgentPanel(false)}
-                className="p-1 hover:bg-gray-200 rounded"
-              >
-                <X className="h-4 w-4" />
-              </button>
+          
+          {/* Agent Test Panel - only show for regular pages */}
+          {showAgentPanel && (
+            <div className="w-96 border-l border-gray-200 bg-gray-50 p-4 overflow-y-auto">
+              <div className="flex items-center justify-between mb-4">
+                <h2 className="text-lg font-semibold">AI Agent Testing</h2>
+                <button
+                  onClick={() => setShowAgentPanel(false)}
+                  className="p-1 hover:bg-gray-200 rounded"
+                >
+                  <X className="h-4 w-4" />
+                </button>
+              </div>
+              <AgentTestPanel />
             </div>
-            <AgentTestPanel />
-          </div>
-        )}
-      </div>
+          )}
+        </div>
+      )}
     </div>
   );
 };

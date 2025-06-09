@@ -27,6 +27,9 @@ from ..db.classifier import DatabaseClassifier
 from ..db.orchestrator.cross_db_agent import CrossDatabaseAgent
 from ..tools.state_manager import StateManager
 
+# Import database availability service
+from ..services.database_availability import get_availability_service, DatabaseStatus
+
 # Set up logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
@@ -105,6 +108,23 @@ class TrivialHealthResponse(BaseModel):
     model: Optional[str] = None
     message: Optional[str] = None
     supported_operations: List[str] = []
+
+class DatabaseStatusResponse(BaseModel):
+    name: str
+    type: str
+    status: str
+    last_checked: str
+    response_time_ms: Optional[float] = None
+    error_message: Optional[str] = None
+    user_accessible: bool = True
+    connection_details: Optional[Dict[str, Any]] = None
+
+class DatabaseAvailabilityResponse(BaseModel):
+    databases: List[DatabaseStatusResponse]
+    summary: Dict[str, Any]
+
+class ForceCheckRequest(BaseModel):
+    database_name: Optional[str] = None
 
 def sanitize_sql(sql: str) -> str:
     """Basic SQL sanitization"""
@@ -1407,3 +1427,168 @@ async def get_trivial_operations():
             "enabled": False,
             "error": str(e)
         }
+
+# Database Availability Endpoints
+
+@router.get("/databases/availability", response_model=DatabaseAvailabilityResponse)
+async def get_database_availability(user_id: Optional[str] = None):
+    """
+    Get current database availability status for all configured databases.
+    
+    Args:
+        user_id: Optional user ID to filter databases by user permissions
+        
+    Returns:
+        DatabaseAvailabilityResponse with current status of all databases
+    """
+    logger.info(f"🔍 API ENDPOINT: /databases/availability - Getting database availability for user: {user_id}")
+    
+    try:
+        availability_service = get_availability_service()
+        
+        # Get available databases for user
+        if user_id:
+            databases = availability_service.get_available_databases(user_id)
+        else:
+            all_statuses = availability_service.get_all_statuses()
+            databases = list(all_statuses.values())
+        
+        # Convert to response models
+        database_responses = []
+        for db_status in databases:
+            database_responses.append(DatabaseStatusResponse(
+                name=db_status.name,
+                type=db_status.type,
+                status=db_status.status,
+                last_checked=db_status.last_checked.isoformat(),
+                response_time_ms=db_status.response_time_ms,
+                error_message=db_status.error_message,
+                user_accessible=db_status.user_accessible,
+                connection_details=db_status.connection_details
+            ))
+        
+        # Get summary
+        summary = availability_service.get_summary()
+        
+        response = DatabaseAvailabilityResponse(
+            databases=database_responses,
+            summary=summary
+        )
+        
+        logger.info(f"✅ Database availability retrieved: {len(database_responses)} databases, {summary['online']} online")
+        return response
+        
+    except Exception as e:
+        logger.error(f"❌ Error getting database availability: {str(e)}")
+        logger.error(f"❌ Traceback: {traceback.format_exc()}")
+        raise HTTPException(status_code=500, detail=f"Failed to get database availability: {str(e)}")
+
+@router.get("/databases/{database_name}/status", response_model=DatabaseStatusResponse)
+async def get_database_status(database_name: str):
+    """
+    Get status for a specific database.
+    
+    Args:
+        database_name: Name of the database to check
+        
+    Returns:
+        DatabaseStatusResponse for the specified database
+    """
+    logger.info(f"🔍 API ENDPOINT: /databases/{database_name}/status - Getting status for database: {database_name}")
+    
+    try:
+        availability_service = get_availability_service()
+        db_status = availability_service.get_status(database_name)
+        
+        if not db_status:
+            raise HTTPException(status_code=404, detail=f"Database '{database_name}' not found")
+        
+        response = DatabaseStatusResponse(
+            name=db_status.name,
+            type=db_status.type,
+            status=db_status.status,
+            last_checked=db_status.last_checked.isoformat(),
+            response_time_ms=db_status.response_time_ms,
+            error_message=db_status.error_message,
+            user_accessible=db_status.user_accessible,
+            connection_details=db_status.connection_details
+        )
+        
+        logger.info(f"✅ Database status retrieved: {database_name} is {db_status.status}")
+        return response
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"❌ Error getting database status: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to get database status: {str(e)}")
+
+@router.post("/databases/check", response_model=DatabaseAvailabilityResponse)
+async def force_database_check(request: ForceCheckRequest):
+    """
+    Force immediate check of database availability.
+    
+    Args:
+        request: ForceCheckRequest with optional database_name to check specific database
+        
+    Returns:
+        DatabaseAvailabilityResponse with updated status
+    """
+    logger.info(f"🔄 API ENDPOINT: /databases/check - Force checking database: {request.database_name or 'all'}")
+    
+    try:
+        availability_service = get_availability_service()
+        
+        # Force check
+        updated_statuses = await availability_service.force_check(request.database_name)
+        
+        # Convert to response models
+        database_responses = []
+        for db_status in updated_statuses.values():
+            database_responses.append(DatabaseStatusResponse(
+                name=db_status.name,
+                type=db_status.type,
+                status=db_status.status,
+                last_checked=db_status.last_checked.isoformat(),
+                response_time_ms=db_status.response_time_ms,
+                error_message=db_status.error_message,
+                user_accessible=db_status.user_accessible,
+                connection_details=db_status.connection_details
+            ))
+        
+        # Get updated summary
+        summary = availability_service.get_summary()
+        
+        response = DatabaseAvailabilityResponse(
+            databases=database_responses,
+            summary=summary
+        )
+        
+        logger.info(f"✅ Database check completed: {len(database_responses)} databases checked")
+        return response
+        
+    except Exception as e:
+        logger.error(f"❌ Error force checking databases: {str(e)}")
+        logger.error(f"❌ Traceback: {traceback.format_exc()}")
+        raise HTTPException(status_code=500, detail=f"Failed to check databases: {str(e)}")
+
+@router.get("/databases/summary")
+async def get_database_summary():
+    """
+    Get summary statistics for database availability.
+    
+    Returns:
+        Dict with summary statistics including total, online, offline counts and uptime percentage
+    """
+    logger.info(f"📊 API ENDPOINT: /databases/summary - Getting database summary")
+    
+    try:
+        availability_service = get_availability_service()
+        summary = availability_service.get_summary()
+        
+        logger.info(f"✅ Database summary retrieved: {summary['online']}/{summary['total_databases']} online")
+        return summary
+        
+    except Exception as e:
+        logger.error(f"❌ Error getting database summary: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to get database summary: {str(e)}")

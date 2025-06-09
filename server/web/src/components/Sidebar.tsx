@@ -5,6 +5,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Page } from '@/types';
 import { cn } from '@/lib/utils';
+import { useNavigate } from 'react-router-dom';
 
 interface SidebarProps {
   pages: Page[];
@@ -26,6 +27,7 @@ export const Sidebar = ({
   const [isCollapsed, setIsCollapsed] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [editingPageId, setEditingPageId] = useState<string | null>(null);
+  const navigate = useNavigate();
 
   const filteredPages = pages.filter(page => 
     page.title.toLowerCase().includes(searchQuery.toLowerCase())
@@ -149,6 +151,7 @@ export const Sidebar = ({
             <Button
               variant="ghost"
               size="sm"
+              onClick={() => navigate('/settings')}
               className="w-full justify-start h-8 text-sm"
             >
               <Settings className="h-4 w-4 mr-2" />
