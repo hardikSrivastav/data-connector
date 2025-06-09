@@ -57,29 +57,30 @@ export const UserMenu: React.FC = () => {
       <DropdownMenuTrigger asChild>
         <Button
           variant="ghost"
-          className="h-8 px-2 py-1 gap-2 hover:bg-gray-100 transition-colors"
+          size="sm"
+          className="h-8 px-2 py-1 gap-2 hover:bg-accent transition-colors"
         >
-          <div className="w-6 h-6 bg-blue-600 rounded-full flex items-center justify-center text-white text-xs font-medium">
+          <div className="w-6 h-6 bg-blue-600 dark:bg-blue-500 rounded-full flex items-center justify-center text-white text-xs font-medium">
             {getUserInitials(user.name)}
           </div>
-          <span className="text-sm text-gray-700 max-w-32 truncate">
+          <span className="text-sm text-gray-700 dark:text-gray-300 max-w-32 truncate">
             {user.name}
           </span>
-          <ChevronDown className="h-3 w-3 text-gray-400" />
+          <ChevronDown className="h-3 w-3 text-gray-400 dark:text-gray-500" />
         </Button>
       </DropdownMenuTrigger>
       
-      <DropdownMenuContent align="end" className="w-64">
+      <DropdownMenuContent align="end" className="w-64 bg-card border-border">
         <DropdownMenuLabel className="pb-2">
           <div className="flex items-center gap-3">
-            <div className="w-8 h-8 bg-blue-600 rounded-full flex items-center justify-center text-white text-sm font-medium">
+            <div className="w-8 h-8 bg-blue-600 dark:bg-blue-500 rounded-full flex items-center justify-center text-white text-sm font-medium">
               {getUserInitials(user.name)}
             </div>
             <div className="flex-1 min-w-0">
-              <div className="font-medium text-gray-900 truncate">
+              <div className="font-medium text-gray-900 dark:text-gray-100 truncate">
                 {user.name}
               </div>
-              <div className="text-xs text-gray-500 truncate">
+              <div className="text-xs text-gray-500 dark:text-gray-400 truncate">
                 {user.email}
               </div>
             </div>
@@ -90,16 +91,16 @@ export const UserMenu: React.FC = () => {
         
         {/* Role Information */}
         <div className="px-2 py-2">
-          <div className="flex items-center gap-2 text-xs text-gray-500 mb-1">
+          <div className="flex items-center gap-2 text-xs text-gray-500 dark:text-gray-400 mb-1">
             <Shield className="h-3 w-3" />
             <span>Roles</span>
           </div>
-          <div className="text-xs text-gray-700 pl-5">
+          <div className="text-xs text-gray-700 dark:text-gray-300 pl-5">
             {formatRoles(user.roles)}
           </div>
           
           {user.dev_mode && (
-            <div className="mt-2 px-2 py-1 bg-yellow-50 border border-yellow-200 rounded text-xs text-yellow-700">
+            <div className="mt-2 px-2 py-1 bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800 rounded text-xs text-yellow-700 dark:text-yellow-300">
               Development Mode
             </div>
           )}
@@ -119,12 +120,12 @@ export const UserMenu: React.FC = () => {
                     ? 'bg-yellow-500'
                     : 'bg-red-500'
                 }`} />
-                <span className="text-gray-500">
+                <span className="text-gray-500 dark:text-gray-400">
                   Authentication {authHealth.status}
                 </span>
               </div>
               {authHealth.okta_connected && (
-                <div className="text-xs text-gray-500 mt-1">
+                <div className="text-xs text-gray-500 dark:text-gray-400 mt-1">
                   Connected via Okta SSO
                 </div>
               )}
@@ -137,7 +138,7 @@ export const UserMenu: React.FC = () => {
         <DropdownMenuItem
           onClick={handleLogout}
           disabled={isLoggingOut}
-          className="text-red-600 focus:text-red-600 focus:bg-red-50 cursor-pointer"
+          className="text-red-600 dark:text-red-400 focus:text-red-600 dark:focus:text-red-400 focus:bg-red-50 dark:focus:bg-red-900/20 cursor-pointer"
         >
           {isLoggingOut ? (
             <>

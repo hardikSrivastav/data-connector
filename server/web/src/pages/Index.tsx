@@ -184,7 +184,7 @@ const Index = () => {
   });
 
   return (
-    <div className="flex h-full font-baskerville">
+    <div className="flex h-full font-baskerville bg-background text-foreground">
       <Sidebar
         pages={workspace.pages}
         currentPageId={currentPageId}
@@ -258,12 +258,12 @@ const Index = () => {
           
           {/* Agent Test Panel - only show for regular pages */}
           {showAgentPanel && (
-            <div className="w-96 border-l border-gray-200 bg-gray-50 p-4 overflow-y-auto">
+            <div className="w-96 border-l border-border bg-muted p-4 overflow-y-auto">
               <div className="flex items-center justify-between mb-4">
-                <h2 className="text-lg font-semibold">AI Agent Testing</h2>
+                <h2 className="text-lg font-semibold text-gray-900 dark:text-gray-100">AI Agent Testing</h2>
                 <button
                   onClick={() => setShowAgentPanel(false)}
-                  className="p-1 hover:bg-gray-200 rounded"
+                  className="p-1 hover:bg-accent rounded text-muted-foreground"
                 >
                   <X className="h-4 w-4" />
                 </button>

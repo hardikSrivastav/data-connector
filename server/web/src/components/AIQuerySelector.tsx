@@ -543,17 +543,17 @@ export const AIQuerySelector = ({
   if (isTrivialOperation && trivialResult && (editingText || originalText)) {
     return (
       <div ref={containerRef} className="relative w-full max-w-none">
-        <div className="bg-white border border-gray-200 rounded-lg shadow-lg p-4">
+        <div className="bg-card border border-border rounded-lg shadow-lg p-4">
           {/* Generated Content Header */}
-          <div className="flex items-center justify-between mb-3 pb-2 border-b border-gray-100">
+                      <div className="flex items-center justify-between mb-3 pb-2 border-b border-border">
             <div className="flex items-center gap-2">
               <Sparkles className="h-4 w-4 text-blue-500" />
-              <span className="text-sm font-medium text-gray-900">Generated</span>
+                              <span className="text-sm font-medium text-gray-900 dark:text-gray-100">Generated</span>
               {trivialStreamingState.cached && (
                 <span className="text-xs bg-blue-100 text-blue-700 px-1.5 py-0.5 rounded">cached</span>
               )}
             </div>
-            <div className="text-xs text-gray-500">
+            <div className="text-xs text-gray-500 dark:text-gray-400">
               {trivialStreamingState.duration > 0 && `${trivialStreamingState.duration.toFixed(0)}ms`}
             </div>
           </div>
@@ -649,7 +649,7 @@ export const AIQuerySelector = ({
     <div ref={containerRef} className="relative w-full max-w-none">
       {/* Search Input */}
       <div className="relative">
-        <div className="flex items-center bg-white border border-gray-200 rounded-lg shadow-lg hover:shadow-xl transition-shadow w-full">
+        <div className="flex items-center bg-card border border-border rounded-lg shadow-lg hover:shadow-xl transition-shadow w-full">
           <div className="flex items-center pl-3">
             {trivialStreamingState.isStreaming ? (
               <Loader2 className="h-4 w-4 text-blue-500 animate-spin" />
@@ -672,7 +672,7 @@ export const AIQuerySelector = ({
             className={`flex-1 px-3 py-2.5 bg-transparent border-none outline-none text-sm ${
               trivialStreamingState.isStreaming 
                 ? 'text-blue-600 placeholder-blue-500' 
-                : 'text-gray-900 placeholder-gray-400'
+                : 'text-gray-900 dark:text-gray-100 placeholder-gray-400 dark:placeholder-gray-500'
             }`}
             disabled={isLoading || trivialStreamingState.isStreaming}
           />
@@ -709,11 +709,11 @@ export const AIQuerySelector = ({
 
       {/* Classification Results */}
       {classification && !showDropdown && (
-        <div className="absolute top-full left-0 mt-1 bg-white border border-gray-200 rounded-lg shadow-lg z-50 p-4 w-full">
+        <div className="absolute top-full left-0 mt-1 bg-card border border-border rounded-lg shadow-lg z-50 p-4 w-full">
           <div className="mb-3">
             <div className="flex items-center gap-2 mb-2">
               <span className="text-lg">🧪</span>
-              <span className="font-semibold text-gray-900">OrchestrationAgent Classification</span>
+                              <span className="font-semibold text-gray-900 dark:text-gray-100">OrchestrationAgent Classification</span>
             </div>
             
             <div className="grid grid-cols-2 gap-4 text-sm">
@@ -734,8 +734,8 @@ export const AIQuerySelector = ({
               </div>
               
               <div>
-                <div className="text-gray-500 text-xs uppercase tracking-wide mb-1">Confidence</div>
-                <div className="font-mono text-gray-900">
+                <div className="text-gray-500 dark:text-gray-400 text-xs uppercase tracking-wide mb-1">Confidence</div>
+                <div className="font-mono text-gray-900 dark:text-gray-100">
                   {Math.round(classification.confidence * 100)}%
                 </div>
               </div>
@@ -788,7 +788,7 @@ export const AIQuerySelector = ({
 
       {/* Dropdown Menu */}
       {showDropdown && !isLoading && !classification && (
-        <div className="absolute top-full left-0 mt-1 bg-white border border-gray-200 rounded-lg shadow-lg z-50 py-2 w-full">
+        <div className="absolute top-full left-0 mt-1 bg-card border border-border rounded-lg shadow-lg z-50 py-2 w-full">
           {(diffMode ? DIFF_OPTIONS : AI_OPTIONS).map((section, sectionIndex) => (
             <div key={sectionIndex}>
               {/* Section Header */}
@@ -816,7 +816,7 @@ export const AIQuerySelector = ({
 
       {/* Streaming Progress State - Only for main LLM operations */}
       {isLoading && !trivialStreamingState.isStreaming && (
-        <div className="absolute top-full left-0 mt-1 bg-white border border-gray-200 rounded-lg shadow-lg z-50 py-4 w-full">
+        <div className="absolute top-full left-0 mt-1 bg-card border border-border rounded-lg shadow-lg z-50 py-4 w-full">
           <div className="px-4">
             <div className="flex items-center justify-center gap-3 text-sm text-gray-600 mb-3">
               <Loader2 className="h-4 w-4 animate-spin text-blue-500" />

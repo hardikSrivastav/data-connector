@@ -4,6 +4,7 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { BrowserRouter, Routes, Route } from "react-router-dom";
 import { AuthProvider } from "@/contexts/AuthContext";
+import { ThemeProvider } from "@/contexts/ThemeContext";
 import { AuthGuard } from "@/components/AuthGuard";
 import Index from "./pages/Index";
 import { Settings } from "./pages/Settings";
@@ -14,7 +15,7 @@ const queryClient = new QueryClient();
 // Simple Layout component without workspace-specific navigation
 const Layout = ({ children }: { children: React.ReactNode }) => {
   return (
-    <div className="h-screen bg-white">
+    <div className="h-screen bg-background text-foreground">
       {children}
     </div>
   );
@@ -23,21 +24,23 @@ const Layout = ({ children }: { children: React.ReactNode }) => {
 const App = () => (
   <QueryClientProvider client={queryClient}>
     <TooltipProvider>
-      <AuthProvider>
-        <AuthGuard>
-          <Toaster />
-          <Sonner />
-          <BrowserRouter>
-            <Layout>
-              <Routes>
-                <Route path="/" element={<Index />} />
-                <Route path="/settings" element={<Settings />} />
-                <Route path="*" element={<NotFound />} />
-              </Routes>
-            </Layout>
-          </BrowserRouter>
-        </AuthGuard>
-      </AuthProvider>
+      <ThemeProvider>
+        <AuthProvider>
+          <AuthGuard>
+            <Toaster />
+            <Sonner />
+            <BrowserRouter>
+              <Layout>
+                <Routes>
+                  <Route path="/" element={<Index />} />
+                  <Route path="/settings" element={<Settings />} />
+                  <Route path="*" element={<NotFound />} />
+                </Routes>
+              </Layout>
+            </BrowserRouter>
+          </AuthGuard>
+        </AuthProvider>
+      </ThemeProvider>
     </TooltipProvider>
   </QueryClientProvider>
 );

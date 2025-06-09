@@ -1,22 +1,42 @@
 /* Block Selection Styles */
 .selectedBlock {
-  @apply bg-blue-50 border border-blue-200 rounded-md -mx-1 px-1;
+  background-color: hsl(var(--accent) / 0.3);
+  border: 1px solid hsl(var(--ring) / 0.4);
+  border-radius: 0.375rem;
+  margin-left: -0.25rem;
+  margin-right: -0.25rem;
+  padding-left: 0.25rem;
+  padding-right: 0.25rem;
 }
 
 .firstSelected {
-  @apply rounded-t-md rounded-b-none;
+  border-top-left-radius: 0.375rem;
+  border-top-right-radius: 0.375rem;
+  border-bottom-left-radius: 0;
+  border-bottom-right-radius: 0;
+  border-bottom: none;
+  margin-bottom: -1px;
 }
 
 .lastSelected {
-  @apply rounded-b-md rounded-t-none;
+  border-bottom-left-radius: 0.375rem;
+  border-bottom-right-radius: 0.375rem;
+  border-top-left-radius: 0;
+  border-top-right-radius: 0;
+  border-top: none;
+  margin-top: -1px;
 }
 
 .middleSelected {
-  @apply rounded-none;
+  border-radius: 0;
+  border-top: none;
+  border-bottom: none;
+  margin-top: -1px;
+  margin-bottom: -1px;
 }
 
 .singleSelected {
-  @apply rounded-md;
+  border-radius: 0.375rem;
 }
 
 /* Prevent text selection during drag operations */

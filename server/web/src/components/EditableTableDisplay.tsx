@@ -227,7 +227,7 @@ export const EditableTableDisplay = ({
               }
             }}
             onClick={(e) => e.stopPropagation()}
-            className="text-2xl font-bold text-gray-900 bg-transparent border-none outline-none placeholder-gray-400 w-full"
+            className="text-2xl font-bold text-foreground bg-transparent border-none outline-none placeholder-muted-foreground w-full"
             placeholder="Table Title"
             autoFocus
           />
@@ -241,10 +241,10 @@ export const EditableTableDisplay = ({
               }
             }}
           >
-            <h2 className="text-2xl font-bold text-gray-900 flex items-center gap-2">
+            <h2 className="text-2xl font-bold text-foreground flex items-center gap-2">
               {title}
               {isFocused && onUpdateTitle && (
-                <Edit3 className="h-4 w-4 text-gray-300 opacity-0 group-hover/title:opacity-100 transition-opacity" />
+                <Edit3 className="h-4 w-4 text-muted-foreground opacity-0 group-hover/title:opacity-100 transition-opacity" />
               )}
             </h2>
           </div>
@@ -254,8 +254,8 @@ export const EditableTableDisplay = ({
       {/* Header with controls */}
       <div className="flex items-center justify-between mb-3 px-1 min-h-[28px]">
         <div className="flex items-center gap-2">
-          <Database className="h-4 w-4 text-gray-400" />
-          <span className="text-xs text-gray-400">
+          <Database className="h-4 w-4 text-muted-foreground" />
+          <span className="text-xs text-muted-foreground">
             {rows.length} {rows.length === 1 ? 'row' : 'rows'}, {headers.length} {headers.length === 1 ? 'column' : 'columns'}
           </span>
         </div>
@@ -273,7 +273,7 @@ export const EditableTableDisplay = ({
               <Plus className="h-3 w-3 mr-1" />
               Column
             </Button>
-            <div className="w-px h-4 bg-gray-200 mx-1" />
+            <div className="w-px h-4 bg-border mx-1" />
             <Button 
               size="sm" 
               variant="ghost" 
@@ -303,11 +303,11 @@ export const EditableTableDisplay = ({
         <table ref={tableRef} className="w-full table-fixed" style={{ minWidth: 'max-content' }}>
           {/* Headers with resize handles */}
           <thead>
-            <tr className="border-b border-gray-200">
+            <tr className="border-b border-border">
               {headers.map((header, index) => (
                 <th 
                   key={index} 
-                  className="text-left py-2 px-3 group/header relative bg-gray-50/50 border-r border-gray-200 last:border-r-0"
+                  className="text-left py-2 px-3 group/header relative bg-muted/50 border-r border-border last:border-r-0"
                   style={{ width: columnWidths[index] || 150 }}
                   onClick={(e) => {
                     e.stopPropagation();
@@ -328,24 +328,24 @@ export const EditableTableDisplay = ({
                         }
                       }}
                       onClick={(e) => e.stopPropagation()}
-                      className="w-full bg-transparent border-none outline-none font-medium text-sm text-gray-600 placeholder-gray-400"
+                      className="w-full bg-transparent border-none outline-none font-medium text-sm text-muted-foreground placeholder-muted-foreground"
                       placeholder={`Column ${index + 1}`}
                       autoFocus
                     />
                   ) : (
                     <div className="flex items-center gap-2 cursor-pointer">
-                      <span className="font-medium text-sm text-gray-600 truncate">
+                      <span className="font-medium text-sm text-muted-foreground truncate">
                         {header || `Column ${index + 1}`}
                       </span>
                       {isFocused && (
-                        <Edit3 className="h-3 w-3 text-gray-300 opacity-0 group-hover/header:opacity-100 transition-opacity" />
+                        <Edit3 className="h-3 w-3 text-muted-foreground opacity-0 group-hover/header:opacity-100 transition-opacity" />
                       )}
                     </div>
                   )}
                   
                   {/* Resize handle */}
                   <div
-                    className="absolute right-0 top-0 bottom-0 w-1 cursor-col-resize hover:bg-blue-300 transition-colors opacity-0 group-hover/header:opacity-100"
+                    className="absolute right-0 top-0 bottom-0 w-1 cursor-col-resize hover:bg-ring transition-colors opacity-0 group-hover/header:opacity-100"
                     onMouseDown={(e) => handleMouseDown(e, index)}
                   />
                 </th>
@@ -358,13 +358,13 @@ export const EditableTableDisplay = ({
             {rows.map((row, rowIndex) => (
               <tr 
                 key={rowIndex} 
-                className="border-b border-gray-100 hover:bg-gray-50/30 transition-colors duration-150 group/row"
+                className="border-b border-border/50 hover:bg-accent/30 transition-colors duration-150 group/row"
                 onContextMenu={(e) => handleRowContextMenu(e, rowIndex)}
               >
                 {row.map((cell, cellIndex) => (
                   <td 
                     key={cellIndex} 
-                    className="py-2 px-3 text-sm text-gray-900 group/cell relative cursor-text border-r border-gray-100 last:border-r-0"
+                    className="py-2 px-3 text-sm text-foreground group/cell relative cursor-text border-r border-border/50 last:border-r-0"
                     style={{ width: columnWidths[cellIndex] || 150 }}
                     onClick={(e) => {
                       e.stopPropagation();
@@ -381,7 +381,7 @@ export const EditableTableDisplay = ({
                           handleCellKeyDown(e, rowIndex, cellIndex);
                         }}
                         onClick={(e) => e.stopPropagation()}
-                        className="w-full bg-transparent border-none outline-none placeholder-gray-400 resize-none"
+                        className="w-full bg-transparent border-none outline-none placeholder-muted-foreground resize-none"
                         placeholder="Type something..."
                         autoFocus
                         rows={1}
@@ -401,13 +401,13 @@ export const EditableTableDisplay = ({
                       <div className="flex items-center min-h-[20px]">
                         <span className="whitespace-pre-wrap flex-1 break-words">
                           {cell || (
-                            <span className="text-gray-400 italic">
+                            <span className="text-muted-foreground italic">
                               {isFocused ? 'Empty' : ''}
                             </span>
                           )}
                         </span>
                         {isFocused && cell && (
-                          <Edit3 className="h-3 w-3 text-gray-300 opacity-0 group-hover/cell:opacity-100 transition-opacity ml-2 flex-shrink-0" />
+                          <Edit3 className="h-3 w-3 text-muted-foreground opacity-0 group-hover/cell:opacity-100 transition-opacity ml-2 flex-shrink-0" />
                         )}
                       </div>
                     )}
@@ -423,7 +423,7 @@ export const EditableTableDisplay = ({
       {contextMenu?.show && (
         <div
           ref={contextMenuRef}
-          className="fixed bg-white border border-gray-200 rounded-md shadow-lg py-1 z-50 min-w-[140px]"
+          className="fixed bg-card border border-border rounded-md shadow-lg py-1 z-50 min-w-[140px]"
           style={{
             left: contextMenu.x,
             top: contextMenu.y,
@@ -434,7 +434,7 @@ export const EditableTableDisplay = ({
               onClick={handleDeleteColumn}
               disabled={!canRemoveCol}
               className={cn(
-                "w-full text-left px-3 py-2 text-sm hover:bg-gray-50 flex items-center gap-2 text-red-600",
+                "w-full text-left px-3 py-2 text-sm hover:bg-accent flex items-center gap-2 text-red-600",
                 !canRemoveCol && "opacity-50 cursor-not-allowed"
               )}
             >
@@ -446,7 +446,7 @@ export const EditableTableDisplay = ({
               onClick={handleDeleteRow}
               disabled={!canRemoveRow}
               className={cn(
-                "w-full text-left px-3 py-2 text-sm hover:bg-gray-50 flex items-center gap-2 text-red-600",
+                "w-full text-left px-3 py-2 text-sm hover:bg-accent flex items-center gap-2 text-red-600",
                 !canRemoveRow && "opacity-50 cursor-not-allowed"
               )}
             >
@@ -459,8 +459,8 @@ export const EditableTableDisplay = ({
 
       {/* Help text */}
       {isFocused && (
-        <div className="mt-3 px-1 text-xs text-gray-400">
-          Click any cell to edit • Press <kbd className="px-1 py-0.5 bg-gray-100 text-gray-600 rounded text-xs">Enter</kbd> to move down • Press <kbd className="px-1 py-0.5 bg-gray-100 text-gray-600 rounded text-xs">Tab</kbd> to move right (creates new column at end) • Drag column borders to resize • Right-click headers or rows to delete
+        <div className="mt-3 px-1 text-xs text-muted-foreground">
+          Click any cell to edit • Press <kbd className="px-1 py-0.5 bg-muted text-muted-foreground rounded text-xs">Enter</kbd> to move down • Press <kbd className="px-1 py-0.5 bg-muted text-muted-foreground rounded text-xs">Tab</kbd> to move right (creates new column at end) • Drag column borders to resize • Right-click headers or rows to delete
         </div>
       )}
     </div>

@@ -1,4 +1,3 @@
-
 import { useState } from 'react';
 import { Plus, Search, Settings, ChevronDown, ChevronRight, FileText, Trash2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -41,23 +40,25 @@ export const Sidebar = ({
   };
 
   return (
-    <div className={cn(
-      "bg-gray-50 border-r border-gray-200 flex flex-col transition-all duration-200",
-      isCollapsed ? "w-12" : "w-64"
-    )}>
+    <div 
+      className={cn(
+        "bg-sidebar border-r border-sidebar-border flex flex-col transition-all duration-200",
+        isCollapsed ? "w-12" : "w-64"
+      )}
+    >
       {/* Header */}
-      <div className="p-3 border-b border-gray-200">
+      <div className="p-3 border-b border-sidebar-border">
         <div className="flex items-center gap-2">
           <Button
             variant="ghost"
             size="sm"
             onClick={() => setIsCollapsed(!isCollapsed)}
-            className="h-6 w-6 p-0"
+            className="h-6 w-6 p-0 hover:bg-sidebar-accent"
           >
-            {isCollapsed ? <ChevronRight className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
+            {isCollapsed ? <ChevronRight className="h-4 w-4 text-gray-600 dark:text-gray-400" /> : <ChevronDown className="h-4 w-4 text-gray-600 dark:text-gray-400" />}
           </Button>
           {!isCollapsed && (
-            <span className="font-semibold text-sm">My Workspace</span>
+            <span className="font-semibold text-sm text-gray-900 dark:text-gray-100">My Workspace</span>
           )}
         </div>
       </div>
@@ -67,12 +68,12 @@ export const Sidebar = ({
           {/* Search */}
           <div className="p-3">
             <div className="relative">
-              <Search className="absolute left-2 top-2.5 h-4 w-4 text-gray-400" />
+              <Search className="absolute left-2 top-2.5 h-4 w-4 text-gray-400 dark:text-gray-500" />
               <Input
                 placeholder="Search pages..."
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
-                className="pl-8 h-8 text-sm"
+                className="pl-8 h-8 text-sm bg-card border-border text-foreground placeholder-muted-foreground"
               />
             </div>
           </div>
@@ -83,7 +84,7 @@ export const Sidebar = ({
               variant="ghost"
               size="sm"
               onClick={onPageCreate}
-              className="w-full justify-start h-8 text-sm"
+              className="w-full justify-start h-8 text-sm hover:bg-sidebar-accent text-sidebar-foreground"
             >
               <Plus className="h-4 w-4 mr-2" />
               New Page
@@ -97,8 +98,8 @@ export const Sidebar = ({
                 <div
                   key={page.id}
                   className={cn(
-                    "group flex items-center gap-2 px-2 py-1.5 rounded-md cursor-pointer hover:bg-gray-100 transition-colors",
-                    currentPageId === page.id && "bg-gray-100"
+                    "group flex items-center gap-2 px-2 py-1.5 rounded-md cursor-pointer hover:bg-sidebar-accent transition-colors",
+                    currentPageId === page.id && "bg-sidebar-accent"
                   )}
                   onClick={() => onPageSelect(page.id)}
                 >
@@ -117,11 +118,11 @@ export const Sidebar = ({
                           }
                         }}
                         autoFocus
-                        className="h-6 text-sm"
+                        className="h-6 text-sm bg-card border-border text-foreground"
                       />
                     ) : (
                       <span
-                        className="text-sm truncate"
+                        className="text-sm truncate text-gray-700 dark:text-gray-300"
                         onDoubleClick={() => setEditingPageId(page.id)}
                       >
                         {page.title}
@@ -136,7 +137,7 @@ export const Sidebar = ({
                         e.stopPropagation();
                         onPageDelete(page.id);
                       }}
-                      className="h-6 w-6 p-0 opacity-0 group-hover:opacity-100 transition-opacity"
+                      className="h-6 w-6 p-0 opacity-0 group-hover:opacity-100 transition-opacity hover:bg-sidebar-accent text-sidebar-foreground"
                     >
                       <Trash2 className="h-3 w-3" />
                     </Button>
@@ -147,12 +148,12 @@ export const Sidebar = ({
           </div>
 
           {/* Footer */}
-          <div className="p-3 border-t border-gray-200">
+          <div className="p-3 border-t border-sidebar-border">
             <Button
               variant="ghost"
               size="sm"
               onClick={() => navigate('/settings')}
-              className="w-full justify-start h-8 text-sm"
+              className="w-full justify-start h-8 text-sm hover:bg-sidebar-accent text-sidebar-foreground"
             >
               <Settings className="h-4 w-4 mr-2" />
               Settings

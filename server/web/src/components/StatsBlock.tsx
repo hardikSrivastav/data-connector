@@ -344,9 +344,9 @@ export const StatsBlock = ({ block, onUpdate, isFocused, onFocus, onAddBlock }: 
           <div
             key={stat.id}
             className={cn(
-              "bg-gray-50 border border-transparent rounded-md p-3 text-center transition-all",
-              isFocused && selectedStatIndex === index && "border-gray-300 bg-white shadow-sm",
-              !isFocused && "hover:bg-gray-100"
+              "bg-muted border border-transparent rounded-md p-3 text-center transition-all",
+              isFocused && selectedStatIndex === index && "border-border bg-card shadow-sm",
+              !isFocused && "hover:bg-accent"
             )}
           >
             {/* Label */}
@@ -360,11 +360,11 @@ export const StatsBlock = ({ block, onUpdate, isFocused, onFocus, onAddBlock }: 
                   setEditingField(null);
                 }}
                 onKeyDown={(e) => handleEditKeyDown(e, stat.id, 'label')}
-                className="w-full text-xs text-gray-600 uppercase tracking-wide text-center border-none p-0 h-auto bg-transparent focus:outline-none"
+                className="w-full text-xs text-muted-foreground uppercase tracking-wide text-center border-none p-0 h-auto bg-transparent focus:outline-none"
                 autoFocus
               />
             ) : (
-              <div className="text-xs text-gray-600 uppercase tracking-wide">
+              <div className="text-xs text-muted-foreground uppercase tracking-wide">
                 {stat.label}
               </div>
             )}
@@ -380,11 +380,11 @@ export const StatsBlock = ({ block, onUpdate, isFocused, onFocus, onAddBlock }: 
                   setEditingField(null);
                 }}
                 onKeyDown={(e) => handleEditKeyDown(e, stat.id, 'value')}
-                className="w-full text-lg font-semibold text-gray-900 mt-1 text-center border-none p-0 h-auto bg-transparent focus:outline-none"
+                className="w-full text-lg font-semibold text-foreground mt-1 text-center border-none p-0 h-auto bg-transparent focus:outline-none"
                 autoFocus
               />
             ) : (
-              <div className="text-lg font-semibold text-gray-900 mt-1">
+              <div className="text-lg font-semibold text-foreground mt-1">
                 {stat.value}
               </div>
             )}
@@ -394,45 +394,45 @@ export const StatsBlock = ({ block, onUpdate, isFocused, onFocus, onAddBlock }: 
 
       {/* Subtle help text - only show when focused */}
       {isFocused && (
-        <div className="mt-3 text-xs text-gray-400 space-y-1">
+        <div className="mt-3 text-xs text-muted-foreground space-y-1">
           <div className="flex justify-between items-center">
             <div className="flex items-center gap-1 flex-wrap">
               <span className="inline-flex items-center gap-1">
-                <kbd className="px-1.5 py-0.5 bg-gray-100 border border-gray-300 rounded text-xs font-mono text-gray-600">Tab</kbd>
+                <kbd className="px-1.5 py-0.5 bg-muted border border-border rounded text-xs font-mono text-muted-foreground">Tab</kbd>
                 <span>: navigate •</span>
               </span>
               <span className="inline-flex items-center gap-1">
-                <kbd className="px-1.5 py-0.5 bg-gray-100 border border-gray-300 rounded text-xs font-mono text-gray-600">
+                <kbd className="px-1.5 py-0.5 bg-muted border border-border rounded text-xs font-mono text-muted-foreground">
                   {navigator.platform.toLowerCase().includes('mac') ? '↵' : 'Enter'}
                 </kbd>
                 <span>: new block •</span>
               </span>
               <span className="inline-flex items-center gap-1">
-                <kbd className="px-1.5 py-0.5 bg-gray-100 border border-gray-300 rounded text-xs font-mono text-gray-600">Shift</kbd>
+                <kbd className="px-1.5 py-0.5 bg-muted border border-border rounded text-xs font-mono text-muted-foreground">Shift</kbd>
                 <span>+</span>
-                <kbd className="px-1.5 py-0.5 bg-gray-100 border border-gray-300 rounded text-xs font-mono text-gray-600">
+                <kbd className="px-1.5 py-0.5 bg-muted border border-border rounded text-xs font-mono text-muted-foreground">
                   {navigator.platform.toLowerCase().includes('mac') ? '↵' : 'Enter'}
                 </kbd>
                 <span>: edit label •</span>
               </span>
               <span className="inline-flex items-center gap-1">
-                <kbd className="px-1.5 py-0.5 bg-gray-100 border border-gray-300 rounded text-xs font-mono text-gray-600">Space</kbd>
+                <kbd className="px-1.5 py-0.5 bg-muted border border-border rounded text-xs font-mono text-muted-foreground">Space</kbd>
                 <span>: edit value •</span>
               </span>
               <span className="inline-flex items-center gap-1">
-                <kbd className="px-1.5 py-0.5 bg-gray-100 border border-gray-300 rounded text-xs font-mono text-gray-600">
+                <kbd className="px-1.5 py-0.5 bg-muted border border-border rounded text-xs font-mono text-muted-foreground">
                   {navigator.platform.toLowerCase().includes('mac') ? '⌥' : 'Alt'}
                 </kbd>
                 <span>+</span>
-                <kbd className="px-1.5 py-0.5 bg-gray-100 border border-gray-300 rounded text-xs font-mono text-gray-600">N</kbd>
+                <kbd className="px-1.5 py-0.5 bg-muted border border-border rounded text-xs font-mono text-muted-foreground">N</kbd>
                 <span>: add •</span>
               </span>
               <span className="inline-flex items-center gap-1">
-                <kbd className="px-1.5 py-0.5 bg-gray-100 border border-gray-300 rounded text-xs font-mono text-gray-600">
+                <kbd className="px-1.5 py-0.5 bg-muted border border-border rounded text-xs font-mono text-muted-foreground">
                   {navigator.platform.toLowerCase().includes('mac') ? '⌥' : 'Alt'}
                 </kbd>
                 <span>+</span>
-                <kbd className="px-1.5 py-0.5 bg-gray-100 border border-gray-300 rounded text-xs font-mono text-gray-600">Del</kbd>
+                <kbd className="px-1.5 py-0.5 bg-muted border border-border rounded text-xs font-mono text-muted-foreground">Del</kbd>
                 <span>: remove</span>
               </span>
             </div>

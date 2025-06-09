@@ -724,8 +724,8 @@ export const PageEditor = ({
       top: `${top}px`,
       width: `${width}px`,
       height: `${height}px`,
-      backgroundColor: 'rgba(59, 130, 246, 0.1)', // Blue with opacity
-      border: '1px solid rgb(59, 130, 246)', // Blue border
+      backgroundColor: 'rgba(59, 130, 246, 0.15)', // Blue with slightly higher opacity since no border
+      border: 'none', // Remove border
       pointerEvents: 'none' as const,
       zIndex: 1000,
     };
@@ -1205,7 +1205,7 @@ export const PageEditor = ({
     <div className="flex-1 flex flex-col relative">
       {/* Main content area */}
       <div 
-        className="flex-1 overflow-y-auto relative"
+        className="flex-1 overflow-y-auto relative bg-background"
         tabIndex={0}
         style={{ 
           userSelect: isDragSelecting || isGlobalDragSelecting ? 'none' : 'auto',
@@ -1263,9 +1263,9 @@ export const PageEditor = ({
 
           {/* Selection indicator - Fixed position to not disrupt layout */}
           {selectedBlocks.size > 0 && (
-            <div className="fixed top-4 right-4 z-50 p-3 bg-white border border-blue-200 rounded-lg shadow-lg text-sm max-w-xs">
+            <div className="fixed top-4 right-4 z-50 p-3 bg-card border border-blue-200 dark:border-blue-700 rounded-lg shadow-lg text-sm max-w-xs">
               <div className="flex items-center justify-between mb-2">
-                <span className="font-medium text-blue-900">
+                <span className="font-medium text-blue-900 dark:text-blue-100">
                   {selectedBlocks.size} block{selectedBlocks.size !== 1 ? 's' : ''} selected
                 </span>
                 <button
@@ -1273,14 +1273,14 @@ export const PageEditor = ({
                     e.preventDefault();
                     clearSelection();
                   }}
-                  className="text-gray-400 hover:text-gray-600 ml-2"
+                  className="text-gray-400 dark:text-gray-500 hover:text-gray-600 dark:hover:text-gray-300 ml-2"
                   title="Clear selection"
                 >
                   ✕
                 </button>
               </div>
               {selectedBlocks.size === 1 && (
-                <div className="text-xs text-gray-600 mb-2">
+                <div className="text-xs text-gray-600 dark:text-gray-400 mb-2">
                   Hold Ctrl/Cmd and click more blocks to select multiple
                 </div>
               )}
@@ -1304,7 +1304,7 @@ export const PageEditor = ({
                         setDiffModeBlockId(null);
                       }, 100);
                     }}
-                    className="flex-1 px-3 py-1 bg-blue-50 text-blue-700 border border-blue-200 rounded hover:bg-blue-100 transition-colors text-xs"
+                    className="flex-1 px-3 py-1 bg-muted text-muted-foreground border border-border rounded hover:bg-accent transition-colors text-xs"
                   >
                     Edit text
                   </button>
@@ -1315,7 +1315,7 @@ export const PageEditor = ({
                     console.log('Delete button clicked, selected blocks:', Array.from(selectedBlocks));
                     handleDeleteSelected();
                   }}
-                  className="flex-1 px-3 py-1 bg-red-50 text-red-700 border border-red-200 rounded hover:bg-red-100 transition-colors text-xs"
+                  className="flex-1 px-3 py-1 bg-red-50 dark:bg-red-900/20 text-red-700 dark:text-red-300 border border-red-200 dark:border-red-700 rounded hover:bg-red-100 dark:hover:bg-red-900/30 transition-colors text-xs"
                 >
                   Delete
                 </button>
@@ -1324,7 +1324,7 @@ export const PageEditor = ({
                     e.preventDefault();
                     clearSelection();
                   }}
-                  className="flex-1 px-3 py-1 bg-gray-50 text-gray-700 border border-gray-200 rounded hover:bg-gray-100 transition-colors text-xs"
+                  className="flex-1 px-3 py-1 bg-gray-50 dark:bg-gray-800 text-gray-700 dark:text-gray-300 border border-gray-200 dark:border-gray-600 rounded hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors text-xs"
                 >
                   Clear
                 </button>

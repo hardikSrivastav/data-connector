@@ -561,11 +561,11 @@ export const BlockEditor = ({
       case 'numbered':
         return `${baseClasses} pl-6 relative leading-relaxed`;
       case 'quote':
-        return `${baseClasses} pl-4 border-l-3 border-gray-300 text-gray-600 leading-relaxed`;
+        return `${baseClasses} pl-4 border-l-3 border-border text-muted-foreground leading-relaxed`;
       case 'code':
-        return `${baseClasses} font-mono text-sm bg-gray-50/50 p-3 rounded-md leading-relaxed`;
+        return `${baseClasses} font-mono text-sm bg-muted/50 p-3 rounded-md leading-relaxed`;
       case 'divider':
-        return `${baseClasses} text-center text-gray-400`;
+        return `${baseClasses} text-center text-muted-foreground`;
       case 'table':
       case 'toggle':
       case 'subpage':
@@ -672,7 +672,7 @@ export const BlockEditor = ({
         </div>
         
         <div className="flex items-center gap-2 ml-0">
-          <hr className="flex-1 border-gray-300" />
+          <hr className="flex-1 border-border" />
         </div>
       </div>
     );

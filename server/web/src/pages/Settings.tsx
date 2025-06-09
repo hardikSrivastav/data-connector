@@ -91,11 +91,11 @@ export const Settings = () => {
   const getStatusIcon = (status: string) => {
     switch (status) {
       case 'online':
-        return <CheckCircle className="h-4 w-4 text-green-600" />;
+        return <CheckCircle className="h-4 w-4 text-green-600 dark:text-green-400" />;
       case 'offline':
-        return <XCircle className="h-4 w-4 text-red-600" />;
+        return <XCircle className="h-4 w-4 text-red-600 dark:text-red-400" />;
       default:
-        return <div className="h-4 w-4 rounded-full bg-gray-400" />;
+        return <div className="h-4 w-4 rounded-full bg-muted" />;
     }
   };
 
@@ -103,13 +103,13 @@ export const Settings = () => {
     const baseClasses = "inline-flex items-center gap-1";
     switch (status) {
       case 'online':
-        return <Badge className={`${baseClasses} bg-green-100 text-green-800`}>Online</Badge>;
+        return <Badge className={`${baseClasses} bg-green-100 dark:bg-green-900/20 text-green-800 dark:text-green-300 border-green-200 dark:border-green-800`}>Online</Badge>;
       case 'offline':
-        return <Badge className={`${baseClasses} bg-red-100 text-red-800`}>Offline</Badge>;
+        return <Badge className={`${baseClasses} bg-red-100 dark:bg-red-900/20 text-red-800 dark:text-red-300 border-red-200 dark:border-red-800`}>Offline</Badge>;
       case 'error':
-        return <Badge className={`${baseClasses} bg-yellow-100 text-yellow-800`}>Error</Badge>;
+        return <Badge className={`${baseClasses} bg-yellow-100 dark:bg-yellow-900/20 text-yellow-800 dark:text-yellow-300 border-yellow-200 dark:border-yellow-800`}>Error</Badge>;
       default:
-        return <Badge className={`${baseClasses} bg-gray-100 text-gray-800`}>Unknown</Badge>;
+        return <Badge className={`${baseClasses} bg-muted text-muted-foreground border-border`}>Unknown</Badge>;
     }
   };
 
@@ -145,14 +145,14 @@ export const Settings = () => {
   }, []);
 
   return (
-    <div className="container mx-auto p-6 max-w-6xl">
+    <div className="container mx-auto p-6 max-w-6xl bg-background text-foreground">
       {/* Navigation Header */}
       <div className="flex items-center gap-3 mb-4">
         <Button 
           variant="ghost" 
           size="sm" 
           onClick={() => navigate('/')}
-          className="flex items-center gap-2"
+          className="flex items-center gap-2 hover:bg-gray-100 dark:hover:bg-gray-800 text-gray-700 dark:text-gray-300"
         >
           <ArrowLeft className="h-4 w-4" />
           Back to Workspace
@@ -160,16 +160,16 @@ export const Settings = () => {
       </div>
       
       <div className="mb-6">
-        <h1 className="text-3xl font-bold text-gray-900">Settings</h1>
-        <p className="text-gray-600">Manage your account, preferences, and database connections</p>
+        <h1 className="text-3xl font-bold text-gray-900 dark:text-gray-100">Settings</h1>
+        <p className="text-gray-600 dark:text-gray-400">Manage your account, preferences, and database connections</p>
       </div>
 
       <Tabs defaultValue="databases" className="space-y-6">
-        <TabsList className="grid w-full grid-cols-2">
-          <TabsTrigger value="databases">
+        <TabsList className="grid w-full grid-cols-2 bg-muted">
+          <TabsTrigger value="databases" className="data-[state=active]:bg-white dark:data-[state=active]:bg-gray-700 text-gray-700 dark:text-gray-300">
             Databases
           </TabsTrigger>
-          <TabsTrigger value="preferences">
+          <TabsTrigger value="preferences" className="data-[state=active]:bg-white dark:data-[state=active]:bg-gray-700 text-gray-700 dark:text-gray-300">
             Preferences
           </TabsTrigger>
         </TabsList>
@@ -179,14 +179,15 @@ export const Settings = () => {
           <div className="space-y-6">
             <div className="flex items-center justify-between">
               <div>
-                <h2 className="text-xl font-semibold text-gray-900">Database Availability</h2>
-                <p className="text-sm text-gray-600">Monitor and manage connections to your enterprise databases</p>
+                <h2 className="text-xl font-semibold text-gray-900 dark:text-gray-100">Database Availability</h2>
+                <p className="text-sm text-gray-600 dark:text-gray-400">Monitor and manage connections to your enterprise databases</p>
               </div>
               <Button 
                 onClick={handleRefreshDatabases} 
                 disabled={refreshing}
                 variant="outline"
                 size="sm"
+                className="border-border hover:bg-accent text-foreground"
               >
                 <RefreshCw className={`h-4 w-4 ${refreshing ? 'animate-spin' : ''} mr-2`} />
                 Refresh All
@@ -195,78 +196,104 @@ export const Settings = () => {
             <div>
               {loading ? (
                 <div className="flex items-center justify-center py-12">
-                  <RefreshCw className="h-8 w-8 animate-spin text-blue-600" />
-                  <span className="ml-2 text-gray-600">Loading database status...</span>
+                  <RefreshCw className="h-8 w-8 animate-spin text-blue-600 dark:text-blue-400" />
+                  <span className="ml-2 text-gray-600 dark:text-gray-400">Loading database status...</span>
                 </div>
               ) : databaseData ? (
                 <div className="space-y-6">
                   {/* Summary Cards */}
-                  <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-                    <div className="bg-white border p-3 rounded-lg text-center">
-                      <p className="text-lg font-semibold text-gray-900">{databaseData.summary.total_databases}</p>
-                      <span className="text-xs text-gray-600">Total</span>
-                    </div>
-                    <div className="bg-white border p-3 rounded-lg text-center">
-                      <p className="text-lg font-semibold text-green-600">{databaseData.summary.online}</p>
-                      <span className="text-xs text-gray-600">Online</span>
-                    </div>
-                    <div className="bg-white border p-3 rounded-lg text-center">
-                      <p className="text-lg font-semibold text-red-600">{databaseData.summary.offline}</p>
-                      <span className="text-xs text-gray-600">Offline</span>
-                    </div>
-                    <div className="bg-white border p-3 rounded-lg text-center">
-                      <p className="text-lg font-semibold text-blue-600">
-                        {databaseData.summary.uptime_percentage.toFixed(0)}%
-                      </p>
-                      <span className="text-xs text-gray-600">Uptime</span>
-                    </div>
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                    <Card className="bg-card border-border">
+                      <CardContent className="p-4 text-center">
+                        <p className="text-2xl font-bold text-gray-900 dark:text-gray-100">{databaseData.summary.total_databases}</p>
+                        <span className="text-sm text-gray-600 dark:text-gray-400">Total</span>
+                      </CardContent>
+                    </Card>
+                    <Card className="bg-card border-border">
+                      <CardContent className="p-4 text-center">
+                        <p className="text-2xl font-bold text-green-600 dark:text-green-400">{databaseData.summary.online}</p>
+                        <span className="text-sm text-gray-600 dark:text-gray-400">Online</span>
+                      </CardContent>
+                    </Card>
+                    <Card className="bg-card border-border">
+                      <CardContent className="p-4 text-center">
+                        <p className="text-2xl font-bold text-red-600 dark:text-red-400">{databaseData.summary.offline}</p>
+                        <span className="text-sm text-gray-600 dark:text-gray-400">Offline</span>
+                      </CardContent>
+                    </Card>
+                    <Card className="bg-card border-border">
+                      <CardContent className="p-4 text-center">
+                        <p className="text-2xl font-bold text-blue-600 dark:text-blue-400">
+                          {databaseData.summary.uptime_percentage.toFixed(0)}%
+                        </p>
+                        <span className="text-sm text-gray-600 dark:text-gray-400">Uptime</span>
+                      </CardContent>
+                    </Card>
                   </div>
 
                   {/* Database List */}
                   <div className="space-y-4">
-                    <h3 className="text-base font-medium text-gray-900">Databases</h3>
-                    <div className="space-y-2">
+                    <div className="flex items-center justify-between">
+                      <h3 className="text-lg font-semibold text-gray-900 dark:text-gray-100">Connected Databases</h3>
+                      <span className="text-sm text-gray-500 dark:text-gray-400">
+                        {databaseData.databases.length} database{databaseData.databases.length !== 1 ? 's' : ''} configured
+                      </span>
+                    </div>
+                    <div className="grid gap-4">
                       {databaseData.databases.map((db: DatabaseStatus) => (
-                        <div key={db.name} className="border rounded-lg p-4 hover:bg-gray-50 transition-colors">
-                          <div className="flex items-center justify-between">
-                            <div className="flex items-center gap-3">
-                              {getStatusIcon(db.status)}
-                              <div>
-                                <h4 className="font-medium text-gray-900 capitalize">{db.name}</h4>
+                        <Card key={db.name} className="bg-card border-border">
+                          <CardHeader className="pb-3">
+                            <div className="flex items-center justify-between">
+                              <div className="flex items-center gap-3">
+                                {getStatusIcon(db.status)}
+                                <div>
+                                  <CardTitle className="text-lg text-gray-900 dark:text-gray-100 capitalize">{db.name}</CardTitle>
+                                  <CardDescription className="text-gray-600 dark:text-gray-400">
+                                    Database connection
+                                  </CardDescription>
+                                </div>
+                              </div>
+                              <div className="flex items-center gap-2">
+                                {getStatusBadge(db.status)}
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  onClick={() => handleRefreshSingleDatabase(db.name)}
+                                  className="hover:bg-accent text-muted-foreground"
+                                >
+                                  <RefreshCw className="h-3 w-3" />
+                                </Button>
                               </div>
                             </div>
-                            <div className="flex items-center gap-3">
-                              {getStatusBadge(db.status)}
-                              {db.response_time_ms && (
-                                <span className="text-sm text-gray-600">
-                                  {db.response_time_ms.toFixed(0)}ms
-                                </span>
-                              )}
-                              <Button
-                                size="sm"
-                                variant="outline"
-                                onClick={() => handleRefreshSingleDatabase(db.name)}
-                                className="text-xs"
-                              >
-                                Test
-                              </Button>
+                          </CardHeader>
+                          <CardContent className="pt-0">
+                            <div className="grid grid-cols-2 gap-4 text-sm">
+                              <div>
+                                <span className="text-gray-500 dark:text-gray-400">Last Checked:</span>
+                                <div className="font-medium text-gray-900 dark:text-gray-100">{formatLastChecked(db.last_checked)}</div>
+                              </div>
+                              <div>
+                                <span className="text-gray-500 dark:text-gray-400">Response Time:</span>
+                                <div className="font-medium text-gray-900 dark:text-gray-100">
+                                  {db.response_time_ms ? `${db.response_time_ms}ms` : 'N/A'}
+                                </div>
+                              </div>
                             </div>
-                          </div>
-                          
-                          {db.error_message && (
-                            <div className="mt-3 p-2 bg-red-50 rounded text-sm text-red-600">
-                              {db.error_message}
-                            </div>
-                          )}
-                        </div>
+                            {db.error_message && (
+                              <div className="mt-3 p-2 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded text-sm text-red-700 dark:text-red-300">
+                                {db.error_message}
+                              </div>
+                            )}
+                          </CardContent>
+                        </Card>
                       ))}
                     </div>
                   </div>
                 </div>
               ) : (
                 <div className="text-center py-12">
-                  <div className="h-12 w-12 bg-gray-400 rounded mx-auto mb-4" />
-                  <p className="text-gray-600">No database information available</p>
+                  <div className="h-12 w-12 bg-muted rounded mx-auto mb-4" />
+                  <p className="text-gray-500 dark:text-gray-400">No database information available</p>
                   <Button onClick={() => loadDatabaseAvailability()} className="mt-4">
                     Load Database Status
                   </Button>
@@ -290,7 +317,7 @@ export const Settings = () => {
             <CardContent className="space-y-6">
               {/* Theme Settings */}
               <div className="space-y-3">
-                <h3 className="text-sm font-medium text-gray-900">Appearance</h3>
+                <h3 className="text-sm font-medium text-gray-900 dark:text-gray-100">Appearance</h3>
                 <div className="flex items-center justify-between">
                   <span className="text-sm">Theme</span>
                   <select 
@@ -309,7 +336,7 @@ export const Settings = () => {
 
               {/* Query Settings */}
               <div className="space-y-4">
-                <h3 className="text-sm font-medium text-gray-900">Query Behavior</h3>
+                <h3 className="text-sm font-medium text-gray-900 dark:text-gray-100">Query Behavior</h3>
                 
                 <div className="flex items-center justify-between">
                   <div>
@@ -338,7 +365,7 @@ export const Settings = () => {
 
               {/* Live Updates */}
               <div className="space-y-4">
-                <h3 className="text-sm font-medium text-gray-900">Live Updates</h3>
+                <h3 className="text-sm font-medium text-gray-900 dark:text-gray-100">Live Updates</h3>
                 
                 <div className="flex items-center justify-between">
                   <div>

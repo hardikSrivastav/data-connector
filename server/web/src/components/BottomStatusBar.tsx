@@ -4,6 +4,7 @@ import { Settings, X, ChevronRight } from 'lucide-react';
 import { agentClient } from '@/lib/agent-client';
 import { useAuth } from '@/contexts/AuthContext';
 import { UserMenu } from './UserMenu';
+import { ThemeToggle } from './ThemeToggle';
 
 interface BottomStatusBarProps {
   showAgentPanel: boolean;
@@ -46,18 +47,18 @@ export const BottomStatusBar = ({
   };
 
   return (
-    <div className="bg-white border-t border-gray-200 shadow-lg">
+    <div className="bg-background border-t border-border shadow-lg">
       <div className="flex items-center justify-between px-4 py-2 max-w-full">
         
         {/* Left side - Breadcrumbs */}
-        <div className="flex items-center space-x-1 text-sm text-gray-600 min-w-0 flex-1">
+        <div className="flex items-center space-x-1 text-sm text-muted-foreground min-w-0 flex-1">
           {breadcrumbs.length > 0 ? (
             breadcrumbs.map((crumb, index) => (
               <div key={index} className="flex items-center space-x-1">
-                {index > 0 && <ChevronRight className="h-3 w-3 text-gray-400" />}
+                {index > 0 && <ChevronRight className="h-3 w-3 text-muted-foreground" />}
                 <button
                   onClick={crumb.onClick}
-                  className={`truncate hover:text-gray-900 ${
+                  className={`truncate hover:text-foreground ${
                     crumb.onClick ? 'cursor-pointer' : 'cursor-default'
                   }`}
                 >
@@ -66,15 +67,18 @@ export const BottomStatusBar = ({
               </div>
             ))
           ) : (
-            <div className="text-gray-400 text-xs">Ready for navigation breadcrumbs...</div>
+            <div className="text-muted-foreground text-xs">Ready for navigation breadcrumbs...</div>
           )}
         </div>
 
         {/* Center - Agent Status */}
 
 
-        {/* Right side - User Menu & Test AI Agent Button */}
+        {/* Right side - Theme Toggle, User Menu & Test AI Agent Button */}
         <div className="flex items-center space-x-3">
+          {/* Theme Toggle */}
+          <ThemeToggle />
+          
           {/* User Menu (only when authenticated) */}
           {isAuthenticated && <UserMenu />}
         </div>

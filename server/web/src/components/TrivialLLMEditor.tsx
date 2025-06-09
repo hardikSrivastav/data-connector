@@ -260,7 +260,7 @@ export const TrivialLLMEditor: React.FC<TrivialLLMEditorProps> = ({
       <div className={cn("space-y-3", className)}>
         {/* Streaming status */}
         {isStreaming && (
-          <div className="flex items-center gap-2 text-xs text-blue-600 bg-blue-50 px-2 py-1 rounded">
+          <div className="flex items-center gap-2 text-xs text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-900/20 px-2 py-1 rounded">
             <div className="animate-spin w-3 h-3 border border-blue-300 border-t-blue-600 rounded-full"></div>
             <span>Generating...</span>
           </div>
@@ -268,12 +268,12 @@ export const TrivialLLMEditor: React.FC<TrivialLLMEditorProps> = ({
 
         {/* Operation info */}
         {streamingState.operation && !isStreaming && (
-          <div className="flex items-center gap-2 text-xs text-gray-600">
+          <div className="flex items-center gap-2 text-xs text-gray-600 dark:text-gray-400">
             <span className="font-medium">
               {QUICK_OPERATIONS.find(op => op.id === streamingState.operation)?.label || streamingState.operation}
             </span>
             {streamingState.duration > 0 && (
-              <span className="text-gray-400">
+              <span className="text-gray-400 dark:text-gray-500">
                 • {streamingState.duration.toFixed(2)}s
                 {streamingState.cached && ' (cached)'}
               </span>
@@ -293,14 +293,14 @@ export const TrivialLLMEditor: React.FC<TrivialLLMEditorProps> = ({
           <button
             onClick={handleAccept}
             disabled={isStreaming || !hasResult}
-            className="px-3 py-1 bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+            className="px-3 py-1 bg-blue-600 dark:bg-blue-500 text-white rounded hover:bg-blue-700 dark:hover:bg-blue-600 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
           >
             Accept
           </button>
           <button
             onClick={handleReject}
             disabled={isStreaming}
-            className="px-3 py-1 border border-gray-300 rounded hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+            className="px-3 py-1 border border-input rounded hover:bg-accent text-foreground disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
           >
             Discard
           </button>
@@ -308,7 +308,7 @@ export const TrivialLLMEditor: React.FC<TrivialLLMEditorProps> = ({
             <button
               onClick={handleInsertBelow}
               disabled={isStreaming || !hasResult}
-              className="px-3 py-1 border border-gray-300 rounded hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+              className="px-3 py-1 border border-input rounded hover:bg-accent text-foreground disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
             >
               Insert below
             </button>
@@ -316,7 +316,7 @@ export const TrivialLLMEditor: React.FC<TrivialLLMEditorProps> = ({
           <button
             onClick={handleTryAgain}
             disabled={isStreaming}
-            className="px-3 py-1 border border-gray-300 rounded hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+            className="px-3 py-1 border border-input rounded hover:bg-accent text-foreground disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
           >
             Try again
           </button>
@@ -333,24 +333,24 @@ export const TrivialLLMEditor: React.FC<TrivialLLMEditorProps> = ({
           <div className="flex items-center gap-2">
             <button
               onClick={() => setShowOperations(!showOperations)}
-              className="text-xs px-2 py-1 bg-purple-100 text-purple-700 rounded hover:bg-purple-200 transition-colors"
+              className="text-xs px-2 py-1 bg-purple-100 dark:bg-purple-900/20 text-purple-700 dark:text-purple-300 rounded hover:bg-purple-200 dark:hover:bg-purple-900/30 transition-colors"
             >
               ✨ AI Operations {showOperations ? '▼' : '▶'}
             </button>
-            <span className="text-xs text-gray-500">
+            <span className="text-xs text-gray-500 dark:text-gray-400">
               or type manually below
             </span>
           </div>
           
           {showOperations && (
-            <div className="grid grid-cols-2 gap-1 p-2 bg-gray-50 rounded border">
+            <div className="grid grid-cols-2 gap-1 p-2 bg-muted rounded border border-border">
               {QUICK_OPERATIONS
                 .filter(op => supportedOperations.includes(op.id))
                 .map(operation => (
                 <button
                   key={operation.id}
                   onClick={() => handleLLMOperation(operation.id)}
-                  className="text-left text-xs px-2 py-1 hover:bg-white hover:shadow-sm rounded transition-all"
+                  className="text-left text-xs px-2 py-1 hover:bg-card hover:shadow-sm rounded transition-all text-foreground"
                   title={`Ctrl/Cmd + ${operation.shortcut}`}
                 >
                   {operation.label}
@@ -373,15 +373,15 @@ export const TrivialLLMEditor: React.FC<TrivialLLMEditorProps> = ({
             ? "Type replacement text or use AI operations above... (Enter to preview, Escape to cancel)"
             : "Type your replacement text here... (Enter to preview, Escape to cancel)"
         }
-        className="w-full p-3 border border-blue-300 rounded resize-none outline-none focus:border-blue-400 focus:ring-1 focus:ring-blue-400 transition-colors text-sm leading-relaxed bg-blue-50/30"
+        className="w-full p-3 border border-blue-300 dark:border-blue-600 rounded resize-none outline-none focus:border-blue-400 dark:focus:border-blue-500 focus:ring-1 focus:ring-blue-400 dark:focus:ring-blue-500 transition-colors text-sm leading-relaxed bg-blue-50/30 dark:bg-blue-900/20 text-gray-900 dark:text-gray-100 placeholder-gray-500 dark:placeholder-gray-400"
         rows={1}
         style={{ minHeight: '48px' }}
       />
       
-      <div className="text-xs text-gray-500">
+      <div className="text-xs text-gray-500 dark:text-gray-400">
         Press Enter to preview changes, Escape to cancel
         {isLLMEnabled && (
-          <span className="ml-2 text-purple-600">
+          <span className="ml-2 text-purple-600 dark:text-purple-400">
             • Use Ctrl/Cmd + shortcuts for AI operations
           </span>
         )}

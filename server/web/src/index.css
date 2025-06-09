@@ -45,33 +45,33 @@
   }
 
   .dark {
-    --background: 0 0% 3.9%;
-    --foreground: 0 0% 98%;
-    --card: 0 0% 3.9%;
-    --card-foreground: 0 0% 98%;
-    --popover: 0 0% 3.9%;
-    --popover-foreground: 0 0% 98%;
-    --primary: 0 0% 98%;
-    --primary-foreground: 0 0% 9%;
-    --secondary: 0 0% 14.9%;
-    --secondary-foreground: 0 0% 98%;
-    --muted: 0 0% 14.9%;
-    --muted-foreground: 0 0% 63.9%;
-    --accent: 0 0% 14.9%;
-    --accent-foreground: 0 0% 98%;
+    --background: 25 8% 6%;
+    --foreground: 30 8% 92%;
+    --card: 25 8% 8%;
+    --card-foreground: 30 8% 92%;
+    --popover: 25 8% 8%;
+    --popover-foreground: 30 8% 92%;
+    --primary: 30 8% 92%;
+    --primary-foreground: 25 8% 12%;
+    --secondary: 25 8% 12%;
+    --secondary-foreground: 30 8% 92%;
+    --muted: 25 8% 12%;
+    --muted-foreground: 30 6% 65%;
+    --accent: 25 8% 12%;
+    --accent-foreground: 30 8% 92%;
     --destructive: 0 62.8% 30.6%;
-    --destructive-foreground: 0 0% 98%;
-    --border: 0 0% 14.9%;
-    --input: 0 0% 14.9%;
-    --ring: 0 0% 83.1%;
-    --sidebar-background: 0 0% 2%;
-    --sidebar-foreground: 0 0% 95%;
-    --sidebar-primary: 0 0% 98%;
-    --sidebar-primary-foreground: 0 0% 9%;
-    --sidebar-accent: 0 0% 14.9%;
-    --sidebar-accent-foreground: 0 0% 98%;
-    --sidebar-border: 0 0% 14.9%;
-    --sidebar-ring: 0 0% 83.1%;
+    --destructive-foreground: 30 8% 92%;
+    --border: 25 8% 15%;
+    --input: 25 8% 12%;
+    --ring: 30 8% 83%;
+    --sidebar-background: 25 10% 4%;
+    --sidebar-foreground: 30 8% 88%;
+    --sidebar-primary: 30 8% 92%;
+    --sidebar-primary-foreground: 25 8% 12%;
+    --sidebar-accent: 25 8% 10%;
+    --sidebar-accent-foreground: 30 8% 92%;
+    --sidebar-border: 25 8% 12%;
+    --sidebar-ring: 30 8% 83%;
   }
 }
 
@@ -128,6 +128,14 @@
   background: rgba(55, 53, 47, 0.24);
 }
 
+.dark ::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.16);
+}
+
+.dark ::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.24);
+}
+
 ::-webkit-scrollbar-corner {
   background: transparent;
 }
@@ -135,6 +143,10 @@
 /* Selection styling */
 ::selection {
   background: rgba(45, 170, 219, 0.3);
+}
+
+.dark ::selection {
+  background: rgba(45, 170, 219, 0.4);
 }
 
 /* Focus styles */
@@ -166,20 +178,21 @@ button:focus-visible {
   box-shadow: none;
 }
 
+/* Placeholder text */
+.placeholder {
+  color: hsl(var(--muted-foreground));
+}
+
 /* Block selection - more subtle */
 .block-selected {
-  @apply bg-blue-50/50 border-blue-200/50;
+  background-color: hsl(var(--accent) / 0.5);
+  border-color: hsl(var(--ring) / 0.5);
 }
 
 /* Prevent block selection styling when editing table cells */
 .block-selected:has(.table-display input:focus),
 .block-selected:has(.table-display textarea:focus) {
   @apply bg-transparent border-transparent;
-}
-
-/* Placeholder text */
-.placeholder {
-  @apply text-gray-400;
 }
 
 /* Remove old table styles - now handled by components */
@@ -200,7 +213,8 @@ button:focus-visible {
 }
 
 .toggle-block .toggle-content {
-  @apply ml-5 mt-1 border-l border-gray-200 pl-6;
+  @apply ml-5 mt-1 pl-6;
+  border-left: 1px solid hsl(var(--border));
 }
 
 .toggle-block .toggle-item {
@@ -213,15 +227,30 @@ button:focus-visible {
 }
 
 .subpage-block .subpage-card {
-  @apply flex items-center gap-3 p-3 border border-gray-200 rounded-md hover:bg-gray-50/50 transition-colors cursor-pointer;
+  @apply flex items-center gap-3 p-3 rounded-md transition-colors cursor-pointer;
+  border: 1px solid hsl(var(--border));
+  background-color: hsl(var(--card));
+}
+
+.subpage-block .subpage-card:hover {
+  background-color: hsl(var(--accent));
 }
 
 .subpage-block .subpage-selector {
-  @apply w-full p-3 border border-gray-200 rounded-md bg-gray-50/50;
+  @apply w-full p-3 rounded-md;
+  border: 1px solid hsl(var(--border));
+  background-color: hsl(var(--muted));
 }
 
 .subpage-block .page-option {
-  @apply w-full text-left p-2 border border-gray-200 rounded-md hover:bg-white hover:border-blue-300/50 transition-colors bg-white;
+  @apply w-full text-left p-2 rounded-md transition-colors;
+  border: 1px solid hsl(var(--border));
+  background-color: hsl(var(--card));
+}
+
+.subpage-block .page-option:hover {
+  background-color: hsl(var(--accent));
+  border-color: hsl(var(--ring));
 }
 
 /* Prevent text selection during drag operations */
@@ -262,7 +291,7 @@ button:focus-visible {
 }
 
 .canvas-block .canvas-preview:hover .group-hover\:text-gray-600 {
-  color: #4b5563;
+  color: hsl(var(--muted-foreground));
 }
 
 /* Canvas Block Editor Styles */
@@ -274,7 +303,7 @@ button:focus-visible {
 }
 
 .canvas-block-editor:hover {
-  border-left-color: #e5e7eb;
+  border-left-color: hsl(var(--border));
 }
 
 .canvas-block-editor:focus-within {
@@ -283,7 +312,7 @@ button:focus-visible {
 
 /* Make canvas content feel like a subpage */
 .canvas-block-expanded .max-w-4xl {
-  background: white;
+  background: hsl(var(--card));
   min-height: 400px;
 }
 
@@ -295,7 +324,7 @@ button:focus-visible {
 
 /* Canvas empty state */
 .canvas-block-expanded .empty-state {
-  background: linear-gradient(135deg, #f8fafc 0%, #f1f5f9 100%);
+  background: hsl(var(--muted));
   border-radius: 12px;
 }
 
@@ -305,7 +334,7 @@ button:focus-visible {
 }
 
 .analysis-results .bg-gray-100 {
-  background: linear-gradient(135deg, #f9fafb 0%, #f3f4f6 100%);
+  background-color: hsl(var(--muted));
 }
 
 .analysis-results table {
@@ -314,16 +343,16 @@ button:focus-visible {
 
 .analysis-results th {
   font-weight: 600;
-  background-color: #f9fafb;
+  background-color: hsl(var(--muted));
 }
 
 .analysis-results tbody tr:hover {
-  background-color: #f9fafb;
+  background-color: hsl(var(--accent));
 }
 
 /* Canvas workspace separation */
 .canvas-block-expanded hr {
-  border-color: #e5e7eb;
+  border-color: hsl(var(--border));
 }
 
 /* Analysis results charts */
@@ -332,14 +361,14 @@ button:focus-visible {
 }
 
 .analysis-results .h-32:hover {
-  background-color: #f8fafc;
-  border-color: #cbd5e1;
+  background-color: hsl(var(--accent));
+  border-color: hsl(var(--border));
 }
 
 /* Scrollable table styles */
 .analysis-results .overflow-auto {
   scrollbar-width: thin;
-  scrollbar-color: #cbd5e1 transparent;
+  scrollbar-color: hsl(var(--border)) transparent;
 }
 
 .analysis-results .overflow-auto::-webkit-scrollbar {
@@ -352,19 +381,29 @@ button:focus-visible {
 }
 
 .analysis-results .overflow-auto::-webkit-scrollbar-thumb {
-  background: #cbd5e1;
+  background: hsl(var(--border));
   border-radius: 3px;
 }
 
 .analysis-results .overflow-auto::-webkit-scrollbar-thumb:hover {
-  background: #9ca3af;
+  background: hsl(var(--muted-foreground));
 }
 
 /* Keyboard shortcuts styling */
 kbd {
-  @apply inline-flex items-center justify-center h-5 px-1.5 text-xs font-medium text-gray-700 bg-gray-100 border border-gray-200 rounded;
+  @apply inline-flex items-center justify-center h-5 px-1.5 text-xs font-medium;
   min-width: 1.25rem;
   font-family: "Libre Baskerville", serif;
+  color: hsl(var(--muted-foreground));
+  background-color: hsl(var(--muted));
+  border: 1px solid hsl(var(--border));
+  border-radius: 0.25rem;
+}
+
+.dark kbd {
+  color: hsl(var(--muted-foreground));
+  background-color: hsl(var(--muted));
+  border-color: hsl(var(--border));
 }
 
 /* Utility classes */
