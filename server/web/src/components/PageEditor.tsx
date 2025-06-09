@@ -1076,7 +1076,7 @@ export const PageEditor = ({
     }
   };
 
-  // Handle clicks in empty space to create new blocks
+  // Handle clicks in empty space to clear selection or create new blocks
   const handleEmptySpaceClick = (e: React.MouseEvent) => {
     // Don't interfere if processing keyboard shortcuts
     if (isProcessingKeyboardShortcut) {
@@ -1087,13 +1087,12 @@ export const PageEditor = ({
     // Check if the click was on empty space (not on a block or interactive element)
     const target = e.target as HTMLElement;
     
-    // Don't create block if:
+    // Don't do anything if:
     // - Clicking on a button, input, or other interactive element
-    // - Clicking inside a block editor
+    // - Clicking inside a block editor (but not empty space within it)
     // - Currently dragging/selecting
     // - Emoji picker is open
     if (
-      target.closest('.block-editor') || 
       target.closest('button') || 
       target.closest('input') || 
       target.closest('textarea') || 
@@ -1101,39 +1100,64 @@ export const PageEditor = ({
       target.closest('[role="button"]') ||
       isDragSelecting || 
       isGlobalDragSelecting ||
-      showEmojiPicker ||
-      selectedBlocks.size > 0 // Don't interfere with selection
+      showEmojiPicker
     ) {
       return;
     }
 
-    // Only create block if clicking in the main content area
+    // If clicking on a block but not on interactive content, just clear selection
+    if (target.closest('.block-editor')) {
+      // Check if clicking on interactive content within the block
+      if (
+        target.closest('.canvas-preview') ||
+        target.closest('.table-display') ||
+        target.closest('[contenteditable]') ||
+        target.closest('textarea') ||
+        target.closest('input') ||
+        target.closest('button')
+      ) {
+        return; // Don't clear selection if clicking on interactive content
+      }
+      
+      // Clicking on block but not interactive content - just clear selection
+      if (selectedBlocks.size > 0) {
+        clearSelection();
+        setFocusedBlockId(null);
+      }
+      return;
+    }
+
+    // Only create block if clicking in the main content area (empty space)
     if (target.closest('.page-content-area')) {
       e.preventDefault();
       e.stopPropagation();
       
       // Clear any existing selections
       clearSelection();
+      setFocusedBlockId(null);
       
-      // Check if there's already an empty block at the end
-      const lastBlock = page.blocks.length > 0 ? page.blocks[page.blocks.length - 1] : null;
-      const isLastBlockEmpty = lastBlock && (!lastBlock.content || lastBlock.content.trim() === '');
-      const isLastBlockFocused = lastBlock && focusedBlockId === lastBlock.id;
-      
-      if (isLastBlockEmpty && !isLastBlockFocused) {
-        // Focus the existing empty block instead of creating a new one
-        setFocusedBlockId(lastBlock.id);
-      } else if (!isLastBlockEmpty) {
-        // Only create a new block if the last block has content
-        const lastBlockId = lastBlock ? lastBlock.id : undefined;
-        const newBlockId = handleAddBlock(lastBlockId);
+      // Only create a new block if there are no selected blocks (i.e., we're not just clearing selection)
+      if (selectedBlocks.size === 0) {
+        // Check if there's already an empty block at the end
+        const lastBlock = page.blocks.length > 0 ? page.blocks[page.blocks.length - 1] : null;
+        const isLastBlockEmpty = lastBlock && (!lastBlock.content || lastBlock.content.trim() === '');
+        const isLastBlockFocused = lastBlock && focusedBlockId === lastBlock.id;
         
-        // Focus the new block immediately so user can start typing
-        setTimeout(() => {
-          setFocusedBlockId(newBlockId);
-        }, 50);
+        if (isLastBlockEmpty && !isLastBlockFocused) {
+          // Focus the existing empty block instead of creating a new one
+          setFocusedBlockId(lastBlock.id);
+        } else if (!isLastBlockEmpty) {
+          // Only create a new block if the last block has content
+          const lastBlockId = lastBlock ? lastBlock.id : undefined;
+          const newBlockId = handleAddBlock(lastBlockId);
+          
+          // Focus the new block immediately so user can start typing
+          setTimeout(() => {
+            setFocusedBlockId(newBlockId);
+          }, 50);
+        }
+        // If the last block is empty AND focused, do nothing (user is already typing)
       }
-      // If the last block is empty AND focused, do nothing (user is already typing)
     }
   };
 

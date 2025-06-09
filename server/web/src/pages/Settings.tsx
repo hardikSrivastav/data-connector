@@ -13,10 +13,10 @@ import {
 } from 'lucide-react';
 import { agentClient, DatabaseStatus, DatabaseAvailabilityResponse } from '@/lib/agent-client';
 import { useAuth } from '@/contexts/AuthContext';
+import { useTheme } from '@/contexts/ThemeContext';
 import { useNavigate } from 'react-router-dom';
 
 interface UserPreferences {
-  theme: 'light' | 'dark' | 'system';
   enableNotifications: boolean;
   autoSaveQueries: boolean;
   defaultAnalyzeMode: boolean;
@@ -27,12 +27,12 @@ interface UserPreferences {
 
 export const Settings = () => {
   const { user } = useAuth();
+  const { theme, setTheme } = useTheme();
   const navigate = useNavigate();
   const [databaseData, setDatabaseData] = useState<DatabaseAvailabilityResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [preferences, setPreferences] = useState<UserPreferences>({
-    theme: 'system',
     enableNotifications: true,
     autoSaveQueries: true,
     defaultAnalyzeMode: false,
@@ -152,7 +152,7 @@ export const Settings = () => {
           variant="ghost" 
           size="sm" 
           onClick={() => navigate('/')}
-          className="flex items-center gap-2 hover:bg-gray-100 dark:hover:bg-gray-800 text-gray-700 dark:text-gray-300"
+          className="flex items-center gap-2 hover:bg-accent text-foreground"
         >
           <ArrowLeft className="h-4 w-4" />
           Back to Workspace
@@ -160,16 +160,16 @@ export const Settings = () => {
       </div>
       
       <div className="mb-6">
-        <h1 className="text-3xl font-bold text-gray-900 dark:text-gray-100">Settings</h1>
-        <p className="text-gray-600 dark:text-gray-400">Manage your account, preferences, and database connections</p>
+        <h1 className="text-3xl font-bold text-foreground">Settings</h1>
+        <p className="text-muted-foreground">Manage your account, preferences, and database connections</p>
       </div>
 
       <Tabs defaultValue="databases" className="space-y-6">
         <TabsList className="grid w-full grid-cols-2 bg-muted">
-          <TabsTrigger value="databases" className="data-[state=active]:bg-white dark:data-[state=active]:bg-gray-700 text-gray-700 dark:text-gray-300">
+          <TabsTrigger value="databases" className="data-[state=active]:bg-card text-foreground">
             Databases
           </TabsTrigger>
-          <TabsTrigger value="preferences" className="data-[state=active]:bg-white dark:data-[state=active]:bg-gray-700 text-gray-700 dark:text-gray-300">
+          <TabsTrigger value="preferences" className="data-[state=active]:bg-card text-foreground">
             Preferences
           </TabsTrigger>
         </TabsList>
@@ -179,8 +179,8 @@ export const Settings = () => {
           <div className="space-y-6">
             <div className="flex items-center justify-between">
               <div>
-                <h2 className="text-xl font-semibold text-gray-900 dark:text-gray-100">Database Availability</h2>
-                <p className="text-sm text-gray-600 dark:text-gray-400">Monitor and manage connections to your enterprise databases</p>
+                <h2 className="text-xl font-semibold text-foreground">Database Availability</h2>
+                <p className="text-sm text-muted-foreground">Monitor and manage connections to your enterprise databases</p>
               </div>
               <Button 
                 onClick={handleRefreshDatabases} 
@@ -197,7 +197,7 @@ export const Settings = () => {
               {loading ? (
                 <div className="flex items-center justify-center py-12">
                   <RefreshCw className="h-8 w-8 animate-spin text-blue-600 dark:text-blue-400" />
-                  <span className="ml-2 text-gray-600 dark:text-gray-400">Loading database status...</span>
+                  <span className="ml-2 text-muted-foreground">Loading database status...</span>
                 </div>
               ) : databaseData ? (
                 <div className="space-y-6">
@@ -205,20 +205,20 @@ export const Settings = () => {
                   <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
                     <Card className="bg-card border-border">
                       <CardContent className="p-4 text-center">
-                        <p className="text-2xl font-bold text-gray-900 dark:text-gray-100">{databaseData.summary.total_databases}</p>
-                        <span className="text-sm text-gray-600 dark:text-gray-400">Total</span>
+                        <p className="text-2xl font-bold text-foreground">{databaseData.summary.total_databases}</p>
+                        <span className="text-sm text-muted-foreground">Total</span>
                       </CardContent>
                     </Card>
                     <Card className="bg-card border-border">
                       <CardContent className="p-4 text-center">
                         <p className="text-2xl font-bold text-green-600 dark:text-green-400">{databaseData.summary.online}</p>
-                        <span className="text-sm text-gray-600 dark:text-gray-400">Online</span>
+                        <span className="text-sm text-muted-foreground">Online</span>
                       </CardContent>
                     </Card>
                     <Card className="bg-card border-border">
                       <CardContent className="p-4 text-center">
                         <p className="text-2xl font-bold text-red-600 dark:text-red-400">{databaseData.summary.offline}</p>
-                        <span className="text-sm text-gray-600 dark:text-gray-400">Offline</span>
+                        <span className="text-sm text-muted-foreground">Offline</span>
                       </CardContent>
                     </Card>
                     <Card className="bg-card border-border">
@@ -226,7 +226,7 @@ export const Settings = () => {
                         <p className="text-2xl font-bold text-blue-600 dark:text-blue-400">
                           {databaseData.summary.uptime_percentage.toFixed(0)}%
                         </p>
-                        <span className="text-sm text-gray-600 dark:text-gray-400">Uptime</span>
+                        <span className="text-sm text-muted-foreground">Uptime</span>
                       </CardContent>
                     </Card>
                   </div>
@@ -234,8 +234,8 @@ export const Settings = () => {
                   {/* Database List */}
                   <div className="space-y-4">
                     <div className="flex items-center justify-between">
-                      <h3 className="text-lg font-semibold text-gray-900 dark:text-gray-100">Connected Databases</h3>
-                      <span className="text-sm text-gray-500 dark:text-gray-400">
+                      <h3 className="text-lg font-semibold text-foreground">Connected Databases</h3>
+                      <span className="text-sm text-muted-foreground">
                         {databaseData.databases.length} database{databaseData.databases.length !== 1 ? 's' : ''} configured
                       </span>
                     </div>
@@ -247,8 +247,8 @@ export const Settings = () => {
                               <div className="flex items-center gap-3">
                                 {getStatusIcon(db.status)}
                                 <div>
-                                  <CardTitle className="text-lg text-gray-900 dark:text-gray-100 capitalize">{db.name}</CardTitle>
-                                  <CardDescription className="text-gray-600 dark:text-gray-400">
+                                  <CardTitle className="text-lg text-foreground capitalize">{db.name}</CardTitle>
+                                  <CardDescription className="text-muted-foreground">
                                     Database connection
                                   </CardDescription>
                                 </div>
@@ -269,12 +269,12 @@ export const Settings = () => {
                           <CardContent className="pt-0">
                             <div className="grid grid-cols-2 gap-4 text-sm">
                               <div>
-                                <span className="text-gray-500 dark:text-gray-400">Last Checked:</span>
-                                <div className="font-medium text-gray-900 dark:text-gray-100">{formatLastChecked(db.last_checked)}</div>
+                                <span className="text-muted-foreground">Last Checked:</span>
+                                <div className="font-medium text-foreground">{formatLastChecked(db.last_checked)}</div>
                               </div>
                               <div>
-                                <span className="text-gray-500 dark:text-gray-400">Response Time:</span>
-                                <div className="font-medium text-gray-900 dark:text-gray-100">
+                                <span className="text-muted-foreground">Response Time:</span>
+                                <div className="font-medium text-foreground">
                                   {db.response_time_ms ? `${db.response_time_ms}ms` : 'N/A'}
                                 </div>
                               </div>
@@ -293,7 +293,7 @@ export const Settings = () => {
               ) : (
                 <div className="text-center py-12">
                   <div className="h-12 w-12 bg-muted rounded mx-auto mb-4" />
-                  <p className="text-gray-500 dark:text-gray-400">No database information available</p>
+                  <p className="text-muted-foreground">No database information available</p>
                   <Button onClick={() => loadDatabaseAvailability()} className="mt-4">
                     Load Database Status
                   </Button>
@@ -317,13 +317,13 @@ export const Settings = () => {
             <CardContent className="space-y-6">
               {/* Theme Settings */}
               <div className="space-y-3">
-                <h3 className="text-sm font-medium text-gray-900 dark:text-gray-100">Appearance</h3>
+                <h3 className="text-sm font-medium text-foreground">Appearance</h3>
                 <div className="flex items-center justify-between">
-                  <span className="text-sm">Theme</span>
+                  <span className="text-sm text-foreground">Theme</span>
                   <select 
-                    value={preferences.theme}
-                    onChange={(e) => updatePreference('theme', e.target.value)}
-                    className="border rounded px-3 py-1 text-sm"
+                    value={theme}
+                    onChange={(e) => setTheme(e.target.value as 'light' | 'dark' | 'system')}
+                    className="border border-border bg-card text-foreground rounded px-3 py-1 text-sm hover:bg-accent focus:outline-none focus:ring-2 focus:ring-ring"
                   >
                     <option value="light">Light</option>
                     <option value="dark">Dark</option>
@@ -336,12 +336,12 @@ export const Settings = () => {
 
               {/* Query Settings */}
               <div className="space-y-4">
-                <h3 className="text-sm font-medium text-gray-900 dark:text-gray-100">Query Behavior</h3>
+                <h3 className="text-sm font-medium text-foreground">Query Behavior</h3>
                 
                 <div className="flex items-center justify-between">
                   <div>
-                    <p className="text-sm font-medium">Auto-save queries</p>
-                    <p className="text-xs text-gray-600">Automatically save queries to session history</p>
+                    <p className="text-sm font-medium text-foreground">Auto-save queries</p>
+                    <p className="text-xs text-muted-foreground">Automatically save queries to session history</p>
                   </div>
                   <Switch 
                     checked={preferences.autoSaveQueries}
@@ -351,8 +351,8 @@ export const Settings = () => {
 
                 <div className="flex items-center justify-between">
                   <div>
-                    <p className="text-sm font-medium">Default analyze mode</p>
-                    <p className="text-xs text-gray-600">Enable analysis by default for new queries</p>
+                    <p className="text-sm font-medium text-foreground">Default analyze mode</p>
+                    <p className="text-xs text-muted-foreground">Enable analysis by default for new queries</p>
                   </div>
                   <Switch 
                     checked={preferences.defaultAnalyzeMode}
@@ -365,12 +365,12 @@ export const Settings = () => {
 
               {/* Live Updates */}
               <div className="space-y-4">
-                <h3 className="text-sm font-medium text-gray-900 dark:text-gray-100">Live Updates</h3>
+                <h3 className="text-sm font-medium text-foreground">Live Updates</h3>
                 
                 <div className="flex items-center justify-between">
                   <div>
-                    <p className="text-sm font-medium">Enable notifications</p>
-                    <p className="text-xs text-gray-600">Get notified about query completions and alerts</p>
+                    <p className="text-sm font-medium text-foreground">Enable notifications</p>
+                    <p className="text-xs text-muted-foreground">Get notified about query completions and alerts</p>
                   </div>
                   <Switch 
                     checked={preferences.enableNotifications}
@@ -380,8 +380,8 @@ export const Settings = () => {
 
                 <div className="flex items-center justify-between">
                   <div>
-                    <p className="text-sm font-medium">Live database monitoring</p>
-                    <p className="text-xs text-gray-600">Automatically refresh database status</p>
+                    <p className="text-sm font-medium text-foreground">Live database monitoring</p>
+                    <p className="text-xs text-muted-foreground">Automatically refresh database status</p>
                   </div>
                   <Switch 
                     checked={preferences.enableLiveUpdates}
@@ -392,13 +392,13 @@ export const Settings = () => {
                 {preferences.enableLiveUpdates && (
                   <div className="flex items-center justify-between pl-4">
                     <div>
-                      <p className="text-sm font-medium">Refresh interval</p>
-                      <p className="text-xs text-gray-600">How often to check database status</p>
+                      <p className="text-sm font-medium text-foreground">Refresh interval</p>
+                      <p className="text-xs text-muted-foreground">How often to check database status</p>
                     </div>
                     <select 
                       value={preferences.pollInterval}
                       onChange={(e) => updatePreference('pollInterval', parseInt(e.target.value))}
-                      className="border rounded px-3 py-1 text-sm"
+                      className="border border-border bg-card text-foreground rounded px-3 py-1 text-sm hover:bg-accent focus:outline-none focus:ring-2 focus:ring-ring"
                     >
                       <option value={15}>15 seconds</option>
                       <option value={30}>30 seconds</option>
@@ -415,8 +415,8 @@ export const Settings = () => {
               <div className="space-y-4">
                 <div className="flex items-center justify-between">
                   <div>
-                    <p className="text-sm font-medium">Show advanced settings</p>
-                    <p className="text-xs text-gray-600">Display developer and power-user options</p>
+                    <p className="text-sm font-medium text-foreground">Show advanced settings</p>
+                    <p className="text-xs text-muted-foreground">Display developer and power-user options</p>
                   </div>
                   <Switch 
                     checked={preferences.showAdvancedSettings}
