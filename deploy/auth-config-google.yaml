@@ -1,0 +1,27 @@
+sso:
+  # Common settings
+  enabled: true
+  default_protocol: "oidc"
+  
+  # Google Workspace Configuration
+  oidc:
+    provider: "google"
+    client_id: "your-google-client-id.apps.googleusercontent.com"
+    client_secret: "your-google-client-secret"
+    issuer: "https://accounts.google.com"
+    discovery_url: "https://accounts.google.com/.well-known/openid-configuration"
+    redirect_uri: "https://your-ceneca-domain.com/authorization-code/callback"
+    scopes: ["openid", "email", "profile", "https://www.googleapis.com/auth/admin.directory.group.readonly"]
+    # Google specific claim mappings
+    claims_mapping:
+      email: "email"
+      name: "name"
+      groups: "groups"  # Requires Google Admin SDK
+
+# Role mappings from Google groups to Ceneca roles
+role_mappings:
+  # Google group email addresses
+  "data-analysts@yourcompany.com": "analyst"
+  "hr-team@yourcompany.com": "hr_read"
+  "finance-team@yourcompany.com": "finance_read"
+  "it-admins@yourcompany.com": "admin" 

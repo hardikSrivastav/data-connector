@@ -25,6 +25,10 @@ const ParticleBackground = () => {
       this.y = Math.random() * canvas.height;
     }
 
+    getTheme() {
+      return document.documentElement.classList.contains('dark') ? 'dark' : 'light';
+    }
+
     reset() {
       this.x = Math.random() * this.canvas.width;
       this.y = Math.random() * this.canvas.height;
@@ -62,7 +66,13 @@ const ParticleBackground = () => {
     draw(ctx: CanvasRenderingContext2D) {
       ctx.beginPath();
       ctx.arc(this.x, this.y, this.size, 0, Math.PI * 2);
-      ctx.fillStyle = `rgba(147, 197, 253, ${this.opacity})`;
+      
+      const theme = this.getTheme();
+      const color = theme === 'dark' 
+        ? `rgba(147, 197, 253, ${this.opacity})` // Light blue for dark mode
+        : `rgba(99, 102, 241, ${this.opacity})`; // Darker blue for light mode
+      
+      ctx.fillStyle = color;
       ctx.fill();
     }
 
@@ -73,10 +83,15 @@ const ParticleBackground = () => {
       
       if (distance < 120) {
         const opacity = (1 - distance / 120) * 0.3;
+        const theme = this.getTheme();
+        const color = theme === 'dark' 
+          ? `rgba(147, 197, 253, ${opacity})` // Light blue for dark mode
+          : `rgba(99, 102, 241, ${opacity})`; // Darker blue for light mode
+        
         ctx.beginPath();
         ctx.moveTo(this.x, this.y);
         ctx.lineTo(particle.x, particle.y);
-        ctx.strokeStyle = `rgba(147, 197, 253, ${opacity})`;
+        ctx.strokeStyle = color;
         ctx.lineWidth = 1;
         ctx.stroke();
       }
@@ -89,10 +104,15 @@ const ParticleBackground = () => {
       
       if (distance < 150) {
         const opacity = (1 - distance / 150) * 0.6;
+        const theme = this.getTheme();
+        const color = theme === 'dark' 
+          ? `rgba(167, 139, 250, ${opacity})` // Light purple for dark mode
+          : `rgba(124, 58, 237, ${opacity})`; // Darker purple for light mode
+        
         ctx.beginPath();
         ctx.moveTo(this.x, this.y);
         ctx.lineTo(mouseX, mouseY);
-        ctx.strokeStyle = `rgba(167, 139, 250, ${opacity})`;
+        ctx.strokeStyle = color;
         ctx.lineWidth = 1.5;
         ctx.stroke();
       }
@@ -113,7 +133,7 @@ const ParticleBackground = () => {
     const initParticles = () => {
       particlesRef.current = [];
       const baseParticleCount = Math.min(80, Math.floor((canvas.width * canvas.height) / 12000));
-      const particleCount = Math.floor(baseParticleCount * 1.2);
+      const particleCount = Math.floor(baseParticleCount * 1.5);
       
       for (let i = 0; i < particleCount; i++) {
         particlesRef.current.push(new Particle(canvas));

@@ -379,22 +379,45 @@ Ceneca can be accessed through various domain patterns depending on your needs:
 
 #### Step 3: Configure SSO Provider
 
-1. **Register Ceneca in Your SSO Provider**:
+Ceneca supports **any OIDC-compliant identity provider** with zero code changes. Simply run our setup script:
 
-   **For OIDC (e.g., Azure AD, Okta)**:
-   * Register a new application
-   * Application type: Web
-   * Redirect URI: `https://your-ceneca-domain.com/oauth/callback`
-   * Required scopes: `openid email profile groups`
-   * Grant types: Authorization Code
-   * Note the Client ID and Secret
+```bash
+cd deploy
+./setup-auth-provider.sh
+```
 
-   **For SAML (e.g., ADFS, Okta SAML)**:
-   * Add a new SAML application
-   * Assertion Consumer Service (ACS) URL: `https://your-ceneca-domain.com/saml/callback`
-   * Entity ID / Audience: `https://your-ceneca-domain.com`
-   * Requested attributes: `email`, `firstname`, `lastname`, `groups`
-   * Download the Identity Provider metadata XML
+This will guide you through configuration for:
+- **Okta** (current setup)
+- **Azure AD / Microsoft 365**
+- **Google Workspace**
+- **Auth0**
+- **Any Custom OIDC Provider**
+
+**Manual Configuration Steps by Provider:**
+
+   **For Azure AD**:
+   * Azure Portal > App registrations > New registration
+   * Redirect URI: `https://your-ceneca-domain.com/authorization-code/callback`
+   * Add API permission: Microsoft Graph > Group.Read.All
+   * Create client secret in Certificates & secrets
+
+   **For Google Workspace**:
+   * Google Cloud Console > APIs & Services > Credentials
+   * Create OAuth 2.0 Client ID (Web application)
+   * Add redirect URI: `https://your-ceneca-domain.com/authorization-code/callback`
+   * Enable Admin SDK API for group access
+
+   **For Okta**:
+   * Okta Admin Dashboard > Applications > Create App Integration
+   * Choose OIDC - Web Application
+   * Redirect URI: `https://your-ceneca-domain.com/authorization-code/callback`
+   * Assign users and groups
+
+   **For Auth0**:
+   * Auth0 Dashboard > Applications > Create Application
+   * Choose Regular Web Application
+   * Callback URL: `https://your-ceneca-domain.com/authorization-code/callback`
+   * Configure Rules/Actions to include groups in tokens
 
 2. **Configure Attribute/Claim Mappings**:
    
