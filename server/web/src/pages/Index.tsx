@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { useWorkspace } from '@/hooks/useWorkspace';
+import { useAuth } from '@/contexts/AuthContext';
 import { Sidebar } from '@/components/Sidebar';
 import { PageEditor } from '@/components/PageEditor';
 import { CanvasWorkspace } from '@/components/CanvasWorkspace';
@@ -8,6 +9,7 @@ import { X } from 'lucide-react';
 
 const Index = () => {
   const [showAgentPanel, setShowAgentPanel] = useState(false);
+  const { user, authHealth } = useAuth();
   
   const {
     workspace,

@@ -7,6 +7,7 @@ import { orchestrationAgent, type BlockContext, type OperationClassification } f
 import { agentClient } from '@/lib/agent-client';
 import { type TrivialQueryRequest } from '@/lib/AgentClient';
 import { computeTextDiff, type DiffChange } from '@/lib/diff/textDiff';
+import { useAuth } from '@/contexts/AuthContext';
 
 interface AIQuerySelectorProps {
   query: string;
@@ -101,6 +102,7 @@ export const AIQuerySelector = ({
   const [isClassifying, setIsClassifying] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
+  const { user } = useAuth();
   
   // Trivial operation state
   const [isTrivialOperation, setIsTrivialOperation] = useState(false);

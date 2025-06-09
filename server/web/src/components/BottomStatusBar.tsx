@@ -2,6 +2,8 @@ import { useState, useEffect } from 'react';
 import { Button } from '@/components/ui/button';
 import { Settings, X, ChevronRight } from 'lucide-react';
 import { agentClient } from '@/lib/agent-client';
+import { useAuth } from '@/contexts/AuthContext';
+import { UserMenu } from './UserMenu';
 
 interface BottomStatusBarProps {
   showAgentPanel: boolean;
@@ -15,6 +17,7 @@ export const BottomStatusBar = ({
   breadcrumbs = [] 
 }: BottomStatusBarProps) => {
   const [agentStatus, setAgentStatus] = useState<'checking' | 'online' | 'offline'>('checking');
+  const { isAuthenticated } = useAuth();
 
   // Test agent connection on mount and periodically
   useEffect(() => {
@@ -68,59 +71,12 @@ export const BottomStatusBar = ({
         </div>
 
         {/* Center - Agent Status */}
-        <div className="flex items-center space-x-3 px-4">
-          <div className="flex items-center space-x-2 text-sm">
-            <div className={`w-2 h-2 rounded-full ${
-              agentStatus === 'online' ? 'bg-green-500' : 
-              agentStatus === 'offline' ? 'bg-red-500' : 
-              'bg-yellow-500 animate-pulse'
-            }`} />
-            <span className="text-gray-700 hidden sm:inline">
-              AI Agent: {
-                agentStatus === 'online' ? 'Connected' :
-                agentStatus === 'offline' ? 'Disconnected' :
-                'Checking...'
-              }
-            </span>
-            <span className="text-gray-700 sm:hidden">
-              {agentStatus === 'online' ? '🟢' : agentStatus === 'offline' ? '🔴' : '🟡'}
-            </span>
-            {agentStatus === 'offline' && (
-              <button
-                onClick={handleRetryConnection}
-                className="text-blue-600 hover:text-blue-800 text-xs underline"
-              >
-                Retry
-              </button>
-            )}
-          </div>
-        </div>
 
-        {/* Right side - Test AI Agent Button */}
-        <div className="flex items-center space-x-2">
-          {!showAgentPanel ? (
-            <Button
-              onClick={() => onToggleAgentPanel(true)}
-              size="sm"
-              variant="outline"
-              className="bg-blue-50 hover:bg-blue-100 text-blue-700 border-blue-200"
-            >
-              <Settings className="h-3 w-3 mr-1" />
-              <span className="hidden sm:inline">Test AI Agent</span>
-              <span className="sm:hidden">Test</span>
-            </Button>
-          ) : (
-            <Button
-              onClick={() => onToggleAgentPanel(false)}
-              size="sm"
-              variant="outline"
-              className="bg-gray-50 hover:bg-gray-100"
-            >
-              <X className="h-3 w-3 mr-1" />
-              <span className="hidden sm:inline">Close Panel</span>
-              <span className="sm:hidden">Close</span>
-            </Button>
-          )}
+
+        {/* Right side - User Menu & Test AI Agent Button */}
+        <div className="flex items-center space-x-3">
+          {/* User Menu (only when authenticated) */}
+          {isAuthenticated && <UserMenu />}
         </div>
       </div>
     </div>
