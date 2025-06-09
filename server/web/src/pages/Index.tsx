@@ -9,6 +9,7 @@ import { X } from 'lucide-react';
 
 const Index = () => {
   const [showAgentPanel, setShowAgentPanel] = useState(false);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const { user, authHealth } = useAuth();
   
   const {
@@ -192,6 +193,8 @@ const Index = () => {
         onPageCreate={() => createPage()}
         onPageDelete={deletePage}
         onPageTitleUpdate={(pageId, title) => updatePage(pageId, { title })}
+        isCollapsed={sidebarCollapsed}
+        onToggleCollapsed={setSidebarCollapsed}
       />
       
       {isCanvasPage ? (
@@ -254,6 +257,8 @@ const Index = () => {
             workspace={workspace}
             onNavigateToPage={setCurrentPageId}
             onCreateCanvasPage={createCanvasPage}
+            sidebarCollapsed={sidebarCollapsed}
+            onToggleSidebar={() => setSidebarCollapsed(!sidebarCollapsed)}
           />
           
           {/* Agent Test Panel - only show for regular pages */}

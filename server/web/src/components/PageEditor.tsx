@@ -21,6 +21,8 @@ interface PageEditorProps {
   workspace: Workspace;
   onNavigateToPage?: (pageId: string) => void;
   onCreateCanvasPage?: (canvasData: any) => Promise<string>;
+  sidebarCollapsed?: boolean;
+  onToggleSidebar?: () => void;
 }
 
 export const PageEditor = ({
@@ -34,7 +36,9 @@ export const PageEditor = ({
   onToggleAgentPanel,
   workspace,
   onNavigateToPage,
-  onCreateCanvasPage
+  onCreateCanvasPage,
+  sidebarCollapsed,
+  onToggleSidebar
 }: PageEditorProps) => {
   const [focusedBlockId, setFocusedBlockId] = useState<string | null>(null);
   const [isGlobalDragSelecting, setIsGlobalDragSelecting] = useState(false);
@@ -1415,6 +1419,8 @@ export const PageEditor = ({
         showAgentPanel={showAgentPanel}
         onToggleAgentPanel={onToggleAgentPanel}
         breadcrumbs={breadcrumbs}
+        sidebarCollapsed={sidebarCollapsed}
+        onToggleSidebar={onToggleSidebar}
       />
     </div>
   );

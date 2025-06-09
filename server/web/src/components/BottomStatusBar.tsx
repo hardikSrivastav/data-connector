@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { Button } from '@/components/ui/button';
-import { Settings, X, ChevronRight } from 'lucide-react';
+import { Settings, X, ChevronRight, Menu } from 'lucide-react';
 import { agentClient } from '@/lib/agent-client';
 import { useAuth } from '@/contexts/AuthContext';
 import { UserMenu } from './UserMenu';
@@ -10,12 +10,16 @@ interface BottomStatusBarProps {
   showAgentPanel: boolean;
   onToggleAgentPanel: (show: boolean) => void;
   breadcrumbs?: Array<{ label: string; onClick?: () => void }>;
+  sidebarCollapsed?: boolean;
+  onToggleSidebar?: () => void;
 }
 
 export const BottomStatusBar = ({ 
   showAgentPanel, 
   onToggleAgentPanel, 
-  breadcrumbs = [] 
+  breadcrumbs = [],
+  sidebarCollapsed = false,
+  onToggleSidebar
 }: BottomStatusBarProps) => {
   const [agentStatus, setAgentStatus] = useState<'checking' | 'online' | 'offline'>('checking');
   const { isAuthenticated } = useAuth();
@@ -50,25 +54,41 @@ export const BottomStatusBar = ({
     <div className="bg-background border-t border-border shadow-lg">
       <div className="flex items-center justify-between px-4 py-2 max-w-full">
         
-        {/* Left side - Breadcrumbs */}
-        <div className="flex items-center space-x-1 text-sm text-muted-foreground min-w-0 flex-1">
-          {breadcrumbs.length > 0 ? (
-            breadcrumbs.map((crumb, index) => (
-              <div key={index} className="flex items-center space-x-1">
-                {index > 0 && <ChevronRight className="h-3 w-3 text-muted-foreground" />}
-                <button
-                  onClick={crumb.onClick}
-                  className={`truncate hover:text-foreground ${
-                    crumb.onClick ? 'cursor-pointer' : 'cursor-default'
-                  }`}
-                >
-                  {crumb.label}
-                </button>
-              </div>
-            ))
-          ) : (
-            <div className="text-muted-foreground text-xs">Ready for navigation breadcrumbs...</div>
+        {/* Left side - Sidebar toggle (when collapsed) + Breadcrumbs */}
+        <div className="flex items-center space-x-3 text-sm text-muted-foreground min-w-0 flex-1">
+          {/* Sidebar Toggle Button - only show when collapsed */}
+          {sidebarCollapsed && onToggleSidebar && (
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={onToggleSidebar}
+              className="h-7 w-7 p-0 hover:bg-accent"
+              title="Show sidebar"
+            >
+              <Menu className="h-4 w-4" />
+            </Button>
           )}
+          
+          {/* Breadcrumbs */}
+          <div className="flex items-center space-x-1 min-w-0 flex-1">
+            {breadcrumbs.length > 0 ? (
+              breadcrumbs.map((crumb, index) => (
+                <div key={index} className="flex items-center space-x-1">
+                  {index > 0 && <ChevronRight className="h-3 w-3 text-muted-foreground" />}
+                  <button
+                    onClick={crumb.onClick}
+                    className={`truncate hover:text-foreground ${
+                      crumb.onClick ? 'cursor-pointer' : 'cursor-default'
+                    }`}
+                  >
+                    {crumb.label}
+                  </button>
+                </div>
+              ))
+            ) : (
+              <div className="text-muted-foreground text-xs">Ready for navigation breadcrumbs...</div>
+            )}
+          </div>
         </div>
 
         {/* Center - Agent Status */}
