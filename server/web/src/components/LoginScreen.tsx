@@ -133,7 +133,7 @@ export const LoginScreen: React.FC = () => {
           <Button
             onClick={handleLogin}
             disabled={isLoggingIn || authHealth?.status === 'unhealthy'}
-            className="w-full h-16 text-xl py-8 px-10 transition-all duration-300 bg-zinc-900 text-white hover:bg-[#7b35b8] dark:bg-zinc-800 dark:hover:bg-[#7b35b8] font-serif rounded-xl shadow-lg shadow-zinc-900/25 dark:shadow-zinc-800/25 hover:shadow-xl hover:shadow-[#7b35b8]/30 disabled:opacity-50 disabled:cursor-not-allowed disabled:shadow-none transform hover:scale-[1.02] disabled:hover:scale-100"
+            className="w-full h-16 text-xl py-8 px-10 transition-all duration-300 bg-zinc-900 text-white hover:bg-[#7b35b8] dark:bg-zinc-800 dark:hover:bg-[#7b35b8] font-serif rounded-xl shadow-lg shadow-zinc-900/25 dark:shadow-zinc-800/25 hover:shadow-xl hover:shadow-[#7b35b8]/30 disabled:opacity-50 disabled:cursor-not-allowed disabled:shadow-none"
           >
             {isLoggingIn ? (
               <div className="flex items-center gap-3">

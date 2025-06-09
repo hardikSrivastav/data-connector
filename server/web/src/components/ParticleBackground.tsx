@@ -112,7 +112,8 @@ const ParticleBackground = () => {
 
     const initParticles = () => {
       particlesRef.current = [];
-      const particleCount = Math.min(80, Math.floor((canvas.width * canvas.height) / 12000));
+      const baseParticleCount = Math.min(80, Math.floor((canvas.width * canvas.height) / 12000));
+      const particleCount = Math.floor(baseParticleCount * 1.2);
       
       for (let i = 0; i < particleCount; i++) {
         particlesRef.current.push(new Particle(canvas));
