@@ -2,6 +2,8 @@ import { useState, useRef, useEffect, KeyboardEvent } from 'react';
 import { Block, Workspace, Page } from '@/types';
 import { BlockTypeSelector } from './BlockTypeSelector';
 import { AIQuerySelector } from './AIQuerySelector';
+import { InlineDiffEditor } from './InlineDiffEditor';
+import { TrivialLLMEditor } from './TrivialLLMEditor';
 import { TableBlock } from './TableBlock';
 import { ToggleBlock } from './ToggleBlock';
 import { CanvasBlock } from './CanvasBlock';
@@ -39,6 +41,8 @@ interface BlockEditorProps {
   isInSelection?: boolean;
   // AI Query props
   onAIQuery?: (query: string, blockId: string) => void;
+  // Diff mode trigger
+  triggerDiffMode?: boolean;
   // Workspace for subpage blocks and canvas
   workspace?: Workspace;
   page?: Page;
@@ -75,6 +79,7 @@ export const BlockEditor = ({
   isLastSelected = false,
   isInSelection = false,
   onAIQuery,
+  triggerDiffMode = false,
   workspace,
   page,
   onNavigateToPage,
@@ -87,6 +92,8 @@ export const BlockEditor = ({
   const [aiQuery, setAIQuery] = useState('');
   const [aiQueryPosition, setAIQueryPosition] = useState<{ top: number; left: number } | null>(null);
   const [isAILoading, setIsAILoading] = useState(false);
+  const [diffMode, setDiffMode] = useState(false);
+  const [originalTextForDiff, setOriginalTextForDiff] = useState('');
   const [showAddButton, setShowAddButton] = useState(false);
   const [justCreatedFromSlash, setJustCreatedFromSlash] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -236,6 +243,22 @@ export const BlockEditor = ({
         setAIQueryPosition(position);
         setShowAIQuery(true);
         setShowTypeSelector(false); // Close type selector if open
+      }
+      // Check if current line starts with '@' for diff mode
+      else if (currentLine.startsWith('@')) {
+        const query = currentLine.slice(1);
+        
+        // Immediately activate diff mode when @ is detected
+        console.log(`🔄 BlockEditor: @ detected, activating diff mode`);
+        
+        // Remove the @ command from content to get original text
+        const contentWithoutCommand = content.substring(0, currentLineStart) + content.substring(cursorPosition);
+        setOriginalTextForDiff(contentWithoutCommand.trim());
+        setDiffMode(true);
+        
+        // Don't show AI query selector for @ commands
+        setShowAIQuery(false);
+        setShowTypeSelector(false);
       } 
       else {
         // Close selectors if we're no longer on a command line
@@ -263,6 +286,19 @@ export const BlockEditor = ({
           const position = calculateCursorPosition();
           setAIQueryPosition(position);
           setShowAIQuery(true);
+          setShowTypeSelector(false);
+          foundAIQuery = true;
+          break;
+        } else if (trimmedLine.startsWith('@')) {
+          const query = trimmedLine.slice(1);
+          
+          // Immediately activate diff mode when @ is detected
+          console.log(`🔄 BlockEditor: @ detected in fallback, activating diff mode`);
+          setOriginalTextForDiff(content.replace('@' + query, '').trim());
+          setDiffMode(true);
+          
+          // Don't show AI query selector for @ commands
+          setShowAIQuery(false);
           setShowTypeSelector(false);
           foundAIQuery = true;
           break;
@@ -330,6 +366,17 @@ export const BlockEditor = ({
     console.log(`📝 BlockEditor: Query='${query}', BlockId='${block.id}'`);
     console.log(`📝 BlockEditor: Block content before query: '${block.content}'`);
     
+    // Check if this is a diff mode command (triggered by @)
+    if (query.startsWith('diff:') || query === 'diff' || query === '') {
+      console.log(`🔄 BlockEditor: Diff mode command detected: ${query}`);
+      setOriginalTextForDiff(block.content);
+      setDiffMode(true);
+      setShowAIQuery(false);
+      setAIQuery('');
+      setAIQueryPosition(null);
+      return;
+    }
+    
     setIsAILoading(true);
     console.log(`⏳ BlockEditor: AI loading state set to true`);
     
@@ -338,14 +385,20 @@ export const BlockEditor = ({
     let newContent = content;
     let newCursorPosition = 0;
     
-    // Find all instances of '//' followed by the query text
-    const searchPattern = '//' + query;
-    const patternIndex = content.indexOf(searchPattern);
+    // Find all instances of '//' or '@' followed by the query text
+    let searchPattern = '//' + query;
+    let patternIndex = content.indexOf(searchPattern);
+    
+    // If not found with //, try with @
+    if (patternIndex < 0) {
+      searchPattern = '@' + query;
+      patternIndex = content.indexOf(searchPattern);
+    }
     
     if (patternIndex >= 0) {
-      console.log(`🎯 BlockEditor: Found '//${query}' at position ${patternIndex}`);
+      console.log(`🎯 BlockEditor: Found '${searchPattern}' at position ${patternIndex}`);
       
-      // Remove the '//' command and query text
+              // Remove the command and query text
       const beforePattern = content.substring(0, patternIndex);
       const afterPattern = content.substring(patternIndex + searchPattern.length);
       
@@ -369,14 +422,14 @@ export const BlockEditor = ({
         newCursorPosition
       });
     } else {
-      console.log(`⚠️ BlockEditor: Pattern '//${query}' not found in content`);
+      console.log(`⚠️ BlockEditor: Pattern '${searchPattern}' not found in content`);
       
-      // Fallback: try to remove just '//' from the beginning of lines
+      // Fallback: try to remove commands from the beginning of lines
       const lines = content.split('\n');
       const newLines = lines.map(line => {
-        if (line.startsWith('//')) {
-          // Remove the '//' and any following whitespace on this line
-          return line.replace(/^\/\/\s*.*$/, '').trim();
+        if (line.startsWith('//') || line.startsWith('@')) {
+          // Remove the command and any following whitespace on this line
+          return line.replace(/^(\/\/|@)\s*.*$/, '').trim();
         }
         return line;
       });
@@ -429,6 +482,46 @@ export const BlockEditor = ({
     }, 100); // Slightly longer delay to ensure content update is complete
   };
 
+  const handleDiffAccept = (newText: string) => {
+    console.log(`✅ BlockEditor: Diff accepted, updating content`);
+    onUpdate({ content: newText });
+    setDiffMode(false);
+    setOriginalTextForDiff('');
+  };
+
+  const handleDiffCancel = () => {
+    console.log(`❌ BlockEditor: Diff cancelled`);
+    setDiffMode(false);
+    setOriginalTextForDiff('');
+    // Restore original content
+    onUpdate({ content: originalTextForDiff });
+  };
+
+  // Handle external diff mode trigger
+  useEffect(() => {
+    if (triggerDiffMode && !diffMode) {
+      console.log(`🔄 BlockEditor: External diff mode trigger activated`);
+      setOriginalTextForDiff(block.content || '');
+      setDiffMode(true);
+    }
+  }, [triggerDiffMode, diffMode, block.content]);
+
+  const handleDiffInsertBelow = (newText: string) => {
+    console.log(`⬇️ BlockEditor: Diff insert below`);
+    setDiffMode(false);
+    setOriginalTextForDiff('');
+    // Add a new block below with the new content
+    onAddBlock();
+    // Note: We'd need to update the newly created block with newText
+    // This would require changes to the parent component's onAddBlock handler
+  };
+
+  const handleDiffTryAgain = () => {
+    console.log(`🔄 BlockEditor: Diff try again`);
+    // This will be handled by the InlineDiffEditor component
+    // which will reset to input mode when try again is clicked
+  };
+
   const getPlaceholder = () => {
     // Only show placeholder when block is focused and empty
     if (!isFocused || block.content.trim() !== '') {
@@ -449,7 +542,7 @@ export const BlockEditor = ({
       case 'subpage': return "Sub-page link";
       case 'canvas': return "Canvas analysis";
       case 'stats': return "Statistics";
-      default: return "Type '/' for commands, '//' for AI";
+      default: return "Type '/' for commands, '//' for AI, '@' for text replacement";
     }
   };
 
@@ -767,12 +860,28 @@ export const BlockEditor = ({
             minHeight: getMinHeight(),
             height: 'auto',
             display: showAIQuery || 
+                    diffMode ||
                     ['table', 'toggle', 'subpage', 'canvas', 'stats'].includes(block.type) || 
                     (streamingState?.isStreaming && streamingState?.blockId === block.id) 
-                    ? 'none' : 'block' // Hide textarea when AI query is active, for custom components, or when streaming
+                    ? 'none' : 'block' // Hide textarea when AI query is active, in diff mode, for custom components, or when streaming
           }}
         />
         
+        {/* Trivial LLM Editor - replaces the textarea when in diff mode */}
+        {diffMode && (
+          <div className="mt-2">
+            <TrivialLLMEditor
+              originalText={originalTextForDiff}
+              onAccept={handleDiffAccept}
+              onCancel={handleDiffCancel}
+              onReject={handleDiffCancel}
+              onTryAgain={handleDiffTryAgain}
+              onInsertBelow={handleDiffInsertBelow}
+              blockType={block.type}
+            />
+          </div>
+        )}
+
         {/* Inline AI Query Selector - positioned at cursor location */}
         {showAIQuery && aiQueryPosition && (
           <div
@@ -798,11 +907,11 @@ export const BlockEditor = ({
                   if (textareaRef.current) {
                     textareaRef.current.focus();
                     
-                    // Try to restore cursor to the end of the // command line
+                    // Try to restore cursor to the end of the command line
                     const content = block.content;
-                    const atIndex = content.lastIndexOf('//');
+                    let atIndex = content.lastIndexOf('//');
                     if (atIndex >= 0) {
-                      // Find the end of the current line where // command was
+                      // Find the end of the current line where command was
                       const afterAt = content.substring(atIndex);
                       const nextLineBreak = afterAt.indexOf('\n');
                       const cursorPos = nextLineBreak >= 0 ? atIndex + nextLineBreak : content.length;
@@ -817,6 +926,47 @@ export const BlockEditor = ({
               isLoading={isAILoading || (streamingState?.isStreaming && streamingState?.blockId === block.id)}
               streamingStatus={streamingState?.isStreaming && streamingState?.blockId === block.id ? streamingState.status : undefined}
               streamingProgress={streamingState?.isStreaming && streamingState?.blockId === block.id ? streamingState.progress : undefined}
+              // Pass block content as editing text for content generation queries (like "summarize this")
+              editingText={(() => {
+                console.log('🎯 === BlockEditor calculating editingText ===');
+                console.log('🎯 Block ID:', block.id);
+                console.log('🎯 Block content:', `"${block.content}"`);
+                
+                // Check if current block content is just a command (starts with // or @)
+                let actualContent = block.content || '';
+                const isCommand = actualContent.trim().startsWith('//') || actualContent.trim().startsWith('@');
+                
+                console.log('🎯 Is command detected:', isCommand);
+                
+                // If current block has actual content (not just commands), use it for editing operations
+                if (actualContent && actualContent.trim() && !isCommand) {
+                  console.log('🎯 Using current block content for editing');
+                  return actualContent;
+                }
+                
+                // For empty blocks or command blocks, use all page content as source material
+                const allPageContent = page?.blocks
+                  ?.filter(b => b.id !== block.id && b.content && b.content.trim())
+                  ?.filter(b => !b.content.trim().startsWith('//') && !b.content.trim().startsWith('@')) // Exclude command blocks
+                  ?.map(b => b.content.trim())
+                  ?.join('\n\n') || '';
+                
+                console.log('🎯 Current block empty or command, using all page content. Length:', allPageContent.length);
+                console.log('🎯 All page content preview:', `"${allPageContent.substring(0, 100)}..."`);
+                console.log('🎯 === END editingText calculation ===');
+                
+                return allPageContent;
+              })()}
+              blockContext={{
+                blockId: block.id,
+                content: block.content,
+                type: block.type,
+                // Add neighbor context if available (you can enhance this)
+                neighbors: {
+                  before: undefined, // TODO: Could be passed from parent
+                  after: undefined   // TODO: Could be passed from parent
+                }
+              }}
             />
           </div>
         )}

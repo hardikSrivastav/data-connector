@@ -68,6 +68,7 @@ export const PageEditor = ({
     status: '',
     progress: 0
   });
+  const [diffModeBlockId, setDiffModeBlockId] = useState<string | null>(null); // Track which block is in diff mode
   const addingBlockRef = useRef(false); // Track if we're currently adding a block to prevent loops
   
   const {
@@ -1284,6 +1285,30 @@ export const PageEditor = ({
                 </div>
               )}
               <div className="flex gap-2">
+                {selectedBlocks.size === 1 && (
+                  <button
+                    onClick={(e) => {
+                      e.preventDefault();
+                      const selectedBlockId = Array.from(selectedBlocks)[0];
+                      console.log('Edit text button clicked for block:', selectedBlockId);
+                      
+                      // Trigger diff mode for the selected block
+                      setDiffModeBlockId(selectedBlockId);
+                      
+                      // Focus the block and clear selection
+                      setFocusedBlockId(selectedBlockId);
+                      clearSelection();
+                      
+                      // Clear the trigger after a short delay
+                      setTimeout(() => {
+                        setDiffModeBlockId(null);
+                      }, 100);
+                    }}
+                    className="flex-1 px-3 py-1 bg-blue-50 text-blue-700 border border-blue-200 rounded hover:bg-blue-100 transition-colors text-xs"
+                  >
+                    Edit text
+                  </button>
+                )}
                 <button
                   onClick={(e) => {
                     e.preventDefault();
@@ -1347,6 +1372,7 @@ export const PageEditor = ({
                     onDragOver={handleDragOver}
                     onDrop={handleBlockDrop(block.id)}
                     onAIQuery={handleAIQuery}
+                    triggerDiffMode={diffModeBlockId === block.id}
                     workspace={workspace}
                     page={page}
                     onNavigateToPage={handleNavigateToPage}

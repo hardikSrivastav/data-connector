@@ -165,6 +165,17 @@ class Settings(BaseSettings):
     GA4_SCOPES: List[str] = yaml_config.get('ga4', {}).get('scopes', os.getenv('GA4_SCOPES', 'https://www.googleapis.com/auth/analytics.readonly').split(','))
     GA4_TOKEN_CACHE_DB: Optional[Path] = yaml_config.get('ga4', {}).get('token_cache_db', os.getenv('GA4_TOKEN_CACHE_DB'))
     
+    # Trivial LLM Settings (Grok/X.AI for fast text editing)
+    TRIVIAL_LLM_ENABLED: bool = yaml_config.get('trivial_llm', {}).get('enabled', os.getenv('TRIVIAL_LLM_ENABLED', 'true').lower() == 'true')
+    TRIVIAL_LLM_PROVIDER: Optional[str] = None
+    TRIVIAL_LLM_API_KEY: Optional[str] = None
+    TRIVIAL_LLM_BASE_URL: Optional[str] = None
+    TRIVIAL_LLM_MODEL: Optional[str] = None
+    TRIVIAL_LLM_MAX_TOKENS: int = yaml_config.get('trivial_llm', {}).get('max_tokens', int(os.getenv('TRIVIAL_LLM_MAX_TOKENS', 500)))
+    TRIVIAL_LLM_TEMPERATURE: float = yaml_config.get('trivial_llm', {}).get('temperature', float(os.getenv('TRIVIAL_LLM_TEMPERATURE', 0.1)))
+    TRIVIAL_LLM_TIMEOUT: float = yaml_config.get('trivial_llm', {}).get('timeout', float(os.getenv('TRIVIAL_LLM_TIMEOUT', 3.0)))
+    TRIVIAL_LLM_MAX_RETRIES: int = yaml_config.get('trivial_llm', {}).get('max_retries', int(os.getenv('TRIVIAL_LLM_MAX_RETRIES', 1)))
+    
     def get_app_dir(self) -> str:
         """
         Returns the directory where application data should be stored.

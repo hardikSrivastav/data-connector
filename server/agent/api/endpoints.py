@@ -10,10 +10,12 @@ import traceback
 import asyncio
 from datetime import datetime
 import uuid
+import time
 
 from ..db.db_orchestrator import Orchestrator
 from ..config.settings import Settings
 from ..llm.client import get_llm_client
+from ..llm.trivial_client import get_trivial_llm_client
 from ..meta.ingest import SchemaSearcher, ensure_index_exists, build_and_save_index_for_db
 from ..performance.schema_monitor import ensure_schema_index_updated
 
@@ -83,6 +85,26 @@ class SessionDetailResponse(BaseModel):
     final_analysis: Optional[str] = None
     generated_queries: List[Dict[str, Any]]
     executed_tools: List[Dict[str, Any]]
+
+class TrivialQueryRequest(BaseModel):
+    operation: str
+    text: str
+    context: Optional[Dict[str, Any]] = None
+
+class TrivialQueryResponse(BaseModel):
+    result: str
+    operation: str
+    duration: float
+    cached: bool = False
+    provider: str
+    model: str
+
+class TrivialHealthResponse(BaseModel):
+    status: str
+    provider: str
+    model: Optional[str] = None
+    message: Optional[str] = None
+    supported_operations: List[str] = []
 
 def sanitize_sql(sql: str) -> str:
     """Basic SQL sanitization"""
@@ -1273,3 +1295,115 @@ async def classify_query_stream(request: ClassifyRequest):
             "Access-Control-Allow-Headers": "Cache-Control"
         }
     )
+
+@router.get("/trivial/health", response_model=TrivialHealthResponse)
+async def trivial_health_check():
+    """Health check for the trivial LLM client."""
+    try:
+        trivial_client = get_trivial_llm_client()
+        health_data = await trivial_client.health_check()
+        
+        return TrivialHealthResponse(
+            status=health_data["status"],
+            provider=health_data["provider"],
+            model=health_data.get("model"),
+            message=health_data.get("message"),
+            supported_operations=trivial_client.get_supported_operations() if trivial_client.is_enabled() else []
+        )
+    except Exception as e:
+        logger.error(f"Trivial health check failed: {e}")
+        return TrivialHealthResponse(
+            status="error",
+            provider="unknown",
+            message=str(e)
+        )
+
+@router.post("/trivial/process", response_model=TrivialQueryResponse)
+async def process_trivial_operation(request: TrivialQueryRequest):
+    """
+    Process a single trivial text editing operation.
+    
+    Optimized for speed with lightweight models like Grok.
+    """
+    try:
+        trivial_client = get_trivial_llm_client()
+        
+        if not trivial_client.is_enabled():
+            raise HTTPException(status_code=503, detail="Trivial LLM client is not available")
+        
+        start_time = time.time()
+        result = await trivial_client.process_operation(
+            operation=request.operation,
+            text=request.text,
+            context=request.context
+        )
+        duration = time.time() - start_time
+        
+        return TrivialQueryResponse(
+            result=result,
+            operation=request.operation,
+            duration=duration,
+            provider=trivial_client.provider,
+            model=trivial_client.model
+        )
+        
+    except Exception as e:
+        logger.error(f"Error processing trivial operation: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.post("/trivial/stream")
+async def stream_trivial_operation(request: TrivialQueryRequest):
+    """
+    Stream a trivial text editing operation for real-time diff updates.
+    
+    Returns Server-Sent Events for live UI updates.
+    """
+    async def generate_stream():
+        try:
+            trivial_client = get_trivial_llm_client()
+            
+            if not trivial_client.is_enabled():
+                yield create_stream_event("error", "session_id", 
+                                        message="Trivial LLM client is not available")
+                return
+            
+            async for chunk in trivial_client.stream_operation(
+                operation=request.operation,
+                text=request.text,
+                context=request.context
+            ):
+                yield create_stream_event("trivial_update", "session_id", **chunk)
+                
+        except Exception as e:
+            logger.error(f"Error in trivial stream: {e}")
+            yield create_stream_event("error", "session_id", 
+                                    message=str(e))
+    
+    return StreamingResponse(
+        generate_stream(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "Access-Control-Allow-Origin": "*",
+            "Access-Control-Allow-Headers": "*",
+        }
+    )
+
+@router.get("/trivial/operations")
+async def get_trivial_operations():
+    """Get list of supported trivial operations."""
+    try:
+        trivial_client = get_trivial_llm_client()
+        return {
+            "operations": trivial_client.get_supported_operations(),
+            "enabled": trivial_client.is_enabled(),
+            "provider": trivial_client.provider if trivial_client.is_enabled() else None
+        }
+    except Exception as e:
+        logger.error(f"Error getting trivial operations: {e}")
+        return {
+            "operations": [],
+            "enabled": False,
+            "error": str(e)
+        }
