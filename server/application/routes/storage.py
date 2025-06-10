@@ -70,6 +70,7 @@ class BlockDB(Base):
     type = Column(String, nullable=False)  # text, heading1, bullet, canvas, etc.
     content = Column(Text, nullable=False, default="")
     order = Column(Integer, nullable=False, default=0)
+    indent_level = Column(Integer, nullable=False, default=0)  # For nested lists
     properties = Column(JSONB, default={})  # Bold, italic, color, canvas-specific properties, etc.
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
@@ -236,6 +237,7 @@ class Block(BaseModel):
     type: str
     content: str
     order: int = 0
+    indentLevel: Optional[int] = 0  # For nested lists (0 = no indent, 1 = first level, etc.)
     properties: Optional[Dict[str, Any]] = {}
     pageId: Optional[str] = None
     updatedAt: Optional[datetime] = None
@@ -356,6 +358,7 @@ def db_workspace_to_pydantic(db_workspace: WorkspaceDB) -> Workspace:
                 type=db_block.type,
                 content=db_block.content,
                 order=db_block.order,
+                indentLevel=db_block.indent_level,
                 properties=db_block.properties or {},
                 pageId=db_block.page_id,
                 updatedAt=db_block.updated_at
@@ -441,6 +444,7 @@ async def save_workspace(workspace_id: str, workspace: Workspace, db: Session = 
                 type=block_data.type,
                 content=block_data.content,
                 order=block_data.order,
+                indent_level=block_data.indentLevel or 0,
                 properties=block_data.properties or {}
             )
             db.add(db_block)
@@ -464,6 +468,7 @@ async def get_page(page_id: str, db: Session = Depends(get_db)):
             type=db_block.type,
             content=db_block.content,
             order=db_block.order,
+            indentLevel=db_block.indent_level,
             properties=db_block.properties or {},
             pageId=db_block.page_id,
             updatedAt=db_block.updated_at
@@ -514,6 +519,7 @@ async def save_page(page: Page, db: Session = Depends(get_db)):
             type=block_data.type,
             content=block_data.content,
             order=block_data.order,
+            indent_level=block_data.indentLevel or 0,
             properties=block_data.properties or {}
         )
         db.add(db_block)
@@ -536,6 +542,7 @@ async def save_block(block: Block, db: Session = Depends(get_db)):
             type=block.type,
             content=block.content,
             order=block.order,
+            indent_level=block.indentLevel or 0,
             properties=block.properties or {}
         )
         db.add(db_block)
@@ -543,6 +550,7 @@ async def save_block(block: Block, db: Session = Depends(get_db)):
         db_block.type = block.type
         db_block.content = block.content
         db_block.order = block.order
+        db_block.indent_level = block.indentLevel or 0
         db_block.properties = block.properties or {}
         db_block.updated_at = datetime.utcnow()
     
@@ -554,6 +562,7 @@ async def save_block(block: Block, db: Session = Depends(get_db)):
         type=db_block.type,
         content=db_block.content,
         order=db_block.order,
+        indentLevel=db_block.indent_level,
         properties=db_block.properties or {},
         pageId=db_block.page_id,
         updatedAt=db_block.updated_at
@@ -626,6 +635,8 @@ async def sync_changes(sync_request: SyncRequest, db: Session = Depends(get_db))
                             db_block.type = change.data['type']
                         if 'order' in change.data:
                             db_block.order = change.data['order']
+                        if 'indentLevel' in change.data:
+                            db_block.indent_level = change.data['indentLevel'] or 0
                         if 'properties' in change.data:
                             db_block.properties = change.data['properties']
                         db_block.updated_at = datetime.utcnow()
@@ -637,6 +648,7 @@ async def sync_changes(sync_request: SyncRequest, db: Session = Depends(get_db))
                             type=change.data.get('type', 'text'),
                             content=change.data.get('content', ''),
                             order=change.data.get('order', 0),
+                            indent_level=change.data.get('indentLevel', 0),
                             properties=change.data.get('properties', {})
                         )
                         db.add(db_block)
