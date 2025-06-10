@@ -410,6 +410,14 @@ export const useWorkspace = () => {
       order: newOrder
     };
 
+    // If creating a list item after another block, preserve indentation level
+    if (afterBlockId && (type === 'bullet' || type === 'numbered')) {
+      const afterBlock = blocks.find(b => b.id === afterBlockId);
+      if (afterBlock && (afterBlock.type === 'bullet' || afterBlock.type === 'numbered')) {
+        newBlock.indentLevel = afterBlock.indentLevel || 0;
+      }
+    }
+
     // Initialize properties for specific block types
     if (type === 'table') {
       newBlock.properties = {

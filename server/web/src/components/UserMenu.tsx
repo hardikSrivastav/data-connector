@@ -60,8 +60,12 @@ export const UserMenu: React.FC = () => {
           size="sm"
           className="h-8 px-2 py-1 gap-2 hover:bg-accent transition-colors"
         >
-          <div className="w-6 h-6 bg-blue-600 dark:bg-blue-500 rounded-full flex items-center justify-center text-white text-xs font-medium">
-            {getUserInitials(user.name)}
+          <div className="w-6 h-6 bg-gray-100 dark:bg-gray-800 rounded-full flex items-center justify-center p-1">
+            <img 
+              src="/340-coding.svg" 
+              alt="Profile" 
+              className="w-full h-full object-contain filter dark:invert"
+            />
           </div>
           <span className="text-sm text-gray-700 dark:text-gray-300 max-w-32 truncate">
             {user.name}
@@ -73,8 +77,12 @@ export const UserMenu: React.FC = () => {
       <DropdownMenuContent align="end" className="w-64 bg-card border-border">
         <DropdownMenuLabel className="pb-2">
           <div className="flex items-center gap-3">
-            <div className="w-8 h-8 bg-blue-600 dark:bg-blue-500 rounded-full flex items-center justify-center text-white text-sm font-medium">
-              {getUserInitials(user.name)}
+            <div className="w-8 h-8 bg-gray-100 dark:bg-gray-800 rounded-full flex items-center justify-center p-1.5">
+              <img 
+                src="/340-coding.svg" 
+                alt="Profile" 
+                className="w-full h-full object-contain filter dark:invert"
+              />
             </div>
             <div className="flex-1 min-w-0">
               <div className="font-medium text-gray-900 dark:text-gray-100 truncate">

@@ -35,8 +35,8 @@ const AI_OPTIONS = [
   {
     section: 'Write',
     items: [
-      { icon: '📊', text: 'Add a summary', query: 'Add a summary' },
-      { icon: '📝', text: 'Add action items', query: 'Add action items' },
+      { icon: '📄', text: 'Add a summary', query: 'Add a summary' },
+      { icon: '✓', text: 'Add action items', query: 'Add action items' },
       { icon: '✏️', text: 'Write anything...', query: 'Write anything...' },
     ]
   },
@@ -44,23 +44,23 @@ const AI_OPTIONS = [
     section: 'Think, ask, chat',
     items: [
       { icon: '💡', text: 'Brainstorm ideas...', query: 'Brainstorm ideas...' },
-      { icon: '</>', text: 'Get help with code...', query: 'Get help with code...' },
+      { icon: '{ }', text: 'Get help with code...', query: 'Get help with code...' },
     ]
   },
   {
     section: 'Find, search',
     items: [
-      { icon: '🔍', text: 'Ask a question...', query: 'Ask a question...' },
+      { icon: '?', text: 'Ask a question...', query: 'Ask a question...' },
     ]
   },
   {
-    section: 'Edit (@ for Diff Mode)',
+    section: 'Edit',
     items: [
-      { icon: '⚡', text: 'Fix grammar', query: 'Fix grammar' },
-      { icon: '⚡', text: 'Make it shorter', query: 'Make it shorter' },
-      { icon: '⚡', text: 'Improve clarity', query: 'Improve clarity' },
-      { icon: '⚡', text: 'Improve tone', query: 'Improve tone' },
-      { icon: '✨', text: 'Test diff editing...', query: 'diff:test' },
+      { icon: '✓', text: 'Fix grammar', query: 'Fix grammar' },
+      { icon: '↓', text: 'Make it shorter', query: 'Make it shorter' },
+      { icon: '✨', text: 'Improve clarity', query: 'Improve clarity' },
+      { icon: '♫', text: 'Improve tone', query: 'Improve tone' },
+      { icon: '⚡', text: 'Test diff editing...', query: 'diff:test' },
     ]
   }
 ];
@@ -71,9 +71,9 @@ const AI_OPTIONS = [
       section: 'Edit Text',
       items: [
         { icon: '✨', text: 'Improve clarity', query: 'Make this text clearer and more professional' },
-        { icon: '🔧', text: 'Fix grammar', query: 'Fix any grammar and spelling mistakes' },
-        { icon: '📝', text: 'Make it shorter', query: 'Make this text more concise' },
-        { icon: '💡', text: 'Make it longer', query: 'Expand this text with more detail' },
+        { icon: '✓', text: 'Fix grammar', query: 'Fix any grammar and spelling mistakes' },
+        { icon: '↓', text: 'Make it shorter', query: 'Make this text more concise' },
+        { icon: '↑', text: 'Make it longer', query: 'Expand this text with more detail' },
     ]
   }
 ];
@@ -676,21 +676,7 @@ export const AIQuerySelector = ({
             }`}
             disabled={isLoading || trivialStreamingState.isStreaming}
           />
-          {inputValue && blockContext && (
-            <button
-              onClick={testClassification}
-              disabled={isClassifying}
-              className="flex items-center gap-1 px-2 py-1 mr-2 text-xs bg-blue-50 text-blue-600 border border-blue-200 rounded hover:bg-blue-100 transition-colors disabled:opacity-50"
-              title="Test OrchestrationAgent classification"
-            >
-              {isClassifying ? (
-                <Loader2 className="h-3 w-3 animate-spin" />
-              ) : (
-                <span>🧪</span>
-              )}
-              Test
-            </button>
-          )}
+
           {inputValue && (
             <button
               onClick={() => {
@@ -788,23 +774,23 @@ export const AIQuerySelector = ({
 
       {/* Dropdown Menu */}
       {showDropdown && !isLoading && !classification && (
-        <div className="absolute top-full left-0 mt-1 bg-card border border-border rounded-lg shadow-lg z-50 py-2 w-full">
+        <div className="absolute top-full left-0 mt-1 bg-card border border-border rounded-lg shadow-lg z-50 py-1 w-full">
           {(diffMode ? DIFF_OPTIONS : AI_OPTIONS).map((section, sectionIndex) => (
             <div key={sectionIndex}>
               {/* Section Header */}
-              <div className="px-3 py-2 text-xs font-medium text-gray-500 uppercase tracking-wide">
+              <div className="px-3 py-1.5 text-xs font-medium text-muted-foreground uppercase tracking-wide">
                 {section.section}
               </div>
               
               {/* Section Items */}
-              <div className="mb-2">
+              <div className="mb-1">
                 {section.items.map((item, itemIndex) => (
                   <button
                     key={itemIndex}
                     onClick={() => handleOptionClick(item.query)}
-                    className="w-full flex items-center px-3 py-2 text-sm text-gray-700 hover:bg-gray-50 transition-colors text-left"
+                    className="w-full flex items-center px-3 py-2 text-sm text-foreground hover:bg-accent hover:text-accent-foreground transition-colors text-left rounded-sm mx-1"
                   >
-                    <span className="mr-3 text-base">{item.icon}</span>
+                    <span className="text-muted-foreground mr-2 text-sm">{item.icon}</span>
                     <span>{item.text}</span>
                   </button>
                 ))}

@@ -20,7 +20,7 @@ import { SubpageBlock } from './SubpageBlock';
 interface BlockEditorProps {
   block: Block;
   onUpdate: (updates: Partial<Block>) => void;
-  onAddBlock: () => void;
+  onAddBlock: (type?: Block['type']) => void;
   onDeleteBlock: () => void;
   onFocus: () => void;
   isFocused: boolean;
@@ -151,22 +151,33 @@ export const BlockEditor = ({
         return; // Allow normal Enter behavior (line break)
       }
       
-      // Define special block types that should have reversed Enter behavior
-      const specialBlockTypes = ['quote', 'code', 'bullet', 'numbered'];
-      const isSpecialBlock = specialBlockTypes.includes(block.type);
-      
-      // For headings, dividers, and custom block types, Enter always creates a new block
-      if (['heading1', 'heading2', 'heading3', 'divider', 'table', 'toggle', 'subpage', 'canvas', 'stats'].includes(block.type)) {
-        e.preventDefault();
-        onAddBlock();
-        return;
+      // Handle bulleted and numbered lists with proper continuation behavior
+      if (block.type === 'bullet' || block.type === 'numbered') {
+        if (e.shiftKey) {
+          // Shift+Enter: create line break within the list item
+          return;
+        } else {
+          e.preventDefault();
+          
+          // If the current list item is empty, exit the list (create regular text block)
+          if (block.content.trim() === '') {
+            onUpdate({ type: 'text', indentLevel: 0 });
+            return;
+          }
+          
+          // If the current list item has content, create another item of the same type
+          // and preserve the indentation level
+          onAddBlock(block.type);
+          // After creating the new block, we need to set its indent level
+          // This will be handled by the parent component receiving the type and setting indentLevel
+          return;
+        }
       }
       
-      // For special block types: Enter creates new block, Shift+Enter creates line break (unchanged)
-      if (isSpecialBlock) {
+      // For quote and code blocks: Enter creates new block, Shift+Enter creates line break
+      if (['quote', 'code'].includes(block.type)) {
         if (e.shiftKey) {
           // Shift+Enter: create line break within the special block
-          // Don't preventDefault, let textarea handle it naturally
           return;
         } else {
           // Enter: exit the special block and create a new paragraph block
@@ -176,10 +187,16 @@ export const BlockEditor = ({
         }
       }
       
+      // For headings, dividers, and custom block types, Enter always creates a new block
+      if (['heading1', 'heading2', 'heading3', 'divider', 'table', 'toggle', 'subpage', 'canvas', 'stats'].includes(block.type)) {
+        e.preventDefault();
+        onAddBlock();
+        return;
+      }
+      
       // For regular text blocks (paragraph): Enter creates new block, Shift+Enter creates line break
       if (e.shiftKey) {
         // Shift+Enter: create line break within the block
-        // Don't preventDefault, let textarea handle it naturally
         return;
       } else {
         // Enter: create new block
@@ -205,6 +222,27 @@ export const BlockEditor = ({
     } else if (e.key === 'ArrowDown' && e.metaKey) {
       e.preventDefault();
       onMoveDown();
+    } else if (e.key === 'Tab' && (block.type === 'bullet' || block.type === 'numbered')) {
+      e.preventDefault();
+      const currentIndent = block.indentLevel || 0;
+      
+      if (e.shiftKey && (e.ctrlKey || e.metaKey)) {
+        // Ctrl/Cmd+Shift+Tab: jump to first indent level (level 0)
+        if (currentIndent > 0) {
+          onUpdate({ indentLevel: 0 });
+        }
+      } else if (e.shiftKey) {
+        // Shift+Tab: decrease indentation (unindent)
+        if (currentIndent > 0) {
+          onUpdate({ indentLevel: currentIndent - 1 });
+        }
+      } else {
+        // Tab: increase indentation (indent)
+        const maxIndent = 5; // Limit to 5 levels of indentation
+        if (currentIndent < maxIndent) {
+          onUpdate({ indentLevel: currentIndent + 1 });
+        }
+      }
     }
   };
 
@@ -534,8 +572,8 @@ export const BlockEditor = ({
       case 'heading1': return "Heading 1";
       case 'heading2': return "Heading 2";
       case 'heading3': return "Heading 3";
-      case 'bullet': return "• List item";
-      case 'numbered': return "1. List item";
+      case 'bullet': return "List";
+      case 'numbered': return "List";
       case 'quote': return "Quote";
       case 'code': return "Code";
       case 'divider': return "---";
@@ -548,8 +586,60 @@ export const BlockEditor = ({
     }
   };
 
+  // Calculate numbered list position
+  const getNumberedListIndex = () => {
+    if (!page || block.type !== 'numbered') return 1;
+    
+    const currentIndentLevel = block.indentLevel || 0;
+    const blocksBeforeThis = page.blocks
+      .filter(b => b.order < block.order)
+      .sort((a, b) => a.order - b.order);
+    
+    let listNumber = 1;
+    let consecutiveNumberedBlocks = 0;
+    
+    // Count consecutive numbered blocks at the same indent level before this one
+    for (let i = blocksBeforeThis.length - 1; i >= 0; i--) {
+      const prevBlock = blocksBeforeThis[i];
+      const prevIndentLevel = prevBlock.indentLevel || 0;
+      
+      if (prevBlock.type === 'numbered' && prevIndentLevel === currentIndentLevel) {
+        consecutiveNumberedBlocks++;
+      } else if (prevBlock.type === 'numbered' && prevIndentLevel < currentIndentLevel) {
+        // If we encounter a less indented numbered block, stop counting
+        break;
+      } else if (prevBlock.type !== 'numbered' && prevIndentLevel <= currentIndentLevel) {
+        // If we encounter a non-numbered block at same or less indent level, stop counting
+        break;
+      }
+    }
+    
+    return consecutiveNumberedBlocks + 1;
+  };
+
+  // Get indentation classes and left positioning
+  const getIndentStyle = () => {
+    const indentLevel = block.indentLevel || 0;
+    const baseIndent = 32; // 8 * 4px (pl-8)
+    const additionalIndent = indentLevel * 24; // 24px per indent level
+    return {
+      paddingLeft: `${baseIndent + additionalIndent}px`,
+      marginLeft: `${indentLevel * 24}px`
+    };
+  };
+
+  const getMarkerPosition = () => {
+    const indentLevel = block.indentLevel || 0;
+    const baseLeft = indentLevel * 24; // Match the margin-left
+    return {
+      bullet: baseLeft + 12, // 12px from the indented position
+      number: baseLeft // Right-aligned within 24px width from indented position
+    };
+  };
+
   const getClassName = () => {
     const baseClasses = "w-full resize-none border-none outline-none bg-transparent overflow-hidden";
+    const indentLevel = block.indentLevel || 0;
     
     switch (block.type) {
       case 'heading1':
@@ -559,9 +649,9 @@ export const BlockEditor = ({
       case 'heading3':
         return `${baseClasses} text-xl font-semibold py-1 leading-tight`;
       case 'bullet':
-        return `${baseClasses} pl-6 relative leading-relaxed`;
+        return `${baseClasses} py-1 leading-relaxed`;
       case 'numbered':
-        return `${baseClasses} pl-6 relative leading-relaxed`;
+        return `${baseClasses} py-1 leading-relaxed`;
       case 'quote':
         return `${baseClasses} pl-4 border-l-3 border-border text-muted-foreground leading-relaxed`;
       case 'code':
@@ -761,9 +851,22 @@ export const BlockEditor = ({
       </div>
       
       <div className="relative ml-0">
-        {(block.type === 'bullet' || block.type === 'numbered') && (
-          <div className="absolute left-0 top-1">
-            {block.type === 'bullet' ? '•' : '1.'}
+        {/* Improved list item markers */}
+        {block.type === 'bullet' && (
+          <div 
+            className="absolute top-[7px] text-sm font-medium text-gray-600 dark:text-gray-400 select-none pointer-events-none leading-relaxed"
+            style={{ left: `${getMarkerPosition().bullet}px` }}
+          >
+            •
+          </div>
+        )}
+        
+        {block.type === 'numbered' && (
+          <div 
+            className="absolute top-[7px] w-6 text-sm font-medium text-gray-600 dark:text-gray-400 text-right select-none pointer-events-none leading-relaxed"
+            style={{ left: `${getMarkerPosition().number}px` }}
+          >
+            {getNumberedListIndex()}.
           </div>
         )}
         
@@ -861,6 +964,7 @@ export const BlockEditor = ({
           style={{
             minHeight: getMinHeight(),
             height: 'auto',
+            ...(block.type === 'bullet' || block.type === 'numbered' ? getIndentStyle() : {}),
             display: showAIQuery || 
                     diffMode ||
                     ['table', 'toggle', 'subpage', 'canvas', 'stats'].includes(block.type) || 

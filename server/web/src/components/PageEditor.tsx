@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { flushSync } from 'react-dom';
-import { Page, Workspace } from '@/types';
+import { Page, Workspace, Block } from '@/types';
 import { BlockEditor } from './BlockEditor';
 import { EmojiPicker } from './EmojiPicker';
 import { BottomStatusBar } from './BottomStatusBar';
@@ -12,7 +12,7 @@ import { StreamingStatusBlock } from './StreamingStatusBlock';
 interface PageEditorProps {
   page: Page;
   onUpdateBlock: (blockId: string, updates: any) => void;
-  onAddBlock: (afterBlockId?: string) => string;
+  onAddBlock: (afterBlockId?: string, type?: Block['type']) => string;
   onDeleteBlock: (blockId: string) => void;
   onUpdatePage: (updates: Partial<Page>) => void;
   onMoveBlock: (blockId: string, newIndex: number) => void;
@@ -762,8 +762,8 @@ export const PageEditor = ({
     }
   };
 
-  const handleAddBlock = (afterBlockId?: string) => {
-    const newBlockId = onAddBlock(afterBlockId);
+  const handleAddBlock = (afterBlockId?: string, type?: Block['type']) => {
+    const newBlockId = onAddBlock(afterBlockId, type);
     setFocusedBlockId(newBlockId);
     clearSelection(); // Clear selection when adding new block
     return newBlockId; // Return the new block ID
@@ -1374,7 +1374,7 @@ export const PageEditor = ({
                     isLastSelected={selectionInfo.isLastSelected}
                     isInSelection={selectionInfo.isInSelection}
                     onUpdate={(updates) => handleBlockUpdate(block.id, updates)}
-                    onAddBlock={() => handleAddBlock(block.id)}
+                    onAddBlock={(type) => handleAddBlock(block.id, type)}
                     onDeleteBlock={() => handleDeleteBlock(block.id)}
                     onFocus={() => {
                       console.log('🔍 Block focused:', block.id);

@@ -107,27 +107,7 @@ export const LoginScreen: React.FC = () => {
         {/* Login Card with enhanced glass effect */}
         <div className="bg-card/80 dark:bg-card/60 backdrop-blur-3xl rounded-2xl border border-border/60 shadow-2xl shadow-black/20 dark:shadow-black/30 p-8 ring-1 ring-purple-500/20">
           {/* SSO Status */}
-          {authHealth && (
-            <div className="mb-8">
-              <div className="flex items-center justify-between mb-4">
-                <div className="flex items-center gap-3">
-                  <Shield className="h-5 w-5 text-muted-foreground" />
-                  <span className="text-sm font-medium text-foreground font-serif">Single Sign-On</span>
-                </div>
-                <div className="flex items-center gap-2">
-                  {getStatusIcon()}
-                  <div className={`w-2 h-2 rounded-full ${getStatusColor()}`} />
-                </div>
-              </div>
-              
-              {authHealth.okta_connected && authHealth.okta_issuer && (
-                <div className="text-sm text-muted-foreground ml-8 flex items-center gap-2">
-                  <div className="w-1.5 h-1.5 rounded-full bg-muted-foreground/30" />
-                  <span className="font-serif">Connected to {authHealth.okta_issuer.replace('https://', '')}</span>
-                </div>
-              )}
-            </div>
-          )}
+          
 
           {/* Login Button with landing page styling */}
           <Button

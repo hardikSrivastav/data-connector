@@ -3,6 +3,7 @@ export interface Block {
   type: 'text' | 'heading1' | 'heading2' | 'heading3' | 'bullet' | 'numbered' | 'quote' | 'divider' | 'image' | 'code' | 'subpage' | 'table' | 'toggle' | 'canvas' | 'stats';
   content: string;
   order: number;
+  indentLevel?: number; // For nested lists (0 = no indent, 1 = first level, etc.)
   isSelected?: boolean;
   properties?: {
     bold?: boolean;

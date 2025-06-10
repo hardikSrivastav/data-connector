@@ -7,7 +7,7 @@ interface StatsBlockProps {
   onUpdate: (updates: Partial<Block>) => void;
   isFocused: boolean;
   onFocus?: () => void;
-  onAddBlock?: () => void;
+  onAddBlock?: (type?: Block['type']) => void;
 }
 
 interface StatItem {
