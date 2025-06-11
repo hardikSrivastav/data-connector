@@ -67,6 +67,35 @@ cross_db_logger = setup_cross_db_logger()
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+# Set up dedicated visualization logger
+def setup_visualization_logger():
+    """Set up dedicated logger for visualization pipeline"""
+    viz_logger = logging.getLogger('visualization_pipeline')
+    viz_logger.setLevel(logging.DEBUG)
+    
+    # Remove existing handlers to avoid duplicates
+    for handler in viz_logger.handlers[:]:
+        viz_logger.removeHandler(handler)
+    
+    # Create file handler for visualization logs
+    viz_handler = logging.FileHandler('visualization_pipeline.log')
+    viz_handler.setLevel(logging.DEBUG)
+    
+    # Create detailed formatter
+    viz_formatter = logging.Formatter(
+        '%(asctime)s - %(name)s - %(levelname)s - [%(funcName)s:%(lineno)d] - %(message)s'
+    )
+    viz_handler.setFormatter(viz_formatter)
+    
+    # Add handler to logger
+    viz_logger.addHandler(viz_handler)
+    viz_logger.propagate = False  # Don't propagate to root logger
+    
+    return viz_logger
+
+# Initialize visualization logger
+viz_logger = setup_visualization_logger()
+
 class CrossDatabaseQueryEngine:
     """
     Enhanced query engine that supports both single-database and cross-database queries
@@ -1244,6 +1273,20 @@ async def process_ai_query_stream(question: str, analyze: bool = False, db_type:
     
     cross_db_logger.info(f"🎯 STREAMING ENTRY POINT: process_ai_query_stream called with question='{question}', analyze={analyze}, cross_database={cross_database}")
     
+    # ========== VISUALIZATION ROUTING LOGIC ==========
+    # Check if this is a visualization query and route accordingly
+    if question.startswith("analyze_for_visualization:"):
+        viz_logger.info(f"=== STREAMING VISUALIZATION ROUTE DETECTED ===")
+        actual_query = question.replace("analyze_for_visualization:", "").strip()
+        viz_logger.info(f"Original question: '{question}'")
+        viz_logger.info(f"Extracted query: '{actual_query}'")
+        viz_logger.info(f"Session ID: {session_id}")
+        
+        async for event in _process_visualization_query_stream(actual_query, analyze, session_id):
+            yield event
+        return
+    # ================================================
+    
     try:
         yield query_engine._create_stream_event("status", session_id, message="Starting query processing...")
         
@@ -1342,6 +1385,17 @@ async def process_ai_query(question: str, analyze: bool = False, db_type: Option
     cross_db_logger.info(f"🎯 ENTRY POINT: process_ai_query called with question='{question}', analyze={analyze}, cross_database={cross_database}")
     cross_db_logger.info(f"🎯 Additional params: db_type={db_type}, db_uri={db_uri}")
     
+    # ========== VISUALIZATION ROUTING LOGIC ==========
+    # Check if this is a visualization query and route accordingly
+    if question.startswith("analyze_for_visualization:"):
+        viz_logger.info(f"=== NON-STREAMING VISUALIZATION ROUTE DETECTED ===")
+        actual_query = question.replace("analyze_for_visualization:", "").strip()
+        viz_logger.info(f"Original question: '{question}'")
+        viz_logger.info(f"Extracted query: '{actual_query}'")
+        
+        return await _process_visualization_query(actual_query, analyze)
+    # ================================================
+    
     try:
         # If specific db_type and db_uri provided, use single database mode
         if db_type and db_uri and not cross_database:
@@ -1401,6 +1455,268 @@ async def process_ai_query(question: str, analyze: bool = False, db_type: Option
             "analysis": f"❌ **Error**: {str(e)}" if analyze else None,
             "success": False
         }
+
+# ========== VISUALIZATION PROCESSING FUNCTIONS ==========
+
+async def _process_visualization_query(question: str, analyze: bool = False) -> Dict[str, Any]:
+    """
+    Process a visualization query using the dedicated visualization endpoints
+    
+    Args:
+        question: The visualization request (e.g., "Show me sales trends by region")
+        analyze: Whether to include analysis
+        
+    Returns:
+        Formatted response with chart config and data
+    """
+    session_id = f"viz_sync_{int(datetime.now().timestamp())}"
+    viz_logger.info(f"=== VISUALIZATION QUERY START === Session: {session_id}")
+    viz_logger.info(f"Question: '{question}', Analyze: {analyze}")
+    
+    try:
+        # Step 1: Get data for visualization using existing query engine
+        viz_logger.info(f"Step 1: Fetching data for visualization using cross-database query")
+        data_result = await query_engine.execute_cross_database_query(question, analyze=True)
+        
+        viz_logger.info(f"Data fetch result keys: {list(data_result.keys())}")
+        viz_logger.info(f"Data fetch success: {data_result.get('success', False)}")
+        viz_logger.info(f"Data fetch rows count: {len(data_result.get('rows', []))}")
+        viz_logger.debug(f"Full data result: {data_result}")
+        
+        if not data_result.get("success", False):
+            viz_logger.error(f"Data fetch failed - result: {data_result}")
+            return {
+                "rows": [{"error": "Failed to fetch data for visualization"}],
+                "sql": "-- Data fetch failed",
+                "analysis": "Could not retrieve data for chart generation",
+                "success": False
+            }
+        
+        # Step 2: Call visualization analysis endpoint
+        viz_logger.info(f"Step 2: Analyzing data for visualization")
+        from ..llm.client import get_llm_client
+        from ..visualization.analyzer import DataAnalysisModule
+        from ..visualization.selector import ChartSelectionEngine
+        from ..visualization.types import VisualizationDataset, UserPreferences
+        
+        # Convert query result to visualization dataset
+        import pandas as pd
+        
+        rows = data_result.get("rows", [])
+        viz_logger.info(f"Retrieved {len(rows)} rows for visualization")
+        viz_logger.debug(f"Sample rows (first 3): {rows[:3] if rows else 'No rows'}")
+        
+        if not rows:
+            viz_logger.warning(f"No data available for visualization - returning empty result")
+            return {
+                "rows": [{"message": "No data available for visualization"}],
+                "sql": data_result.get("sql", ""),
+                "analysis": "No data to visualize",
+                "success": False
+            }
+        
+        # Create DataFrame from query results
+        viz_logger.info(f"Creating pandas DataFrame from {len(rows)} rows")
+        df = pd.DataFrame(rows)
+        viz_logger.info(f"DataFrame created - shape: {df.shape}, columns: {list(df.columns)}")
+        viz_logger.debug(f"DataFrame dtypes: {df.dtypes.to_dict()}")
+        viz_logger.debug(f"DataFrame sample:\n{df.head()}")
+        
+        dataset = VisualizationDataset(
+            data=df,
+            columns=list(df.columns),
+            metadata={"source": "query_result", "original_sql": data_result.get("sql", "")},
+            source_info={"origin": "database_query", "question": question}
+        )
+        viz_logger.info(f"Created VisualizationDataset with {dataset.size} rows, {len(dataset.columns)} columns")
+        
+        # Step 3: Analyze dataset for visualization
+        viz_logger.info(f"Step 3: Starting dataset analysis")
+        llm_client = get_llm_client()
+        analyzer = DataAnalysisModule(llm_client)
+        analysis_result = await analyzer.analyze_dataset(dataset, question, session_id)
+        
+        viz_logger.info(f"Analysis completed - dataset_size: {analysis_result.dataset_size}")
+        viz_logger.info(f"Variable types: {list(analysis_result.variable_types.keys())}")
+        viz_logger.info(f"Dimensionality: {analysis_result.dimensionality.variable_count} variables")
+        viz_logger.debug(f"Analysis recommendations: {analysis_result.recommendations}")
+        
+        # Step 4: Select optimal chart
+        viz_logger.info(f"Step 4: Starting chart selection")
+        selector = ChartSelectionEngine(llm_client)
+        user_prefs = UserPreferences(
+            preferred_style='modern',
+            performance_priority='medium',
+            interactivity_level='medium'
+        )
+        chart_selection = await selector.select_optimal_chart(analysis_result, user_prefs, session_id)
+        
+        viz_logger.info(f"Chart selection completed - primary: {chart_selection.primary_chart.chart_type}")
+        viz_logger.info(f"Chart confidence: {chart_selection.primary_chart.confidence_score}")
+        viz_logger.info(f"Chart data mapping: {chart_selection.primary_chart.data_mapping}")
+        viz_logger.info(f"Number of alternatives: {len(chart_selection.alternatives)}")
+        
+        # Step 5: Build visualization response
+        viz_logger.info(f"Step 5: Building visualization response")
+        viz_response = {
+            "rows": [
+                {
+                    "chart_type": chart_selection.primary_chart.chart_type,
+                    "chart_config": chart_selection.primary_chart.data_mapping,
+                    "confidence": chart_selection.primary_chart.confidence_score,
+                    "rationale": chart_selection.primary_chart.rationale,
+                    "data_size": analysis_result.dataset_size,
+                    "alternatives": [
+                        {
+                            "type": alt.chart_type,
+                            "confidence": alt.confidence_score
+                        } for alt in chart_selection.alternatives
+                    ]
+                }
+            ],
+            "sql": f"-- Visualization Analysis\n{data_result.get('sql', '')}",
+            "analysis": f"**Chart Recommendation**: {chart_selection.primary_chart.chart_type}\n\n**Reasoning**: {chart_selection.primary_chart.rationale}\n\n**Data Analysis**: {analysis_result.recommendations}" if analyze else None,
+            "success": True,
+            "visualization_data": {
+                "dataset": rows,
+                "chart_config": chart_selection.primary_chart.data_mapping,
+                "chart_type": chart_selection.primary_chart.chart_type,
+                "performance_estimate": f"{len(rows)} rows - estimated render time: 2-5 seconds"
+            }
+        }
+        
+        viz_logger.info(f"Visualization response built successfully")
+        viz_logger.debug(f"Response keys: {list(viz_response.keys())}")
+        viz_logger.debug(f"Visualization data keys: {list(viz_response['visualization_data'].keys())}")
+        viz_logger.info(f"=== VISUALIZATION QUERY SUCCESS === Session: {session_id}")
+        
+        return viz_response
+        
+    except Exception as e:
+        viz_logger.error(f"=== VISUALIZATION QUERY FAILED === Session: {session_id}")
+        viz_logger.error(f"Error in visualization processing: {str(e)}")
+        import traceback
+        viz_logger.error(f"Full traceback: {traceback.format_exc()}")
+        return {
+            "rows": [{"error": f"Visualization processing failed: {str(e)}"}],
+            "sql": "-- Visualization error",
+            "analysis": f"❌ **Visualization Error**: {str(e)}" if analyze else None,
+            "success": False
+        }
+
+async def _process_visualization_query_stream(question: str, analyze: bool = False, session_id: str = None) -> AsyncIterator[Dict[str, Any]]:
+    """
+    Process a visualization query with streaming updates
+    
+    Args:
+        question: The visualization request
+        analyze: Whether to include analysis
+        session_id: Session identifier for tracking
+        
+    Yields:
+        Streaming visualization processing events
+    """
+    if not session_id:
+        session_id = str(uuid.uuid4())
+    
+    viz_logger.info(f"=== STREAMING VISUALIZATION QUERY START === Session: {session_id}")
+    viz_logger.info(f"Question: '{question}', Analyze: {analyze}")
+    
+    try:
+        # Step 1: Data retrieval
+        yield query_engine._create_stream_event("status", session_id, message="Fetching data for visualization...")
+        yield query_engine._create_stream_event("visualization_stage", session_id, stage="data_fetching", progress=0.1)
+        
+        data_result = await query_engine.execute_cross_database_query(question, analyze=True)
+        
+        if not data_result.get("success", False):
+            yield query_engine._create_stream_event(
+                "error", 
+                session_id,
+                error_code="DATA_FETCH_FAILED",
+                message="Failed to fetch data for visualization",
+                recoverable=False
+            )
+            return
+        
+        # Step 2: Data analysis
+        yield query_engine._create_stream_event("status", session_id, message="Analyzing data characteristics...")
+        yield query_engine._create_stream_event("visualization_stage", session_id, stage="data_analysis", progress=0.3)
+        
+        # Convert to visualization dataset
+        import pandas as pd
+        from ..llm.client import get_llm_client
+        from ..visualization.analyzer import DataAnalysisModule
+        from ..visualization.selector import ChartSelectionEngine
+        from ..visualization.types import VisualizationDataset, UserPreferences
+        
+        rows = data_result.get("rows", [])
+        df = pd.DataFrame(rows)
+        dataset = VisualizationDataset(
+            data=df,
+            columns=list(df.columns),
+            metadata={"source": "query_result"},
+            source_info={"origin": "database_query", "question": question}
+        )
+        
+        llm_client = get_llm_client()
+        analyzer = DataAnalysisModule(llm_client)
+        analysis_result = await analyzer.analyze_dataset(dataset, question, session_id)
+        
+        # Step 3: Chart selection
+        yield query_engine._create_stream_event("status", session_id, message="Selecting optimal chart type...")
+        yield query_engine._create_stream_event("visualization_stage", session_id, stage="chart_selection", progress=0.6)
+        
+        selector = ChartSelectionEngine(llm_client)
+        user_prefs = UserPreferences(
+            preferred_style='modern',
+            performance_priority='medium',
+            interactivity_level='medium'
+        )
+        chart_selection = await selector.select_optimal_chart(analysis_result, user_prefs, session_id)
+        
+        # Step 4: Chart configuration
+        yield query_engine._create_stream_event("status", session_id, message="Generating chart configuration...")
+        yield query_engine._create_stream_event("visualization_stage", session_id, stage="config_generation", progress=0.8)
+        
+        # Step 5: Complete
+        yield query_engine._create_stream_event("status", session_id, message="Visualization ready!")
+        yield query_engine._create_stream_event("visualization_stage", session_id, stage="complete", progress=1.0)
+        
+        yield query_engine._create_stream_event(
+            "complete", 
+            session_id, 
+            success=True, 
+            total_time=3.5,
+            results={
+                "chart_type": chart_selection.primary_chart.chart_type,
+                "chart_config": chart_selection.primary_chart.data_mapping,
+                "data_size": len(rows),
+                "rationale": chart_selection.primary_chart.rationale,
+                "visualization_data": {
+                    "dataset": rows,
+                    "chart_config": chart_selection.primary_chart.data_mapping,
+                    "chart_type": chart_selection.primary_chart.chart_type
+                }
+            }
+        )
+        
+        viz_logger.info(f"=== STREAMING VISUALIZATION QUERY SUCCESS === Session: {session_id}")
+        
+    except Exception as e:
+        viz_logger.error(f"=== STREAMING VISUALIZATION QUERY FAILED === Session: {session_id}")
+        viz_logger.error(f"Error in visualization streaming: {str(e)}")
+        import traceback
+        viz_logger.error(f"Full traceback: {traceback.format_exc()}")
+        yield query_engine._create_stream_event(
+            "error", 
+            session_id,
+            error_code="VISUALIZATION_FAILED",
+            message=f"Visualization processing failed: {str(e)}",
+            recoverable=False
+        )
+
+# ================================================
 
 if __name__ == "__main__":
     # Test the enhanced query engine

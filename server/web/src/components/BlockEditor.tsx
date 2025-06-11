@@ -9,6 +9,7 @@ import { ToggleBlock } from './ToggleBlock';
 import { CanvasBlock } from './CanvasBlock';
 import { StatsBlock } from './StatsBlock';
 import { StreamingStatusBlock } from './StreamingStatusBlock';
+import { GraphingBlock } from './GraphingBlock';
 import { cn } from '@/lib/utils';
 import { GripVertical, Plus } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -266,9 +267,34 @@ export const BlockEditor = ({
       const currentLineStart = textBeforeCursor.lastIndexOf('\n') + 1;
       const currentLine = content.substring(currentLineStart, cursorPosition);
       
-      // Check if current line starts with '/' for block type selector
+      // Check if current line starts with '/' for block type selector or chart commands
       if (currentLine.startsWith('/') && !currentLine.startsWith('//')) {
         const query = currentLine.slice(1);
+        
+        // Check for chart commands
+        if (query.startsWith('chart') || query.startsWith('graph')) {
+          // Convert to graphing block and extract query
+          const chartQuery = query.startsWith('chart') 
+            ? query.slice(5).trim() // Remove 'chart' prefix
+            : query.slice(5).trim(); // Remove 'graph' prefix
+          
+          // Switch to graphing block type
+          onUpdate({ 
+            type: 'graphing',
+            content: chartQuery,
+            properties: {
+              ...block.properties,
+              graphingData: {
+                query: chartQuery,
+                lastGenerated: new Date()
+              }
+            }
+          });
+          setShowTypeSelector(false);
+          setJustCreatedFromSlash(true);
+          return;
+        }
+        
         setTypeSelectorQuery(query);
         setShowTypeSelector(true);
         setShowAIQuery(false); // Close AI query if open
@@ -920,6 +946,21 @@ export const BlockEditor = ({
           />
         )}
         
+        {block.type === 'graphing' && (
+          <GraphingBlock
+            block={block}
+            onUpdate={(blockId: string, updates: any) => onUpdate(updates)}
+            isFocused={isFocused}
+            workspace={workspace}
+            page={page}
+            onAIQuery={onAIQuery ? async (query: string, blockId: string) => {
+              onAIQuery(query, blockId);
+              return {};
+            } : (() => Promise.resolve({}))}
+            streamingState={streamingState}
+          />
+        )}
+        
         {/* Streaming Status Block - shown when AI is processing */}
         {streamingState?.isStreaming && streamingState?.blockId === block.id && (
           <StreamingStatusBlock
@@ -967,7 +1008,7 @@ export const BlockEditor = ({
             ...(block.type === 'bullet' || block.type === 'numbered' ? getIndentStyle() : {}),
             display: showAIQuery || 
                     diffMode ||
-                    ['table', 'toggle', 'subpage', 'canvas', 'stats'].includes(block.type) || 
+                    ['table', 'toggle', 'subpage', 'canvas', 'stats', 'graphing'].includes(block.type) || 
                     (streamingState?.isStreaming && streamingState?.blockId === block.id) 
                     ? 'none' : 'block' // Hide textarea when AI query is active, in diff mode, for custom components, or when streaming
           }}

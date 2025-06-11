@@ -1,6 +1,6 @@
 export interface Block {
   id: string;
-  type: 'text' | 'heading1' | 'heading2' | 'heading3' | 'bullet' | 'numbered' | 'quote' | 'divider' | 'image' | 'code' | 'subpage' | 'table' | 'toggle' | 'canvas' | 'stats';
+  type: 'text' | 'heading1' | 'heading2' | 'heading3' | 'bullet' | 'numbered' | 'quote' | 'divider' | 'image' | 'code' | 'subpage' | 'table' | 'toggle' | 'canvas' | 'stats' | 'graphing';
   content: string;
   order: number;
   indentLevel?: number; // For nested lists (0 = no indent, 1 = first level, etc.)
@@ -31,6 +31,14 @@ export interface Block {
         value: string;
       }>;
       columns: number;
+    };
+    // Graphing-specific properties
+    graphingData?: {
+      query: string;
+      chartConfig?: any;
+      chartData?: any;
+      analysisResult?: any;
+      lastGenerated?: Date;
     };
     // Subpage-specific properties
     subpageData?: {
@@ -114,4 +122,39 @@ export interface Workspace {
   id: string;
   name: string;
   pages: Page[];
+}
+
+// Chart and visualization types
+export interface ChartSuggestion {
+  label: string;
+  query: string;
+  chartType: string;
+  confidence: number;
+}
+
+export interface DataAnalysisResult {
+  dataset_size: number;
+  variable_types: Record<string, any>;
+  dimensionality: {
+    variable_count: number;
+    primary_variable?: string;
+    x_variable?: string;
+    y_variable?: string;
+  };
+  statistical_summary?: any;
+  semantic_insights?: any;
+  recommendations?: any;
+}
+
+export interface PlotlyConfig {
+  type: string;
+  data: any[];
+  layout: any;
+  config?: any;
+  mode?: string;
+  marker?: any;
+}
+
+export interface ProcessedDataset {
+  [key: string]: any;
 }
