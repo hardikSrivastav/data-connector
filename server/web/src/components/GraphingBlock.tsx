@@ -345,7 +345,7 @@ const GraphingBlock: React.FC<GraphingBlockProps> = ({
   };
 
   return (
-    <div className="graphing-block p-4 border border-gray-200 rounded-lg space-y-4">
+    <div className="graphing-block p-4 border border-border rounded-lg space-y-4">
       {state.mode === 'input' && (
         <GraphingInput 
           onSubmit={handleGenerateChart}
@@ -426,7 +426,7 @@ const GraphingInput: React.FC<{
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             placeholder={placeholder}
-            className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+            className="w-full px-3 py-2 border border-border bg-background text-foreground rounded-md focus:outline-none focus:ring-2 focus:ring-primary"
             autoFocus={isFocused}
           />
         </div>
@@ -434,7 +434,7 @@ const GraphingInput: React.FC<{
           <button
             type="submit"
             disabled={!query.trim()}
-            className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
+            className="px-4 py-2 bg-primary text-primary-foreground rounded-md hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed"
           >
             Generate Chart
           </button>
@@ -443,12 +443,12 @@ const GraphingInput: React.FC<{
       
       {suggestions.length > 0 && (
         <div className="mt-3 space-y-1">
-          <p className="text-sm text-gray-600">Suggestions:</p>
+          <p className="text-sm text-muted-foreground">Suggestions:</p>
           {suggestions.slice(0, 3).map((suggestion, index) => (
             <button
               key={index}
               onClick={() => setQuery(suggestion.query)}
-              className="block text-left text-sm text-blue-600 hover:text-blue-800 underline"
+              className="block text-left text-sm text-primary hover:text-primary/80 underline"
             >
               {suggestion.label}
             </button>
@@ -475,15 +475,15 @@ const AnalysisProgress: React.FC<{
   }, [stage, query]);
 
   return (
-    <div className="analysis-progress p-4 bg-blue-50 rounded-lg">
+    <div className="analysis-progress p-4 bg-primary/10 border border-primary/20 rounded-lg">
       <div className="flex items-center space-x-3">
         <Spinner />
         <div>
-          <p className="font-medium text-blue-900">Analyzing your data...</p>
-          <p className="text-sm text-blue-700">Query: {query}</p>
-          <p className="text-xs text-blue-600">Stage: {stage}</p>
+          <p className="font-medium text-primary">Analyzing your data...</p>
+          <p className="text-sm text-primary/80">Query: {query}</p>
+          <p className="text-xs text-primary/70">Stage: {stage}</p>
           {streamingState && (
-            <p className="text-xs text-blue-500">
+            <p className="text-xs text-primary/60">
               Status: {streamingState.status || 'processing'}
             </p>
           )}
@@ -498,12 +498,12 @@ const ChartGenerationProgress: React.FC<{
   stage: string;
 }> = ({ dataAnalysis, stage }) => {
   return (
-    <div className="chart-generation-progress p-4 bg-green-50 rounded-lg">
+    <div className="chart-generation-progress p-4 bg-emerald-500/10 border border-emerald-500/20 rounded-lg">
       <div className="flex items-center space-x-3">
         <Spinner />
         <div>
-          <p className="font-medium text-green-900">Generating your chart...</p>
-          <p className="text-xs text-green-600">Stage: {stage}</p>
+          <p className="font-medium text-emerald-600 dark:text-emerald-400">Generating your chart...</p>
+          <p className="text-xs text-emerald-600/80 dark:text-emerald-400/80">Stage: {stage}</p>
         </div>
       </div>
     </div>
@@ -538,8 +538,8 @@ const ChartDisplay: React.FC<{
   if (!config) {
     logger.error('❌ No chart configuration available for rendering');
     return (
-      <div className="chart-display p-4 bg-red-50 rounded-lg">
-        <p className="text-red-700">❌ No chart configuration available</p>
+      <div className="chart-display p-4 bg-destructive/10 border border-destructive/20 rounded-lg">
+        <p className="text-destructive">❌ No chart configuration available</p>
       </div>
     );
   }
@@ -547,8 +547,8 @@ const ChartDisplay: React.FC<{
   if (!data) {
     logger.error('❌ No chart data available for rendering');
     return (
-      <div className="chart-display p-4 bg-red-50 rounded-lg">
-        <p className="text-red-700">❌ No chart data available</p>
+      <div className="chart-display p-4 bg-destructive/10 border border-destructive/20 rounded-lg">
+        <p className="text-destructive">❌ No chart data available</p>
       </div>
     );
   }
@@ -574,20 +574,20 @@ const ChartDisplay: React.FC<{
     <div className="chart-display space-y-4">
       {/* Processing indicator - only show when processing, not when complete */}
       {renderingState === 'processing' && (
-        <div className="p-3 bg-yellow-50 rounded-lg border border-yellow-200">
+        <div className="p-3 bg-amber-500/10 border border-amber-500/20 rounded-lg">
           <div className="flex items-center space-x-3">
             <Spinner />
             <div>
-              <p className="text-yellow-700 font-medium">🎨 Rendering chart...</p>
-              <p className="text-xs text-yellow-600">Chart type: {config.type}</p>
-              <p className="text-xs text-yellow-600">Preparing Plotly.js visualization...</p>
+              <p className="text-amber-600 dark:text-amber-400 font-medium">🎨 Rendering chart...</p>
+              <p className="text-xs text-amber-600/80 dark:text-amber-400/80">Chart type: {config.type}</p>
+              <p className="text-xs text-amber-600/80 dark:text-amber-400/80">Preparing Plotly.js visualization...</p>
             </div>
           </div>
         </div>
       )}
       
       {/* Chart container - always visible with proper spacing */}
-      <div className="chart-container bg-white border border-gray-200 rounded-lg overflow-hidden">
+      <div className="chart-container bg-background border border-border rounded-lg overflow-hidden">
         <div className="chart-wrapper p-4">
           <ChartRenderer
             config={chartConfig}
@@ -606,9 +606,9 @@ const ChartDisplay: React.FC<{
         
         {/* Chart metadata footer - only show when complete */}
       {renderingState === 'complete' && (
-          <div className="chart-footer px-4 py-3 bg-gray-50 border-t border-gray-200">
+          <div className="chart-footer px-4 py-3 bg-muted/50 border-t border-border">
             <div className="flex items-center justify-between">
-              <div className="flex items-center space-x-4 text-sm text-gray-600">
+              <div className="flex items-center space-x-4 text-sm text-muted-foreground">
                 <span>Query: "{userQuery}"</span>
                 <span>•</span>
                 <span>Data: {chartData?.data?.length || 0} points</span>
@@ -617,7 +617,7 @@ const ChartDisplay: React.FC<{
               </div>
               <button
                 onClick={onCreateNew}
-                className="px-3 py-1 text-sm bg-blue-50 text-blue-600 rounded hover:bg-blue-100 transition-colors"
+                className="px-3 py-1 text-sm bg-primary/10 text-primary rounded hover:bg-primary/20 transition-colors"
               >
                 Create New Chart
               </button>
@@ -625,8 +625,8 @@ const ChartDisplay: React.FC<{
             
             {/* Debug info - collapsed by default */}
           <details className="mt-2">
-              <summary className="text-xs text-gray-400 cursor-pointer hover:text-gray-600">Debug info</summary>
-              <pre className="mt-2 text-xs bg-white p-2 rounded border max-h-32 overflow-auto">
+              <summary className="text-xs text-muted-foreground cursor-pointer hover:text-foreground">Debug info</summary>
+              <pre className="mt-2 text-xs bg-background p-2 rounded border border-border max-h-32 overflow-auto text-foreground">
                 {JSON.stringify({ config: chartConfig, data: chartData }, null, 2)}
             </pre>
           </details>
@@ -642,15 +642,15 @@ const ErrorDisplay: React.FC<{
   onRetry: () => void;
 }> = ({ message, onRetry }) => {
   return (
-    <div className="error-display p-4 bg-red-50 rounded-lg">
+    <div className="error-display p-4 bg-destructive/10 border border-destructive/20 rounded-lg">
       <div className="flex items-center justify-between">
         <div>
-          <p className="font-medium text-red-900">Error generating chart</p>
-          {message && <p className="text-sm text-red-700">{message}</p>}
+          <p className="font-medium text-destructive">Error generating chart</p>
+          {message && <p className="text-sm text-destructive/80">{message}</p>}
         </div>
         <button
           onClick={onRetry}
-          className="px-3 py-1 bg-red-600 text-white rounded-md hover:bg-red-700 text-sm"
+          className="px-3 py-1 bg-destructive text-destructive-foreground rounded-md hover:bg-destructive/90 text-sm"
         >
           Try Again
         </button>

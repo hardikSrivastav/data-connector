@@ -1,4 +1,4 @@
-from fastapi import APIRouter, HTTPException, Depends
+from fastapi import APIRouter, HTTPException, Depends, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from typing import List, Dict, Any, Optional, AsyncIterator
@@ -34,6 +34,9 @@ from ..services.database_availability import get_availability_service, DatabaseS
 # Set up logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
+
+# Set up logging for auth
+auth_logger = logging.getLogger("agent_auth")
 
 # Create API router
 router = APIRouter()
@@ -202,17 +205,21 @@ async def health_check():
         return response
 
 @router.post("/query", response_model=QueryResponse)
-async def query(request: QueryRequest):
+async def query(request: QueryRequest, http_request: Request):
     """
     Enhanced query endpoint supporting both single-database and cross-database operations
     
     Args:
         request: QueryRequest containing the question, analyze flag, and optional settings
+        http_request: HTTP request for user authentication
         
     Returns:
         QueryResponse containing the results, SQL query, and optional analysis
     """
-    logger.info(f"🚀 API ENDPOINT: /query - Processing enhanced request")
+    # Get current user for audit and isolation
+    current_user = await get_current_user_from_request(http_request)
+    
+    logger.info(f"🚀 API ENDPOINT: /query - Processing enhanced request for user: {current_user}")
     logger.info(f"📥 Request received: question='{request.question}', analyze={request.analyze}, cross_database={request.cross_database}")
     
     try:
@@ -225,18 +232,23 @@ async def query(request: QueryRequest):
             cross_database=request.cross_database
         )
         
-        # Build response from result
-        response = QueryResponse(
-            rows=result.get("rows", []),
-            sql=result.get("sql", "-- No SQL generated"),
-            analysis=result.get("analysis") if request.analyze else None,
-            success=result.get("success", True),
-            session_id=result.get("session_id"),
-            plan_info=result.get("plan_info"),
-            execution_summary=result.get("execution_summary")
-        )
+        # Build response from result with user context
+        response_data = {
+            "rows": result.get("rows", []),
+            "sql": result.get("sql", "-- No SQL generated"),
+            "analysis": result.get("analysis") if request.analyze else None,
+            "success": result.get("success", True),
+            "session_id": result.get("session_id"),
+            "plan_info": result.get("plan_info"),
+            "execution_summary": result.get("execution_summary")
+        }
         
-        logger.info(f"✅ Query processed successfully")
+        # Add user context for audit trail
+        response_data = add_user_context_to_response(response_data, current_user)
+        
+        response = QueryResponse(**response_data)
+        
+        logger.info(f"✅ Query processed successfully for user: {current_user}")
         logger.info(f"📤 Returning response: rows={len(response.rows)}, success={response.success}")
         
         return response
@@ -251,17 +263,21 @@ async def query(request: QueryRequest):
         raise HTTPException(status_code=500, detail=f"Query execution failed: {str(e)}")
 
 @router.post("/cross-database-query", response_model=QueryResponse)
-async def cross_database_query(request: CrossDatabaseQueryRequest):
+async def cross_database_query(request: CrossDatabaseQueryRequest, http_request: Request):
     """
     Dedicated endpoint for cross-database queries with planning and orchestration
     
     Args:
         request: CrossDatabaseQueryRequest with cross-database specific options
+        http_request: HTTP request for user authentication
         
     Returns:
         QueryResponse with cross-database execution results
     """
-    logger.info(f"🌐 API ENDPOINT: /cross-database-query - Processing cross-database request")
+    # Get current user for audit and isolation
+    current_user = await get_current_user_from_request(http_request)
+    
+    logger.info(f"🌐 API ENDPOINT: /cross-database-query - Processing cross-database request for user: {current_user}")
     logger.info(f"📥 Request: question='{request.question}', optimize={request.optimize}, dry_run={request.dry_run}")
     
     try:
@@ -1920,22 +1936,26 @@ class VisualizationQueryResponse(BaseModel):
     error_message: Optional[str] = None
 
 @router.post("/visualization/query", response_model=VisualizationQueryResponse)
-async def visualization_query(request: VisualizationQueryRequest):
+async def visualization_query(request: VisualizationQueryRequest, http_request: Request):
     """
     Direct connection: Query data and generate visualization in one call
     This is the main endpoint for GraphingBlock to use
     """
-    session_id = f"viz_query_{int(time.time())}"
+    # Get current user for audit and isolation
+    current_user = await get_current_user_from_request(http_request)
+    
+    session_id = f"viz_query_{current_user}_{int(time.time())}"
     start_time = time.time()
     
     # Setup logging
     chart_logger = logging.getLogger('chart_generation')
     chart_logger.info(f"[{session_id}] === DIRECT VISUALIZATION QUERY STARTED ===")
+    chart_logger.info(f"[{session_id}] User: {current_user}")
     chart_logger.info(f"[{session_id}] User query: '{request.query}'")
     chart_logger.info(f"[{session_id}] Auto generate: {request.auto_generate}")
     chart_logger.info(f"[{session_id}] Chart preferences: {request.chart_preferences}")
     
-    logger.info(f"🎯 Direct visualization query: {request.query}")
+    logger.info(f"🎯 Direct visualization query for user {current_user}: {request.query}")
     
     try:
         # Step 1: Fetch real data using cross-database query
@@ -2104,7 +2124,33 @@ def _suggest_chart_type(df: pd.DataFrame, query: str) -> str:
         return 'line'
 
 def _generate_chart_config(df: pd.DataFrame, chart_type: str, preferences: Dict[str, Any]) -> Dict[str, Any]:
-    """Generate Plotly chart configuration"""
+    """Generate Plotly chart configuration with dark mode support"""
+    
+    # Check for dark mode preference
+    dark_mode = preferences.get("dark_mode", False)
+    
+    # Dark mode color scheme
+    dark_theme = {
+        "plot_bgcolor": "#1f2937",
+        "paper_bgcolor": "#111827",
+        "font": {"color": "#f9fafb"},
+        "xaxis": {
+            "gridcolor": "#374151",
+            "zerolinecolor": "#6b7280",
+            "tickcolor": "#9ca3af",
+            "linecolor": "#6b7280"
+        },
+        "yaxis": {
+            "gridcolor": "#374151",
+            "zerolinecolor": "#6b7280",
+            "tickcolor": "#9ca3af",
+            "linecolor": "#6b7280"
+        },
+        "colorway": [
+            "#3b82f6", "#10b981", "#f59e0b", "#ef4444",
+            "#8b5cf6", "#06b6d4", "#f97316", "#84cc16"
+        ]
+    } if dark_mode else {}
     
     # Basic configuration structure
     config = {
@@ -2113,11 +2159,14 @@ def _generate_chart_config(df: pd.DataFrame, chart_type: str, preferences: Dict[
         "layout": {
             "title": preferences.get("title", f"{chart_type.title()} Chart"),
             "showlegend": True,
-            "margin": {"l": 50, "r": 50, "t": 50, "b": 50}
+            "margin": {"l": 50, "r": 50, "t": 50, "b": 50},
+            **dark_theme  # Apply dark theme if enabled
         },
         "config": {
             "responsive": True,
-            "displayModeBar": True
+            "displayModeBar": True,
+            "modeBarButtonsToRemove": [],
+            "displaylogo": False
         }
     }
     
@@ -2199,3 +2248,72 @@ def _estimate_render_time(dataset_size: int, chart_type: str) -> float:
         multiplier = 5.0
     
     return base_time * multiplier
+
+# Authentication dependency for agent server
+async def get_current_user_from_request(request: Request) -> Optional[str]:
+    """
+    Extract current user from request headers or cookies
+    
+    This will receive user context from the web server
+    """
+    try:
+        # Method 1: Check for user ID in headers (passed from web server)
+        user_id = request.headers.get('X-User-ID')
+        if user_id:
+            auth_logger.info(f"🔐 Agent: User from header: {user_id}")
+            return user_id
+        
+        # Method 2: Check session cookie (same as web server)
+        session_cookie = request.cookies.get('ceneca_session')
+        if session_cookie:
+            # Use same logic as web server for consistency
+            user_id = f"user_{hash(session_cookie) % 10000}"
+            auth_logger.info(f"🔐 Agent: User from cookie: {user_id}")
+            return user_id
+        
+        # Method 3: Development fallback
+        dev_user = "dev_user_12345"
+        auth_logger.info(f"🔐 Agent: Using dev user: {dev_user}")
+        return dev_user
+        
+    except Exception as e:
+        auth_logger.error(f"🔐 Agent: Error extracting user: {str(e)}")
+        return "dev_user_12345"
+
+# Helper to add user context to query results
+def add_user_context_to_response(response_data: dict, user_id: str) -> dict:
+    """Add user context to query responses for audit trail"""
+    if isinstance(response_data, dict):
+        response_data["user_context"] = {
+            "user_id": user_id,
+            "timestamp": datetime.utcnow().isoformat()
+        }
+    return response_data
+
+@router.get("/auth/status")
+async def get_agent_auth_status(request: Request):
+    """Get current authentication status for agent server debugging"""
+    try:
+        current_user = await get_current_user_from_request(request)
+        session_cookie = request.cookies.get('ceneca_session')
+        user_header = request.headers.get('X-User-ID')
+        
+        return {
+            "authenticated": True,
+            "user_id": current_user,
+            "auth_method": "header" if user_header else "cookie" if session_cookie else "development",
+            "has_session_cookie": session_cookie is not None,
+            "has_user_header": user_header is not None,
+            "session_preview": session_cookie[:8] + "..." if session_cookie else None,
+            "user_header_value": user_header,
+            "timestamp": datetime.utcnow().isoformat(),
+            "server": "agent"
+        }
+    except Exception as e:
+        auth_logger.error(f"🔐 Agent auth status error: {str(e)}")
+        return {
+            "authenticated": False,
+            "error": str(e),
+            "timestamp": datetime.utcnow().isoformat(),
+            "server": "agent"
+        }

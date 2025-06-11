@@ -62,6 +62,7 @@ export const ChartRenderer: React.FC<ChartRendererProps> = ({
   const [internalRenderState, setInternalRenderState] = useState<RenderState>('initializing');
   const [chartElement, setChartElement] = useState<HTMLElement | null>(null);
   const [errorMessage, setErrorMessage] = useState<string>('');
+  const [isDarkModeActive, setIsDarkModeActive] = useState(false);
   
   const containerRef = useRef<HTMLDivElement>(null);
   const iframeRef = useRef<HTMLIFrameElement>(null);
@@ -70,6 +71,41 @@ export const ChartRenderer: React.FC<ChartRendererProps> = ({
 
   // Use external render state if provided, otherwise use internal
   const renderState = externalRenderState || internalRenderState;
+
+  // Dark mode detection effect
+  useEffect(() => {
+    const checkDarkMode = () => {
+      const darkMode = window.matchMedia('(prefers-color-scheme: dark)').matches ||
+                       document.documentElement.classList.contains('dark') ||
+                       document.body.classList.contains('dark') ||
+                       document.querySelector('[data-theme="dark"]') !== null;
+      setIsDarkModeActive(darkMode);
+    };
+
+    // Initial check
+    checkDarkMode();
+
+    // Listen for system dark mode changes
+    const mediaQuery = window.matchMedia('(prefers-color-scheme: dark)');
+    const handleChange = () => checkDarkMode();
+    mediaQuery.addEventListener('change', handleChange);
+
+    // Listen for manual theme toggles
+    const observer = new MutationObserver(checkDarkMode);
+    observer.observe(document.documentElement, {
+      attributes: true,
+      attributeFilter: ['class', 'data-theme']
+    });
+    observer.observe(document.body, {
+      attributes: true,
+      attributeFilter: ['class', 'data-theme']
+    });
+
+    return () => {
+      mediaQuery.removeEventListener('change', handleChange);
+      observer.disconnect();
+    };
+  }, []);
 
   useEffect(() => {
     console.log('🎯 ChartRenderer: useEffect triggered - config:', !!config, 'data:', !!data, 'renderState:', renderState);
@@ -101,7 +137,7 @@ export const ChartRenderer: React.FC<ChartRendererProps> = ({
         }
       }
     };
-  }, [config, data, renderingMode]); // Removed renderState from dependencies to prevent loops
+  }, [config, data, renderingMode, isDarkModeActive]); // Re-render when dark mode changes
 
   const performRender = async () => {
     console.log('🎯 ChartRenderer: performRender called - mode:', renderingMode);
@@ -270,7 +306,9 @@ export const ChartRenderer: React.FC<ChartRendererProps> = ({
             options: {
               width,
               height,
-              performanceMode: config.performance_mode || false
+              performanceMode: config.performance_mode || false,
+              darkModeTheme: getDarkModeTheme(), // Pass dark mode theme to worker
+              isDarkMode: isDarkMode()
             }
           }
         });
@@ -284,17 +322,60 @@ export const ChartRenderer: React.FC<ChartRendererProps> = ({
     });
   };
 
+  // Detect dark mode
+  const isDarkMode = () => {
+    // Use the reactive state instead of checking again
+    return isDarkModeActive;
+  };
+
+  // Get dark mode theme configuration
+  const getDarkModeTheme = () => {
+    if (!isDarkMode()) return {};
+    
+    return {
+      plot_bgcolor: '#1f2937', // Dark gray background
+      paper_bgcolor: '#111827', // Darker background for paper
+      font: {
+        color: '#f9fafb' // Light text
+      },
+      xaxis: {
+        gridcolor: '#374151', // Dark grid
+        zerolinecolor: '#6b7280',
+        tickcolor: '#9ca3af',
+        linecolor: '#6b7280'
+      },
+      yaxis: {
+        gridcolor: '#374151', // Dark grid
+        zerolinecolor: '#6b7280',
+        tickcolor: '#9ca3af',
+        linecolor: '#6b7280'
+      },
+      colorway: [
+        '#3b82f6', // Blue
+        '#10b981', // Emerald
+        '#f59e0b', // Amber
+        '#ef4444', // Red
+        '#8b5cf6', // Violet
+        '#06b6d4', // Cyan
+        '#f97316', // Orange
+        '#84cc16'  // Lime
+      ]
+    };
+  };
+
   // Fallback processing when worker fails
   const fallbackProcessing = (config: any, data: any) => {
     console.log('🎯 Using fallback processing (no worker)');
     
     // Simple data conversion without worker
     const plotlyData = convertToPlotlyData(config, data);
+    const darkModeTheme = getDarkModeTheme();
     
     return {
       data: plotlyData,
       layout: {
         ...config.layout,
+        ...darkModeTheme, // Apply dark mode theme
         height: height,
         width: width || undefined,
         margin: config.layout?.margin || { l: 40, r: 40, t: 40, b: 40 },
@@ -303,6 +384,8 @@ export const ChartRenderer: React.FC<ChartRendererProps> = ({
       config: {
         responsive: true,
         displayModeBar: true,
+        modeBarButtonsToRemove: [], // Show all buttons
+        displaylogo: false, // Remove Plotly logo
         ...config.config
       }
     };
@@ -701,14 +784,7 @@ export const ChartRenderer: React.FC<ChartRendererProps> = ({
         </div>
       )}
 
-      {/* Chart metadata */}
-      {renderState === 'complete' && (
-        <div className="chart-metadata mt-3 text-xs text-gray-500 dark:text-gray-400">
-          Mode: {renderingMode} • Type: {config.type} • 
-          Data: {data.data.length} points • 
-          Rendered: {new Date().toLocaleTimeString()}
-        </div>
-      )}
+     
     </div>
   );
 }; 

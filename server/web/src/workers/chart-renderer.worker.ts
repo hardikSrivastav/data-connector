@@ -16,6 +16,8 @@ interface RenderMessage {
       width?: number;
       height?: number;
       performanceMode?: boolean;
+      darkModeTheme?: any;
+      isDarkMode?: boolean;
     };
   };
 }
@@ -96,7 +98,7 @@ async function renderChart(payload: RenderMessage['payload']) {
     
     // Stage 2: Chart Generation
     postProgress('chart_generation', 40, 'Generating chart configuration...');
-    const plotlyConfig = await generatePlotlyConfig(config, processedData);
+    const plotlyConfig = await generatePlotlyConfig(config, processedData, options);
     
     // Stage 3: Performance Optimization
     postProgress('optimization', 70, 'Optimizing for performance...');
@@ -159,7 +161,7 @@ async function processDataForPlotly(data: any, config: any) {
   return convertDataByChartType(chartData, columns, config.type);
 }
 
-async function generatePlotlyConfig(config: any, processedData: any) {
+async function generatePlotlyConfig(config: any, processedData: any, options?: any) {
   // Simulate config generation time
   await new Promise(resolve => setTimeout(resolve, 50));
   
@@ -167,12 +169,15 @@ async function generatePlotlyConfig(config: any, processedData: any) {
     data: processedData,
     layout: {
       ...config.layout,
+      ...(options?.darkModeTheme || {}), // Apply dark mode theme if provided
       autosize: true,
       margin: { l: 40, r: 40, t: 40, b: 40 }
     },
     config: {
       responsive: true,
       displayModeBar: true,
+      modeBarButtonsToRemove: [], // Show all buttons
+      displaylogo: false, // Remove Plotly logo
       ...config.config
     }
   };

@@ -9,8 +9,63 @@ from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker, Session, relationship
 from sqlalchemy.dialects.postgresql import UUID, JSONB
 import uuid
+from fastapi.security import HTTPBearer
+from fastapi import Request
+import logging
 
 router = APIRouter(prefix="/api", tags=["storage"])
+
+# Set up logging
+logger = logging.getLogger(__name__)
+
+# Add security scheme
+security = HTTPBearer(auto_error=False)
+
+# Authentication dependency
+async def get_current_user_from_request(request: Request) -> str:
+    """
+    Extract current user from session cookie or return development user
+    
+    In production, this would validate the session cookie.
+    For now, we'll extract from cookie or default to dev user.
+    """
+    try:
+        # Try to get session cookie
+        session_cookie = request.cookies.get('ceneca_session')
+        
+        if session_cookie:
+            # In production, validate session and get user_id
+            # For now, we'll extract a mock user ID or use a development approach
+            logger.info(f"🔐 Session cookie found: {session_cookie[:8]}...")
+            
+            # TODO: Implement proper session validation
+            # For immediate security, we'll use the session ID as user ID
+            # This is temporary until proper session validation is implemented
+            user_id = f"user_{hash(session_cookie) % 10000}"
+            logger.info(f"🔐 Extracted user_id: {user_id}")
+            return user_id
+        else:
+            # Development fallback
+            dev_user = "dev_user_12345"
+            logger.info(f"🔐 No session cookie, using dev user: {dev_user}")
+            return dev_user
+            
+    except Exception as e:
+        logger.error(f"🔐 Error extracting user: {str(e)}")
+        # Fallback to development user
+        return "dev_user_12345"
+
+# Helper function to create user-specific workspace ID
+def get_user_workspace_id(user_id: str, workspace_id: str = "main") -> str:
+    """Create user-specific workspace ID to ensure isolation"""
+    return f"{user_id}_{workspace_id}"
+
+# Helper function to extract original workspace ID
+def extract_workspace_id(user_workspace_id: str) -> str:
+    """Extract original workspace ID from user-specific ID"""
+    if "_" in user_workspace_id:
+        return user_workspace_id.split("_", 1)[1]
+    return user_workspace_id
 
 # Database setup
 DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://notion_user:notion_password@localhost:5432/notion_clone")
@@ -398,29 +453,61 @@ def pydantic_workspace_to_db(workspace: Workspace, db: Session) -> WorkspaceDB:
     return db_workspace
 
 @router.get("/workspaces/{workspace_id}", response_model=Workspace)
-async def get_workspace(workspace_id: str, db: Session = Depends(get_db)):
-    """Get workspace by ID"""
-    db_workspace = db.query(WorkspaceDB).filter(WorkspaceDB.id == workspace_id).first()
+async def get_workspace(
+    workspace_id: str, 
+    request: Request,
+    db: Session = Depends(get_db)
+):
+    """Get workspace by ID - with user authentication"""
+    # Get current user
+    current_user = await get_current_user_from_request(request)
+    logger.info(f"🔐 get_workspace: user={current_user}, requested_workspace={workspace_id}")
+    
+    # Create user-specific workspace ID
+    user_workspace_id = get_user_workspace_id(current_user, workspace_id)
+    
+    # Query with user-specific workspace ID
+    db_workspace = db.query(WorkspaceDB).filter(WorkspaceDB.id == user_workspace_id).first()
     
     if not db_workspace:
-        # Create default workspace
+        # Create default workspace for this user
+        logger.info(f"🔐 Creating new workspace for user {current_user}: {user_workspace_id}")
         db_workspace = WorkspaceDB(
-            id=workspace_id,
+            id=user_workspace_id,
             name="My Workspace"
         )
         db.add(db_workspace)
         db.commit()
         db.refresh(db_workspace)
     
-    return db_workspace_to_pydantic(db_workspace)
+    # Convert to response format with original workspace ID
+    workspace_response = db_workspace_to_pydantic(db_workspace)
+    workspace_response.id = workspace_id  # Return original ID to client
+    
+    logger.info(f"🔐 Returning workspace for user {current_user}: {len(workspace_response.pages)} pages")
+    return workspace_response
 
 @router.post("/workspaces/{workspace_id}", response_model=Workspace)
-async def save_workspace(workspace_id: str, workspace: Workspace, db: Session = Depends(get_db)):
-    """Save workspace"""
+async def save_workspace(
+    workspace_id: str, 
+    workspace: Workspace, 
+    request: Request,
+    db: Session = Depends(get_db)
+):
+    """Save workspace - with user authentication"""
+    # Get current user
+    current_user = await get_current_user_from_request(request)
+    logger.info(f"🔐 save_workspace: user={current_user}, workspace={workspace_id}")
+    
+    # Create user-specific workspace ID
+    user_workspace_id = get_user_workspace_id(current_user, workspace_id)
+    
+    # Update workspace object to use user-specific ID internally
+    workspace.id = user_workspace_id
     db_workspace = pydantic_workspace_to_db(workspace, db)
     
-    # Clear existing pages and blocks for this workspace to avoid duplicates
-    existing_pages = db.query(PageDB).filter(PageDB.workspace_id == workspace_id).all()
+    # Clear existing pages and blocks for this user's workspace only
+    existing_pages = db.query(PageDB).filter(PageDB.workspace_id == user_workspace_id).all()
     for page in existing_pages:
         db.delete(page)  # Cascade will delete blocks too
     
@@ -428,7 +515,7 @@ async def save_workspace(workspace_id: str, workspace: Workspace, db: Session = 
     for page_data in workspace.pages:
         db_page = PageDB(
             id=page_data.id,
-            workspace_id=workspace_id,
+            workspace_id=user_workspace_id,  # Use user-specific workspace ID
             title=page_data.title,
             icon=page_data.icon,
             created_at=page_data.createdAt,
@@ -451,13 +538,29 @@ async def save_workspace(workspace_id: str, workspace: Workspace, db: Session = 
     
     db.commit()
     db.refresh(db_workspace)
-    return db_workspace_to_pydantic(db_workspace)
+    
+    # Return workspace with original ID for client
+    response = db_workspace_to_pydantic(db_workspace)
+    response.id = workspace_id
+    logger.info(f"🔐 Saved workspace for user {current_user}: {len(response.pages)} pages")
+    return response
 
 @router.get("/pages/{page_id}", response_model=Page)
-async def get_page(page_id: str, db: Session = Depends(get_db)):
-    """Get page by ID"""
+async def get_page(page_id: str, request: Request, db: Session = Depends(get_db)):
+    """Get page by ID - with user authentication"""
+    # Get current user
+    current_user = await get_current_user_from_request(request)
+    logger.info(f"🔐 get_page: user={current_user}, page={page_id}")
+    
+    # Find page and verify it belongs to user's workspace
     db_page = db.query(PageDB).filter(PageDB.id == page_id).first()
     if not db_page:
+        raise HTTPException(status_code=404, detail="Page not found")
+    
+    # Verify page belongs to user's workspace
+    user_workspace_id = get_user_workspace_id(current_user, "main")
+    if not db_page.workspace_id.startswith(current_user):
+        logger.warning(f"🔐 User {current_user} attempted to access page {page_id} from different user's workspace")
         raise HTTPException(status_code=404, detail="Page not found")
     
     # Convert to Pydantic
@@ -475,6 +578,7 @@ async def get_page(page_id: str, db: Session = Depends(get_db)):
         )
         blocks.append(block)
     
+    logger.info(f"🔐 Returning page for user {current_user}: {len(blocks)} blocks")
     return Page(
         id=db_page.id,
         title=db_page.title,
@@ -569,9 +673,11 @@ async def save_block(block: Block, db: Session = Depends(get_db)):
     )
 
 @router.post("/sync", response_model=SyncResponse)
-async def sync_changes(sync_request: SyncRequest, db: Session = Depends(get_db)):
-    """Sync changes from client"""
-    print(f"🔄 Received sync request with {len(sync_request.changes)} changes")
+async def sync_changes(sync_request: SyncRequest, request: Request, db: Session = Depends(get_db)):
+    """Sync changes from client - with user authentication"""
+    # Get current user
+    current_user = await get_current_user_from_request(request)
+    logger.info(f"🔄 Received sync request from user {current_user} with {len(sync_request.changes)} changes")
     
     # Process each change
     for change in sync_request.changes:
@@ -604,10 +710,11 @@ async def sync_changes(sync_request: SyncRequest, db: Session = Depends(get_db))
                             db_page.icon = change.data['icon']
                         db_page.updated_at = datetime.utcnow()
                     else:
-                        # Create new page
+                        # Create new page for this user
+                        user_workspace_id = get_user_workspace_id(current_user, "main")
                         db_page = PageDB(
                             id=change.entityId,
-                            workspace_id="main",  # Default workspace
+                            workspace_id=user_workspace_id,  # User-specific workspace
                             title=change.data.get('title', 'Untitled'),
                             icon=change.data.get('icon'),
                             created_at=change.data.get('createdAt', datetime.utcnow()),
@@ -726,7 +833,7 @@ async def sync_changes(sync_request: SyncRequest, db: Session = Depends(get_db))
                     data={"deleted": True},  # Simple data for deleted entities
                     # No foreign key references for deleted entities
                     workspace_id=None,
-                                        page_id=None,
+                    page_id=None,
                     block_id=None
                 )
                 db.add(db_change)
@@ -878,4 +985,26 @@ async def debug_canvas_storage(db: Session = Depends(get_db)):
         "canvas_blocks": canvas_blocks,
         "pages_with_canvas": pages_with_canvas,
         "block_types_summary": {block.type: len([b for b in all_blocks if b.type == block.type]) for block in all_blocks}
-    } 
+    }
+
+@router.get("/auth/status")
+async def get_auth_status(request: Request):
+    """Get current authentication status for debugging"""
+    try:
+        current_user = await get_current_user_from_request(request)
+        session_cookie = request.cookies.get('ceneca_session')
+        
+        return {
+            "authenticated": True,
+            "user_id": current_user,
+            "has_session_cookie": session_cookie is not None,
+            "session_preview": session_cookie[:8] + "..." if session_cookie else None,
+            "user_workspace_id": get_user_workspace_id(current_user, "main"),
+            "timestamp": datetime.utcnow().isoformat()
+        }
+    except Exception as e:
+        return {
+            "authenticated": False,
+            "error": str(e),
+            "timestamp": datetime.utcnow().isoformat()
+        } 
