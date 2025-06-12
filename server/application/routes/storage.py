@@ -34,24 +34,14 @@ async def get_current_user_from_request(request: Request) -> str:
         session_cookie = request.cookies.get('ceneca_session')
         
         if session_cookie:
-            # In production, validate session and get user_id
-            # For now, we'll extract a mock user ID or use a development approach
-            logger.info(f"🔐 Session cookie found: {session_cookie[:8]}...")
-            
-            # TODO: Implement proper session validation
             # For immediate security, we'll use the session ID as user ID
-            # This is temporary until proper session validation is implemented
             user_id = f"user_{hash(session_cookie) % 10000}"
-            logger.info(f"🔐 Extracted user_id: {user_id}")
             return user_id
         else:
             # Development fallback
-            dev_user = "dev_user_12345"
-            logger.info(f"🔐 No session cookie, using dev user: {dev_user}")
-            return dev_user
+            return "dev_user_12345"
             
     except Exception as e:
-        logger.error(f"🔐 Error extracting user: {str(e)}")
         # Fallback to development user
         return "dev_user_12345"
 
@@ -84,6 +74,7 @@ class WorkspaceDB(Base):
     __tablename__ = "workspaces"
     
     id = Column(String, primary_key=True)
+    owner_id = Column(String, nullable=True)  # User ownership - nullable for migration
     name = Column(String, nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
@@ -99,6 +90,7 @@ class PageDB(Base):
     
     id = Column(String, primary_key=True)
     workspace_id = Column(String, ForeignKey("workspaces.id"), nullable=False)
+    owner_id = Column(String, nullable=True)  # User ownership - nullable for migration
     title = Column(String, nullable=False)
     icon = Column(String, nullable=True)  # Emoji icon
     created_at = Column(DateTime, default=datetime.utcnow)
@@ -122,6 +114,7 @@ class BlockDB(Base):
     
     id = Column(String, primary_key=True)
     page_id = Column(String, ForeignKey("pages.id"), nullable=False)
+    owner_id = Column(String, nullable=True)  # User ownership - nullable for migration
     type = Column(String, nullable=False)  # text, heading1, bullet, canvas, etc.
     content = Column(Text, nullable=False, default="")
     order = Column(Integer, nullable=False, default=0)
@@ -458,34 +451,47 @@ async def get_workspace(
     request: Request,
     db: Session = Depends(get_db)
 ):
-    """Get workspace by ID - with user authentication"""
+    """Get workspace by ID - with user authentication using owner_id"""
     # Get current user
     current_user = await get_current_user_from_request(request)
     logger.info(f"🔐 get_workspace: user={current_user}, requested_workspace={workspace_id}")
     
-    # Create user-specific workspace ID
-    user_workspace_id = get_user_workspace_id(current_user, workspace_id)
-    
-    # Query with user-specific workspace ID
-    db_workspace = db.query(WorkspaceDB).filter(WorkspaceDB.id == user_workspace_id).first()
+    # Query workspace by ID and owner
+    db_workspace = db.query(WorkspaceDB).filter(
+        WorkspaceDB.id == workspace_id,
+        WorkspaceDB.owner_id == current_user
+    ).first()
     
     if not db_workspace:
-        # Create default workspace for this user
-        logger.info(f"🔐 Creating new workspace for user {current_user}: {user_workspace_id}")
-        db_workspace = WorkspaceDB(
-            id=user_workspace_id,
-            name="My Workspace"
-        )
-        db.add(db_workspace)
-        db.commit()
-        db.refresh(db_workspace)
+        # Try legacy user-prefixed workspace ID for backward compatibility
+        user_workspace_id = get_user_workspace_id(current_user, workspace_id)
+        db_workspace = db.query(WorkspaceDB).filter(WorkspaceDB.id == user_workspace_id).first()
+        
+        if not db_workspace:
+            # Create default workspace for this user with user-specific ID
+            logger.info(f"🔐 Creating new workspace for user {current_user}: {user_workspace_id}")
+            db_workspace = WorkspaceDB(
+                id=user_workspace_id,  # Use user-specific ID to avoid conflicts
+                owner_id=current_user,
+                name="My Workspace"
+            )
+            db.add(db_workspace)
+            db.commit()
+            db.refresh(db_workspace)
+        else:
+            # Found legacy workspace, ensure it has owner_id set
+            logger.info(f"🔄 Migrating legacy workspace {user_workspace_id} to new schema")
+            if not db_workspace.owner_id:
+                db_workspace.owner_id = current_user
+                db.commit()
+                db.refresh(db_workspace)
     
-    # Convert to response format with original workspace ID
-    workspace_response = db_workspace_to_pydantic(db_workspace)
-    workspace_response.id = workspace_id  # Return original ID to client
+    logger.info(f"🔐 Returning workspace for user {current_user}: {len(db_workspace.pages)} pages")
     
-    logger.info(f"🔐 Returning workspace for user {current_user}: {len(workspace_response.pages)} pages")
-    return workspace_response
+    # Convert to Pydantic and return clean workspace_id to client
+    response = db_workspace_to_pydantic(db_workspace)
+    response.id = workspace_id  # Use original clean ID for client
+    return response
 
 @router.post("/workspaces/{workspace_id}", response_model=Workspace)
 async def save_workspace(
@@ -547,21 +553,29 @@ async def save_workspace(
 
 @router.get("/pages/{page_id}", response_model=Page)
 async def get_page(page_id: str, request: Request, db: Session = Depends(get_db)):
-    """Get page by ID - with user authentication"""
+    """Get page by ID - with user authentication using owner_id"""
     # Get current user
     current_user = await get_current_user_from_request(request)
     logger.info(f"🔐 get_page: user={current_user}, page={page_id}")
     
-    # Find page and verify it belongs to user's workspace
-    db_page = db.query(PageDB).filter(PageDB.id == page_id).first()
-    if not db_page:
-        raise HTTPException(status_code=404, detail="Page not found")
+    # Find page and verify ownership
+    db_page = db.query(PageDB).filter(
+        PageDB.id == page_id,
+        PageDB.owner_id == current_user
+    ).first()
     
-    # Verify page belongs to user's workspace
-    user_workspace_id = get_user_workspace_id(current_user, "main")
-    if not db_page.workspace_id.startswith(current_user):
-        logger.warning(f"🔐 User {current_user} attempted to access page {page_id} from different user's workspace")
-        raise HTTPException(status_code=404, detail="Page not found")
+    if not db_page:
+        # Check legacy approach for backward compatibility
+        db_page = db.query(PageDB).filter(PageDB.id == page_id).first()
+        if db_page and db_page.workspace_id.startswith(current_user):
+            # Migrate legacy page to new schema
+            logger.info(f"🔄 Migrating legacy page {page_id} to use owner_id")
+            db_page.owner_id = current_user
+            db.commit()
+            db.refresh(db_page)
+        else:
+            logger.warning(f"🔐 User {current_user} attempted to access page {page_id} - not found or not owned")
+            raise HTTPException(status_code=404, detail="Page not found")
     
     # Convert to Pydantic
     blocks = []
@@ -711,10 +725,10 @@ async def sync_changes(sync_request: SyncRequest, request: Request, db: Session 
                         db_page.updated_at = datetime.utcnow()
                     else:
                         # Create new page for this user
-                        user_workspace_id = get_user_workspace_id(current_user, "main")
                         db_page = PageDB(
                             id=change.entityId,
-                            workspace_id=user_workspace_id,  # User-specific workspace
+                            workspace_id="main",  # Use clean workspace ID
+                            owner_id=current_user,  # Set ownership properly
                             title=change.data.get('title', 'Untitled'),
                             icon=change.data.get('icon'),
                             created_at=change.data.get('createdAt', datetime.utcnow()),
@@ -752,6 +766,7 @@ async def sync_changes(sync_request: SyncRequest, request: Request, db: Session 
                         db_block = BlockDB(
                             id=change.entityId,
                             page_id=change.data.get('pageId'),
+                            owner_id=current_user,  # Set ownership properly
                             type=change.data.get('type', 'text'),
                             content=change.data.get('content', ''),
                             order=change.data.get('order', 0),
