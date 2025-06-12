@@ -57,7 +57,28 @@ interface BlockEditorProps {
     blockId?: string;
     query?: string;
   };
+  // Markdown paste handler
+  onMarkdownPaste?: (markdownText: string, blockId: string) => void;
 }
+
+// Enhanced markdown detection patterns
+const MARKDOWN_PATTERNS = {
+  // Headings - must have space after #
+  heading1: /^#\s/,
+  heading2: /^##\s/,
+  heading3: /^###\s/,
+  
+  // Lists - must have space after marker
+  bullet: /^[-*+]\s/,
+  numbered: /^\d+\.\s/,
+  
+  // Special blocks
+  quote: /^>\s/,
+  code: /^```\s*$/,  // Code block starts with ``` and optional language
+  
+  // Divider - three or more dashes
+  divider: /^---+\s*$/,
+};
 
 export const BlockEditor = ({
   block,
@@ -85,7 +106,8 @@ export const BlockEditor = ({
   page,
   onNavigateToPage,
   onCreateCanvasPage,
-  streamingState
+  streamingState,
+  onMarkdownPaste
 }: BlockEditorProps) => {
   const [showTypeSelector, setShowTypeSelector] = useState(false);
   const [typeSelectorQuery, setTypeSelectorQuery] = useState('');
@@ -146,7 +168,7 @@ export const BlockEditor = ({
 
   const handleKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === 'Enter') {
-      // If we just created this block from a slash command, don't create a new block yet
+      // If we just created this block from a slash command or markdown conversion, don't create a new block yet
       if (justCreatedFromSlash) {
         setJustCreatedFromSlash(false);
         return; // Allow normal Enter behavior (line break)
@@ -247,6 +269,120 @@ export const BlockEditor = ({
     }
   };
 
+  // Function to parse and convert pasted markdown content
+  const parseMarkdownContent = (content: string) => {
+    const lines = content.split('\n');
+    const blocks = [];
+    
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i];
+      const trimmedLine = line.trim();
+      
+      // Skip empty lines
+      if (!trimmedLine) {
+        continue;
+      }
+      
+      let blockType: Block['type'] = 'text';
+      let blockContent = line;
+      let indentLevel = 0;
+      
+      // Check for markdown patterns
+      for (const [type, pattern] of Object.entries(MARKDOWN_PATTERNS)) {
+        if (pattern.test(trimmedLine)) {
+          blockType = type as Block['type'];
+          
+          // Extract content based on type
+          if (type === 'heading1') {
+            blockContent = trimmedLine.replace(/^#\s/, '');
+          } else if (type === 'heading2') {
+            blockContent = trimmedLine.replace(/^##\s/, '');
+          } else if (type === 'heading3') {
+            blockContent = trimmedLine.replace(/^###\s/, '');
+          } else if (type === 'bullet') {
+            blockContent = trimmedLine.replace(/^[-*+]\s/, '');
+            // Calculate indent level based on leading whitespace
+            const leadingSpaces = line.match(/^ */)?.[0]?.length || 0;
+            indentLevel = Math.floor(leadingSpaces / 2); // 2 spaces per indent level
+          } else if (type === 'numbered') {
+            blockContent = trimmedLine.replace(/^\d+\.\s/, '');
+            const leadingSpaces = line.match(/^ */)?.[0]?.length || 0;
+            indentLevel = Math.floor(leadingSpaces / 2);
+          } else if (type === 'quote') {
+            blockContent = trimmedLine.replace(/^>\s/, '');
+          } else if (type === 'code') {
+            blockContent = '';
+            blockType = 'code';
+            // For code blocks, collect all content until closing ```
+            i++; // Skip the opening ```
+            const codeLines = [];
+            while (i < lines.length && !lines[i].trim().startsWith('```')) {
+              codeLines.push(lines[i]);
+              i++;
+            }
+            blockContent = codeLines.join('\n');
+          } else if (type === 'divider') {
+            blockContent = '';
+          }
+          
+          break;
+        }
+      }
+      
+      blocks.push({
+        type: blockType,
+        content: blockContent,
+        indentLevel: indentLevel
+      });
+    }
+    
+    return blocks;
+  };
+
+     // Handle paste events to convert markdown
+   const handlePaste = (e: React.ClipboardEvent) => {
+     const pastedText = e.clipboardData.getData('text');
+     console.log('🎯 BlockEditor: Paste detected, text:', pastedText);
+     
+     // Only process if it looks like markdown (contains markdown patterns)
+     const hasMarkdown = Object.values(MARKDOWN_PATTERNS).some(pattern => 
+       pastedText.split('\n').some(line => pattern.test(line.trim()))
+     );
+     
+     console.log('🎯 BlockEditor: Has markdown:', hasMarkdown);
+     
+     if (hasMarkdown) {
+       e.preventDefault();
+       console.log('🎯 BlockEditor: Processing as markdown paste');
+       
+       // Pass the markdown parsing up to PageEditor for proper multi-block creation
+       if (onMarkdownPaste) {
+         console.log('🎯 BlockEditor: Calling onMarkdownPaste');
+         onMarkdownPaste(pastedText, block.id);
+         return;
+       }
+       
+       console.log('🎯 BlockEditor: No onMarkdownPaste handler, using fallback');
+       
+       // Fallback: parse and convert just the first line for single block
+       const parsedBlocks = parseMarkdownContent(pastedText);
+       
+       if (parsedBlocks.length > 0) {
+         const firstBlock = parsedBlocks[0];
+         console.log('🎯 BlockEditor: Updating with fallback:', firstBlock);
+         onUpdate({ 
+           type: firstBlock.type, 
+           content: firstBlock.content,
+           indentLevel: firstBlock.indentLevel || 0
+         });
+         return;
+       }
+     }
+     
+     console.log('🎯 BlockEditor: Not markdown, using default paste behavior');
+     // If not markdown or single line, let default paste behavior handle it
+   };
+
   const handleContentChange = (content: string) => {
     // Reset the flag when user starts typing
     if (justCreatedFromSlash) {
@@ -266,6 +402,69 @@ export const BlockEditor = ({
       const textBeforeCursor = content.substring(0, cursorPosition);
       const currentLineStart = textBeforeCursor.lastIndexOf('\n') + 1;
       const currentLine = content.substring(currentLineStart, cursorPosition);
+      
+      // Check for markdown patterns BEFORE checking for commands
+      // Only convert if we're at the beginning of a block or line
+      const isAtLineStart = currentLineStart === 0 || currentLineStart === textBeforeCursor.lastIndexOf('\n') + 1;
+      
+      if (isAtLineStart) {
+        // Check each markdown pattern
+        for (const [blockType, pattern] of Object.entries(MARKDOWN_PATTERNS)) {
+          if (pattern.test(currentLine)) {
+            console.log(`🎯 BlockEditor: Markdown pattern detected: ${blockType} from "${currentLine}"`);
+            
+            // Extract content after the markdown syntax
+            let newContent = '';
+            
+            if (blockType === 'heading1') {
+              newContent = currentLine.replace(/^#\s/, '');
+            } else if (blockType === 'heading2') {
+              newContent = currentLine.replace(/^##\s/, '');
+            } else if (blockType === 'heading3') {
+              newContent = currentLine.replace(/^###\s/, '');
+            } else if (blockType === 'bullet') {
+              newContent = currentLine.replace(/^[-*+]\s/, '');
+            } else if (blockType === 'numbered') {
+              newContent = currentLine.replace(/^\d+\.\s/, '');
+            } else if (blockType === 'quote') {
+              newContent = currentLine.replace(/^>\s/, '');
+                         } else if (blockType === 'code') {
+               newContent = currentLine.replace(/^```\s*$/, '');
+             } else if (blockType === 'divider') {
+               newContent = '';
+             }
+            
+            // Include any content after the current line
+            const remainingContent = content.substring(cursorPosition);
+            const fullNewContent = newContent + remainingContent;
+            
+            // Convert the block type and update content
+            onUpdate({ 
+              type: blockType as Block['type'], 
+              content: fullNewContent,
+              // Preserve indent level for lists, reset for others
+              ...(blockType === 'bullet' || blockType === 'numbered' 
+                ? { indentLevel: block.indentLevel || 0 }
+                : { indentLevel: 0 }
+              )
+            });
+            
+            setJustCreatedFromSlash(true); // Prevent immediate new block creation
+            
+            // Focus the textarea after conversion
+            setTimeout(() => {
+              if (textareaRef.current) {
+                textareaRef.current.focus();
+                // Position cursor at the end of the converted content
+                const newCursorPos = newContent.length;
+                textareaRef.current.setSelectionRange(newCursorPos, newCursorPos);
+              }
+            }, 0);
+            
+            return; // Exit early, don't process other commands
+          }
+        }
+      }
       
       // Check if current line starts with '/' for block type selector or chart commands
       if (currentLine.startsWith('/') && !currentLine.startsWith('//')) {
@@ -608,7 +807,7 @@ export const BlockEditor = ({
       case 'subpage': return "Sub-page link";
       case 'canvas': return "Canvas analysis";
       case 'stats': return "Statistics";
-      default: return "Type '/' for commands, '//' for AI, '@' for text replacement";
+      default: return "Type '/' for commands, '//' for AI";
     }
   };
 
@@ -981,6 +1180,7 @@ export const BlockEditor = ({
           onKeyDown={handleKeyDown}
           onFocus={onFocus}
           onInput={adjustTextareaHeight}
+          onPaste={handlePaste}
           onClick={(e) => {
             e.stopPropagation();
             // If AI query is showing and user clicks textarea, close it and focus

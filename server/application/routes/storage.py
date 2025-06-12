@@ -268,6 +268,20 @@ class CanvasCacheDB(Base):
         Index('idx_canvas_cache_expires_at', 'expires_at'),
     )
 
+class UserPreferencesDB(Base):
+    __tablename__ = "user_preferences"
+    
+    user_id = Column(String, primary_key=True)  # User ID as primary key
+    preferences = Column(JSONB, nullable=False, default={})  # Store all preferences as JSON
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    
+    # Indexes for performance
+    __table_args__ = (
+        Index('idx_user_preferences_user_id', 'user_id'),
+        Index('idx_user_preferences_updated_at', 'updated_at'),
+    )
+
 # Create tables
 Base.metadata.create_all(bind=engine)
 
@@ -393,6 +407,20 @@ class CanvasQueryResponse(BaseModel):
     commitId: str
     status: str
     message: str
+
+# Add after the existing Pydantic models (around line 400, after CanvasCache)
+
+class UserPreferences(BaseModel):
+    userId: str
+    enableNotifications: bool = True
+    autoSaveQueries: bool = True
+    defaultAnalyzeMode: bool = False
+    pollInterval: int = 30
+    enableLiveUpdates: bool = True
+    showAdvancedSettings: bool = False
+    theme: str = 'system'  # 'light', 'dark', 'system'
+    createdAt: datetime
+    updatedAt: datetime
 
 # Helper functions to convert between DB and Pydantic models
 def db_workspace_to_pydantic(db_workspace: WorkspaceDB) -> Workspace:
@@ -1022,4 +1050,152 @@ async def get_auth_status(request: Request):
             "authenticated": False,
             "error": str(e),
             "timestamp": datetime.utcnow().isoformat()
-        } 
+        }
+
+@router.get("/users/preferences", response_model=UserPreferences)
+async def get_user_preferences(
+    request: Request,
+    db: Session = Depends(get_db)
+):
+    """Get user preferences"""
+    current_user = await get_current_user_from_request(request)
+    logger.info(f"🔐 get_user_preferences: user={current_user}")
+    
+    # Get user preferences from database
+    db_prefs = db.query(UserPreferencesDB).filter(UserPreferencesDB.user_id == current_user).first()
+    
+    if not db_prefs:
+        # Create default preferences for new user
+        default_prefs = {
+            "enableNotifications": True,
+            "autoSaveQueries": True,
+            "defaultAnalyzeMode": False,
+            "pollInterval": 30,
+            "enableLiveUpdates": True,
+            "showAdvancedSettings": False,
+            "theme": "system"
+        }
+        
+        db_prefs = UserPreferencesDB(
+            user_id=current_user,
+            preferences=default_prefs
+        )
+        db.add(db_prefs)
+        db.commit()
+        db.refresh(db_prefs)
+        logger.info(f"🔐 Created default preferences for user {current_user}")
+    
+    # Convert to Pydantic model
+    prefs_data = db_prefs.preferences
+    return UserPreferences(
+        userId=current_user,
+        enableNotifications=prefs_data.get("enableNotifications", True),
+        autoSaveQueries=prefs_data.get("autoSaveQueries", True),
+        defaultAnalyzeMode=prefs_data.get("defaultAnalyzeMode", False),
+        pollInterval=prefs_data.get("pollInterval", 30),
+        enableLiveUpdates=prefs_data.get("enableLiveUpdates", True),
+        showAdvancedSettings=prefs_data.get("showAdvancedSettings", False),
+        theme=prefs_data.get("theme", "system"),
+        createdAt=db_prefs.created_at,
+        updatedAt=db_prefs.updated_at
+    )
+
+@router.post("/users/preferences", response_model=UserPreferences)
+async def save_user_preferences(
+    preferences: UserPreferences,
+    request: Request,
+    db: Session = Depends(get_db)
+):
+    """Save user preferences"""
+    current_user = await get_current_user_from_request(request)
+    logger.info(f"🔐 save_user_preferences: user={current_user}")
+    
+    # Get or create user preferences
+    db_prefs = db.query(UserPreferencesDB).filter(UserPreferencesDB.user_id == current_user).first()
+    
+    # Convert Pydantic model to dict for storage
+    prefs_dict = {
+        "enableNotifications": preferences.enableNotifications,
+        "autoSaveQueries": preferences.autoSaveQueries,
+        "defaultAnalyzeMode": preferences.defaultAnalyzeMode,
+        "pollInterval": preferences.pollInterval,
+        "enableLiveUpdates": preferences.enableLiveUpdates,
+        "showAdvancedSettings": preferences.showAdvancedSettings,
+        "theme": preferences.theme
+    }
+    
+    if not db_prefs:
+        # Create new preferences
+        db_prefs = UserPreferencesDB(
+            user_id=current_user,
+            preferences=prefs_dict
+        )
+        db.add(db_prefs)
+        logger.info(f"🔐 Created new preferences for user {current_user}")
+    else:
+        # Update existing preferences
+        db_prefs.preferences = prefs_dict
+        db_prefs.updated_at = datetime.utcnow()
+        logger.info(f"🔐 Updated preferences for user {current_user}")
+    
+    db.commit()
+    db.refresh(db_prefs)
+    
+    # Return updated preferences
+    return UserPreferences(
+        userId=current_user,
+        enableNotifications=prefs_dict["enableNotifications"],
+        autoSaveQueries=prefs_dict["autoSaveQueries"],
+        defaultAnalyzeMode=prefs_dict["defaultAnalyzeMode"],
+        pollInterval=prefs_dict["pollInterval"],
+        enableLiveUpdates=prefs_dict["enableLiveUpdates"],
+        showAdvancedSettings=prefs_dict["showAdvancedSettings"],
+        theme=prefs_dict["theme"],
+        createdAt=db_prefs.created_at,
+        updatedAt=db_prefs.updated_at
+    )
+
+@router.patch("/users/preferences")
+async def update_user_preference(
+    preference_key: str,
+    preference_value: Any,
+    request: Request,
+    db: Session = Depends(get_db)
+):
+    """Update a single user preference"""
+    current_user = await get_current_user_from_request(request)
+    logger.info(f"🔐 update_user_preference: user={current_user}, key={preference_key}, value={preference_value}")
+    
+    # Get user preferences
+    db_prefs = db.query(UserPreferencesDB).filter(UserPreferencesDB.user_id == current_user).first()
+    
+    if not db_prefs:
+        # Create with default preferences
+        default_prefs = {
+            "enableNotifications": True,
+            "autoSaveQueries": True,
+            "defaultAnalyzeMode": False,
+            "pollInterval": 30,
+            "enableLiveUpdates": True,
+            "showAdvancedSettings": False,
+            "theme": "system"
+        }
+        db_prefs = UserPreferencesDB(
+            user_id=current_user,
+            preferences=default_prefs
+        )
+        db.add(db_prefs)
+    
+    # Update the specific preference
+    current_prefs = db_prefs.preferences.copy()
+    current_prefs[preference_key] = preference_value
+    db_prefs.preferences = current_prefs
+    db_prefs.updated_at = datetime.utcnow()
+    
+    db.commit()
+    
+    return {
+        "success": True,
+        "message": f"Updated {preference_key} preference",
+        "updated_preference": {preference_key: preference_value}
+    } 

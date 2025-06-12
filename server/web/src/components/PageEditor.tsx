@@ -8,6 +8,7 @@ import { Button } from '@/components/ui/button';
 import { useBlockSelection } from '@/hooks/useBlockSelection';
 import { agentClient, AgentQueryResponse, StreamingCallbacks } from '@/lib/agent-client';
 import { StreamingStatusBlock } from './StreamingStatusBlock';
+import { useStorageManager } from '@/hooks/useStorageManager';
 
 interface PageEditorProps {
   page: Page;
@@ -40,6 +41,10 @@ export const PageEditor = ({
   sidebarCollapsed,
   onToggleSidebar
 }: PageEditorProps) => {
+  const { storageManager } = useStorageManager({
+    edition: 'enterprise',
+    apiBaseUrl: import.meta.env.VITE_API_BASE || 'http://localhost:8787'
+  });
   const [focusedBlockId, setFocusedBlockId] = useState<string | null>(null);
   const [isGlobalDragSelecting, setIsGlobalDragSelecting] = useState(false);
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
@@ -1222,6 +1227,184 @@ export const PageEditor = ({
     }
   }, [page.blocks, onAddBlock]); // Depend on onAddBlock directly
 
+  // Markdown patterns for parsing pasted content
+  const MARKDOWN_PATTERNS = {
+    heading1: /^#\s/,
+    heading2: /^##\s/,
+    heading3: /^###\s/,
+    bullet: /^[-*+]\s/,
+    numbered: /^\d+\.\s/,
+    quote: /^>\s/,
+    code: /^```\s*$/,
+    divider: /^---+\s*$/,
+  };
+
+  // Parse markdown content into block data
+  const parseMarkdownContent = (content: string) => {
+    const lines = content.split('\n');
+    const blocks = [];
+    
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i];
+      const trimmedLine = line.trim();
+      
+      // Skip empty lines
+      if (!trimmedLine) {
+        continue;
+      }
+      
+      let blockType: Block['type'] = 'text';
+      let blockContent = line;
+      let indentLevel = 0;
+      
+      // Check for markdown patterns
+      for (const [type, pattern] of Object.entries(MARKDOWN_PATTERNS)) {
+        if (pattern.test(trimmedLine)) {
+          blockType = type as Block['type'];
+          
+          // Extract content based on type
+          if (type === 'heading1') {
+            blockContent = trimmedLine.replace(/^#\s/, '');
+          } else if (type === 'heading2') {
+            blockContent = trimmedLine.replace(/^##\s/, '');
+          } else if (type === 'heading3') {
+            blockContent = trimmedLine.replace(/^###\s/, '');
+          } else if (type === 'bullet') {
+            blockContent = trimmedLine.replace(/^[-*+]\s/, '');
+            const leadingSpaces = line.match(/^ */)?.[0]?.length || 0;
+            indentLevel = Math.floor(leadingSpaces / 2);
+          } else if (type === 'numbered') {
+            blockContent = trimmedLine.replace(/^\d+\.\s/, '');
+            const leadingSpaces = line.match(/^ */)?.[0]?.length || 0;
+            indentLevel = Math.floor(leadingSpaces / 2);
+          } else if (type === 'quote') {
+            blockContent = trimmedLine.replace(/^>\s/, '');
+          } else if (type === 'code') {
+            blockContent = '';
+            blockType = 'code';
+            i++; // Skip the opening ```
+            const codeLines = [];
+            while (i < lines.length && !lines[i].trim().startsWith('```')) {
+              codeLines.push(lines[i]);
+              i++;
+            }
+            blockContent = codeLines.join('\n');
+          } else if (type === 'divider') {
+            blockContent = '';
+          }
+          
+          break;
+        }
+      }
+      
+      blocks.push({
+        type: blockType,
+        content: blockContent,
+        indentLevel: indentLevel
+      });
+    }
+    
+    return blocks;
+  };
+
+  // Handle markdown paste from BlockEditor  
+  const handleMarkdownPaste = (markdownText: string, targetBlockId: string) => {
+    console.log('🎯 PageEditor: Handling markdown paste for block:', targetBlockId);
+    console.log('🎯 PageEditor: Markdown text:', markdownText);
+    
+    const parsedBlocks = parseMarkdownContent(markdownText);
+    console.log('🎯 PageEditor: Parsed blocks:', parsedBlocks);
+    
+    if (parsedBlocks.length === 0) {
+      console.log('🎯 PageEditor: No blocks parsed, returning');
+      return;
+    }
+    
+    // Verify the target block exists
+    const targetBlockExists = page.blocks.some(block => block.id === targetBlockId);
+    if (!targetBlockExists) {
+      console.error('🎯 PageEditor: Target block does not exist:', targetBlockId);
+      return;
+    }
+    
+    const targetBlockIndex = page.blocks.findIndex(block => block.id === targetBlockId);
+    if (targetBlockIndex === -1) {
+      console.error('🎯 PageEditor: Could not find target block index');
+      return;
+    }
+
+    // Update the target block with the first parsed block
+    const firstBlock = parsedBlocks[0];
+    console.log('🎯 PageEditor: Updating target block with:', firstBlock);
+    
+    // Start with current page blocks
+    let updatedBlocks = [...page.blocks];
+    
+    // Update the target block with the first parsed block
+    const updatedTargetBlock = {
+      ...updatedBlocks[targetBlockIndex],
+      type: firstBlock.type,
+      content: firstBlock.content,
+      indentLevel: firstBlock.indentLevel || 0
+    };
+    updatedBlocks[targetBlockIndex] = updatedTargetBlock;
+    
+    // For multiple blocks, create additional blocks
+    if (parsedBlocks.length > 1) {
+      // Create new blocks for the remaining parsed content
+      const newBlocks = parsedBlocks.slice(1).map((blockData, index) => ({
+        id: `block_${Date.now()}_${Math.random().toString(36).substr(2, 9)}_${index}`,
+        type: blockData.type,
+        content: blockData.content,
+        order: targetBlockIndex + 1 + index,
+        indentLevel: blockData.indentLevel || 0
+      }));
+      
+      console.log('🎯 PageEditor: Creating new blocks:', newBlocks);
+      
+      // Insert the new blocks after the target block
+      updatedBlocks.splice(targetBlockIndex + 1, 0, ...newBlocks);
+      
+      // Save each new block to storage individually
+      newBlocks.forEach((block, index) => {
+        setTimeout(async () => {
+          console.log(`🎯 PageEditor: Saving block ${block.id} to storage`);
+          try {
+            await storageManager.saveBlock(block, page.id);
+            console.log(`✅ PageEditor: Block ${block.id} saved to storage successfully`);
+          } catch (error) {
+            console.warn(`⚠️ PageEditor: Could not save block ${block.id} to storage:`, error);
+          }
+        }, 100 * (index + 1));
+      });
+    }
+    
+    // Reorder all blocks to have clean sequential orders
+    const reorderedBlocks = updatedBlocks.map((block, index) => ({
+      ...block,
+      order: index
+    }));
+    
+    console.log('🎯 PageEditor: Updating page with all blocks (including updated target)');
+    loggedOnUpdatePage({ blocks: reorderedBlocks });
+    
+    // Save the updated target block to storage
+    setTimeout(async () => {
+      console.log(`🎯 PageEditor: Saving updated target block ${targetBlockId} to storage`);
+      try {
+        const finalTargetBlock = reorderedBlocks.find(b => b.id === targetBlockId);
+        if (finalTargetBlock) {
+          await storageManager.saveBlock(finalTargetBlock, page.id);
+          console.log(`✅ PageEditor: Updated target block ${targetBlockId} saved to storage successfully`);
+        } else {
+          console.warn(`⚠️ PageEditor: Could not find target block ${targetBlockId} in reordered blocks`);
+        }
+      } catch (error) {
+        console.warn(`⚠️ PageEditor: Could not save updated target block ${targetBlockId} to storage:`, error);
+      }
+    }, 50); // Save target block first, before the new blocks
+  };
+
   // Generate breadcrumbs from workspace and page data
   const breadcrumbs = [
     { label: 'Workspace', onClick: () => console.log('Navigate to workspace') },
@@ -1406,6 +1589,7 @@ export const PageEditor = ({
                     onNavigateToPage={handleNavigateToPage}
                     onCreateCanvasPage={onCreateCanvasPage}
                     streamingState={block.id === streamingState.blockId ? streamingState : undefined}
+                    onMarkdownPaste={handleMarkdownPaste}
                   />
                 </div>
               );

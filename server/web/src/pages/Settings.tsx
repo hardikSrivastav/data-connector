@@ -11,19 +11,12 @@ import {
   XCircle,
   ArrowLeft
 } from 'lucide-react';
-import { agentClient, DatabaseStatus, DatabaseAvailabilityResponse } from '@/lib/agent-client';
+import { agentClient, DatabaseStatus, DatabaseAvailabilityResponse, UserPreferences } from '@/lib/agent-client';
 import { useAuth } from '@/contexts/AuthContext';
 import { useTheme } from '@/contexts/ThemeContext';
 import { useNavigate } from 'react-router-dom';
 
-interface UserPreferences {
-  enableNotifications: boolean;
-  autoSaveQueries: boolean;
-  defaultAnalyzeMode: boolean;
-  pollInterval: number;
-  enableLiveUpdates: boolean;
-  showAdvancedSettings: boolean;
-}
+
 
 export const Settings = () => {
   const { user } = useAuth();
@@ -32,14 +25,13 @@ export const Settings = () => {
   const [databaseData, setDatabaseData] = useState<DatabaseAvailabilityResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
-  const [preferences, setPreferences] = useState<UserPreferences>({
-    enableNotifications: true,
-    autoSaveQueries: true,
-    defaultAnalyzeMode: false,
-    pollInterval: 30,
-    enableLiveUpdates: true,
-    showAdvancedSettings: false
-  });
+  const [preferences, setPreferences] = useState<UserPreferences | null>(null);
+  const [loadingPreferences, setLoadingPreferences] = useState(true);
+
+  // Load user preferences on component mount
+  useEffect(() => {
+    loadUserPreferences();
+  }, []);
 
   // Load database availability on component mount
   useEffect(() => {
@@ -47,13 +39,38 @@ export const Settings = () => {
     
     // Set up polling for live updates if enabled
     const interval = setInterval(() => {
-      if (preferences.enableLiveUpdates) {
+      if (preferences?.enableLiveUpdates) {
         loadDatabaseAvailability(true);
       }
-    }, preferences.pollInterval * 1000);
+    }, (preferences?.pollInterval || 30) * 1000);
 
     return () => clearInterval(interval);
-  }, [preferences.enableLiveUpdates, preferences.pollInterval]);
+  }, [preferences?.enableLiveUpdates, preferences?.pollInterval]);
+
+  const loadUserPreferences = async () => {
+    setLoadingPreferences(true);
+    try {
+      const userPrefs = await agentClient.getUserPreferences();
+      setPreferences(userPrefs);
+    } catch (error) {
+      console.error('Failed to load user preferences:', error);
+      // Set defaults if loading fails
+      setPreferences({
+        userId: user?.id || 'unknown',
+        enableNotifications: true,
+        autoSaveQueries: true,
+        defaultAnalyzeMode: false,
+        pollInterval: 30,
+        enableLiveUpdates: true,
+        showAdvancedSettings: false,
+        theme: 'system',
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString()
+      });
+    } finally {
+      setLoadingPreferences(false);
+    }
+  };
 
   const loadDatabaseAvailability = async (silent = false) => {
     if (!silent) setLoading(true);
@@ -126,23 +143,35 @@ export const Settings = () => {
     return date.toLocaleDateString();
   };
 
-  const updatePreference = (key: keyof UserPreferences, value: any) => {
-    setPreferences(prev => ({ ...prev, [key]: value }));
-    // In a real app, this would save to localStorage or backend
-    localStorage.setItem('userPreferences', JSON.stringify({ ...preferences, [key]: value }));
+  const updatePreference = async (key: keyof UserPreferences, value: any) => {
+    if (!preferences) return;
+    
+    // Optimistically update local state
+    const updatedPrefs = { ...preferences, [key]: value };
+    setPreferences(updatedPrefs);
+    
+    try {
+      // Save to backend
+      await agentClient.updateUserPreference(key, value);
+      console.log(`✅ Updated preference ${key} successfully`);
+    } catch (error) {
+      console.error(`Failed to update preference ${key}:`, error);
+      // Revert optimistic update on error
+      setPreferences(preferences);
+    }
   };
 
-  // Load preferences from localStorage on mount
-  useEffect(() => {
-    const saved = localStorage.getItem('userPreferences');
-    if (saved) {
-      try {
-        setPreferences(JSON.parse(saved));
-      } catch (error) {
-        console.error('Failed to load user preferences:', error);
-      }
-    }
-  }, []);
+  // Show loading state while preferences are being loaded
+  if (loadingPreferences || !preferences) {
+    return (
+      <div className="container mx-auto p-6 max-w-6xl bg-background text-foreground">
+        <div className="flex items-center justify-center py-12">
+          <RefreshCw className="h-8 w-8 animate-spin text-blue-600 dark:text-blue-400" />
+          <span className="ml-2 text-muted-foreground">Loading preferences...</span>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="container mx-auto p-6 max-w-6xl bg-background text-foreground">

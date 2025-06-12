@@ -398,7 +398,12 @@ export const useWorkspace = () => {
     
     if (afterBlockId) {
       const index = blocks.findIndex(b => b.id === afterBlockId);
-      newOrder = blocks[index].order + 0.5; // Insert between existing orders
+      if (index >= 0) {
+        newOrder = blocks[index].order + 0.5; // Insert between existing orders
+      } else {
+        console.warn(`addBlock: Block with ID ${afterBlockId} not found, adding at end`);
+        newOrder = blocks.length > 0 ? Math.max(...blocks.map(b => b.order)) + 1 : 0;
+      }
     } else {
       newOrder = blocks.length > 0 ? Math.max(...blocks.map(b => b.order)) + 1 : 0;
     }
