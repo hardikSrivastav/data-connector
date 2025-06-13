@@ -298,8 +298,10 @@ export const AIQuerySelector = ({
     // Smart routing: classify the query and route appropriately
     console.log('🚀 SMART ROUTING: Checking conditions...');
     console.log('🚀 SMART ROUTING: enableSmartRouting =', enableSmartRouting);
-    console.log('🚀 SMART ROUTING: blockContext =', !!blockContext);
+    console.log('🚀 SMART ROUTING: blockContext =', !!blockContext, blockContext);
     console.log('🚀 SMART ROUTING: trivialSupported.length =', trivialSupported.length);
+    console.log('🚀 SMART ROUTING: originalText =', !!originalText, originalText?.length);
+    console.log('🚀 SMART ROUTING: editingText =', !!editingText, editingText?.length);
     
     if (enableSmartRouting && blockContext && trivialSupported.length > 0) {
       console.log('🚀 SMART ROUTING: Conditions met, starting classification...');
@@ -509,6 +511,7 @@ export const AIQuerySelector = ({
     if (onDiffAccept && trivialResult) {
       // For content generation, the result is new content
       // For text editing, the result replaces existing content
+      // The trivial client now returns markdown-formatted text
       onDiffAccept(trivialResult);
     }
     onClose();
@@ -570,7 +573,7 @@ export const AIQuerySelector = ({
              <>
                {/* Custom Diff Renderer for Trivial Operations */}
                <div className="p-3 bg-gray-50 rounded border border-gray-200 min-h-24">
-                                   <div className="text-sm leading-relaxed">
+                                   <div className="text-sm leading-relaxed prose prose-sm max-w-none">
                     {trivialDiffChanges.length > 0 ? (
                       trivialDiffChanges.map((change, index) => (
                         <span
@@ -587,7 +590,20 @@ export const AIQuerySelector = ({
                         </span>
                       ))
                     ) : (
-                      <span className="text-gray-600">{trivialResult}</span>
+                      // Render markdown content properly
+                      <div 
+                        className="text-gray-600"
+                        dangerouslySetInnerHTML={{
+                          __html: trivialResult
+                            .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
+                            .replace(/\*(.*?)\*/g, '<em>$1</em>')
+                            .replace(/`(.*?)`/g, '<code class="bg-gray-200 px-1 py-0.5 rounded text-xs">$1</code>')
+                            .replace(/^## (.*$)/gm, '<h2 class="text-lg font-semibold mt-3 mb-2">$1</h2>')
+                            .replace(/^### (.*$)/gm, '<h3 class="text-base font-semibold mt-2 mb-1">$1</h3>')
+                            .replace(/^- (.*$)/gm, '<li class="ml-4">$1</li>')
+                            .replace(/\n/g, '<br>')
+                        }}
+                      />
                     )}
                   </div>
                </div>

@@ -1431,7 +1431,8 @@ async def stream_trivial_operation(request: TrivialQueryRequest):
                 text=request.text,
                 context=request.context
             ):
-                yield create_stream_event("trivial_update", "session_id", **chunk)
+                # Send the chunk data directly as SSE without wrapping in trivial_update
+                yield f"data: {json.dumps(chunk)}\n\n"
                 
         except Exception as e:
             logger.error(f"Error in trivial stream: {e}")

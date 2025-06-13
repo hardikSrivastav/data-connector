@@ -13,79 +13,50 @@ from functools import lru_cache
 import hashlib
 import time
 import logging
+import os
 
 from openai import AsyncOpenAI
 from anthropic import AsyncAnthropic
+import boto3
+from botocore.exceptions import ClientError, NoCredentialsError
 
 from ..config.settings import Settings
 
 # Set up logging
 logger = logging.getLogger(__name__)
 
-# Operation-specific configurations for optimal performance
-TRIVIAL_OPERATIONS = {
-    "fix_grammar": {
-        "max_tokens": 200,
-        "temperature": 0.1,
-        "prompt": "Fix any grammar and spelling errors in the following text. Preserve the original meaning and style. Only return the corrected text:",
-    },
-    "improve_clarity": {
-        "max_tokens": 300,
-        "temperature": 0.2,
-        "prompt": "Improve the clarity and readability of the following text. Make it more concise and clear while preserving the original meaning:",
-    },
-    "make_concise": {
-        "max_tokens": 150,
-        "temperature": 0.1,
-        "prompt": "Make the following text more concise while preserving all key information and meaning:",
-    },
-    "fix_spelling": {
-        "max_tokens": 100,
-        "temperature": 0.0,
-        "prompt": "Fix any spelling errors in the following text. Preserve everything else exactly:",
-    },
-    "improve_tone": {
-        "max_tokens": 300,
-        "temperature": 0.3,
-        "prompt": "Improve the tone of the following text to be more professional and engaging:",
-    },
-    "expand_text": {
-        "max_tokens": 400,
-        "temperature": 0.4,
-        "prompt": "Expand the following text with more detail and explanation while maintaining the original meaning:",
-    },
-    "simplify_language": {
-        "max_tokens": 250,
-        "temperature": 0.2,
-        "prompt": "Simplify the language in the following text to make it easier to understand:",
-    },
-    "add_examples": {
-        "max_tokens": 400,
-        "temperature": 0.4,
-        "prompt": "Add relevant examples or clarifications to the following text to make it clearer:",
-    },
-    "summarize_content": {
-        "max_tokens": 300,
-        "temperature": 0.2,
-        "prompt": "Create a concise summary of the following content. Focus on the key points and main ideas:",
-    },
-    "generate_title": {
-        "max_tokens": 50,
-        "temperature": 0.3,
-        "prompt": "Generate a clear, descriptive title for the following content:",
-    },
-    "create_outline": {
-        "max_tokens": 200,
-        "temperature": 0.2,
-        "prompt": "Create a structured outline of the key points from the following content:",
-    }
+# Single universal prompt configuration for all trivial operations
+TRIVIAL_CONFIG = {
+    "max_tokens": 500,
+    "temperature": 0.3,
+    "prompt": """You are an intelligent text assistant. Analyze the user's request and improve their text accordingly. You can:
+
+- Fix grammar, spelling, and punctuation errors
+- Improve clarity, readability, and flow
+- Adjust tone (professional, casual, formal, etc.)
+- Make text more concise or expand with details
+- Simplify complex language or add technical depth
+- Create summaries, outlines, or titles
+- Add examples and clarifications
+- Generate new content based on the request
+
+Always format your response with proper markdown:
+- Use **bold** for emphasis and key points
+- Use *italic* for subtle emphasis or technical terms
+- Use `code` for technical terms, commands, or specific references
+- Use ## headings for major sections
+- Use ### subheadings for subsections
+- Use - bullet points for lists and examples
+- Use > blockquotes for important notes or quotes
+
+Preserve the original meaning and intent while making the requested improvements. Be concise but thorough."""
 }
 
 # Cache for frequently requested operations
 @lru_cache(maxsize=1000)
-def get_cached_operation_hash(operation: str, text: str) -> str:
+def get_cached_operation_hash(request: str, text: str) -> str:
     """Generate a hash for caching purposes."""
-    return hashlib.md5(f"{operation}:{text}".encode()).hexdigest()
+    return hashlib.md5(f"{request}:{text}".encode()).hexdigest()
 
 
 class TrivialLLMClient:
@@ -152,6 +123,32 @@ class TrivialLLMClient:
                 )
                 self.model = "claude-3-haiku-20240307"
                 
+            elif self.provider == "bedrock":
+                # Initialize AWS Bedrock client
+                region = os.getenv("AWS_REGION", "us-east-1")
+                
+                try:
+                    self.client = boto3.client(
+                        "bedrock-runtime",
+                        region_name=region
+                    )
+                    
+                    # Test credentials by making a simple call to bedrock (not bedrock-runtime)
+                    # Use a separate client just for testing credentials
+                    test_client = boto3.client("bedrock", region_name=region)
+                    test_client.list_foundation_models()
+                    logger.info(f"Successfully initialized Bedrock client in region: {region}")
+                    
+                except NoCredentialsError:
+                    raise ValueError("AWS credentials not found. Please configure AWS credentials via environment variables, AWS profile, or IAM role.")
+                except ClientError as e:
+                    if e.response['Error']['Code'] == 'UnauthorizedOperation':
+                        raise ValueError("AWS credentials don't have permission to access Bedrock. Please check IAM permissions.")
+                    else:
+                        raise ValueError(f"AWS Bedrock initialization failed: {e}")
+                except Exception as e:
+                    raise ValueError(f"Unexpected error calling Bedrock: {e}")
+                
             else:
                 raise ValueError(f"Unsupported trivial LLM provider: {self.provider}")
                 
@@ -161,30 +158,28 @@ class TrivialLLMClient:
             raise
     
     def _get_operation_config(self, operation: str) -> Dict[str, Any]:
-        """Get configuration for a specific operation."""
-        return TRIVIAL_OPERATIONS.get(operation, {
-            "max_tokens": self.settings.TRIVIAL_LLM_MAX_TOKENS,
-            "temperature": self.settings.TRIVIAL_LLM_TEMPERATURE,
-            "prompt": f"Perform the following operation on the text: {operation}. Return only the modified text:",
-        })
+        """Get configuration for trivial operations."""
+        return TRIVIAL_CONFIG
     
     def _build_prompt(self, operation: str, text: str, context: Optional[Dict] = None) -> str:
         """Build an optimized prompt for the operation."""
-        logger.info(f"🔨 TrivialClient: Building prompt for operation '{operation}'")
+        logger.info(f"🔨 TrivialClient: Building prompt for request '{operation}'")
         logger.info(f"🔨 TrivialClient: Text length: {len(text)}")
         logger.info(f"🔨 TrivialClient: Text content: '{text}'")
         logger.info(f"🔨 TrivialClient: Context: {context}")
         
         config = self._get_operation_config(operation)
-        prompt = config["prompt"]
+        base_prompt = config["prompt"]
         
         # Add context if provided
+        context_note = ""
         if context:
             block_type = context.get("block_type", "text")
             if block_type != "text":
-                prompt += f"\n\nNote: This is a {block_type} block."
+                context_note = f"\n\nNote: This is a {block_type} block."
         
-        final_prompt = f"{prompt}\n\nText: {text}"
+        # Build the final prompt with the user's request and text
+        final_prompt = f"{base_prompt}{context_note}\n\nUser Request: {operation}\n\nText to improve: {text}"
         logger.info(f"🔨 TrivialClient: Final prompt: '{final_prompt}'")
         return final_prompt
     
@@ -209,6 +204,109 @@ class TrivialLLMClient:
             oldest_key = min(self._cache.keys(), key=lambda k: self._cache[k][1])
             del self._cache[oldest_key]
     
+    def _prepare_bedrock_request(self, prompt: str, config: Dict[str, Any]) -> Dict[str, Any]:
+        """Prepare request body for Bedrock based on model type."""
+        if self.model.startswith("anthropic.claude"):
+            return {
+                "anthropic_version": "bedrock-2023-05-31",
+                "max_tokens": config["max_tokens"],
+                "temperature": config["temperature"],
+                "messages": [{"role": "user", "content": prompt}]
+            }
+        elif self.model.startswith("amazon.titan"):
+            return {
+                "inputText": prompt,
+                "textGenerationConfig": {
+                    "maxTokenCount": config["max_tokens"],
+                    "temperature": config["temperature"],
+                    "topP": 0.9
+                }
+            }
+        elif self.model.startswith("cohere.command"):
+            return {
+                "prompt": prompt,
+                "max_tokens": config["max_tokens"],
+                "temperature": config["temperature"],
+                "p": 0.9
+            }
+        elif self.model.startswith("ai21.j2"):
+            return {
+                "prompt": prompt,
+                "maxTokens": config["max_tokens"],
+                "temperature": config["temperature"]
+            }
+        elif self.model.startswith("amazon.nova"):
+            return {
+                "messages": [{"role": "user", "content": [{"text": prompt}]}],
+                "inferenceConfig": {
+                    "maxTokens": config["max_tokens"],
+                    "temperature": config["temperature"]
+                }
+            }
+        else:
+            # Default format (works for most models)
+            return {
+                "prompt": prompt,
+                "max_tokens": config["max_tokens"],
+                "temperature": config["temperature"]
+            }
+    
+    def _extract_bedrock_response(self, response_body: Dict[str, Any]) -> str:
+        """Extract text from Bedrock response based on model type."""
+        if self.model.startswith("anthropic.claude"):
+            return response_body.get("content", [{}])[0].get("text", "")
+        elif self.model.startswith("amazon.titan"):
+            return response_body.get("results", [{}])[0].get("outputText", "")
+        elif self.model.startswith("cohere.command"):
+            return response_body.get("generations", [{}])[0].get("text", "")
+        elif self.model.startswith("ai21.j2"):
+            return response_body.get("completions", [{}])[0].get("data", {}).get("text", "")
+        elif self.model.startswith("amazon.nova"):
+            return response_body.get("output", {}).get("message", {}).get("content", [{}])[0].get("text", "")
+        else:
+            # Try common response formats
+            return (response_body.get("completion") or 
+                   response_body.get("text") or 
+                   response_body.get("output") or 
+                   str(response_body))
+    
+    def _invoke_bedrock_model(self, prompt: str, config: Dict[str, Any], stream: bool = False) -> Any:
+        """Invoke Bedrock model with proper error handling."""
+        request_body = self._prepare_bedrock_request(prompt, config)
+        
+        try:
+            if stream:
+                response = self.client.invoke_model_with_response_stream(
+                    modelId=self.model,
+                    body=json.dumps(request_body),
+                    contentType="application/json",
+                    accept="application/json"
+                )
+                return response
+            else:
+                response = self.client.invoke_model(
+                    modelId=self.model,
+                    body=json.dumps(request_body),
+                    contentType="application/json",
+                    accept="application/json"
+                )
+                
+                response_body = json.loads(response['body'].read())
+                return self._extract_bedrock_response(response_body)
+                
+        except ClientError as e:
+            error_code = e.response['Error']['Code']
+            if error_code == 'ValidationException':
+                raise ValueError(f"Invalid request to Bedrock model {self.model}: {e}")
+            elif error_code == 'AccessDeniedException':
+                raise ValueError(f"Access denied to Bedrock model {self.model}. Check IAM permissions and model access.")
+            elif error_code == 'ThrottlingException':
+                raise ValueError(f"Bedrock API rate limit exceeded. Please retry later.")
+            else:
+                raise ValueError(f"Bedrock API error: {e}")
+        except Exception as e:
+            raise ValueError(f"Unexpected error calling Bedrock: {e}")
+    
     async def process_operation(
         self, 
         operation: str, 
@@ -216,10 +314,10 @@ class TrivialLLMClient:
         context: Optional[Dict] = None
     ) -> str:
         """
-        Process a single trivial operation and return the result.
+        Process a trivial text improvement request and return the result.
         
         Args:
-            operation: The type of operation (e.g., "fix_grammar", "make_concise")
+            operation: The user's request (e.g., "fix grammar", "make this more professional", "give me a short paragraph on India's independence")
             text: The text to process
             context: Optional context about the block/document
             
@@ -260,6 +358,14 @@ class TrivialLLMClient:
                 )
                 result = response.content[0].text.strip()
                 
+            elif self.provider == "bedrock":
+                # Use asyncio to run the synchronous Bedrock call
+                result = await asyncio.get_event_loop().run_in_executor(
+                    None, 
+                    lambda: self._invoke_bedrock_model(prompt, config, stream=False)
+                )
+                result = result.strip() if result else text
+                
             else:
                 raise ValueError(f"Unsupported provider: {self.provider}")
             
@@ -267,12 +373,12 @@ class TrivialLLMClient:
             self._set_cache(cache_key, result)
             
             duration = time.time() - start_time
-            logger.info(f"Trivial operation '{operation}' completed in {duration:.2f}s")
+            logger.info(f"Trivial request '{operation}' completed in {duration:.2f}s")
             
             return result
             
         except Exception as e:
-            logger.error(f"Error in trivial operation '{operation}': {e}")
+            logger.error(f"Error in trivial request '{operation}': {e}")
             # Return original text on error
             return text
     
@@ -283,7 +389,12 @@ class TrivialLLMClient:
         context: Optional[Dict] = None
     ) -> AsyncIterator[Dict[str, Any]]:
         """
-        Stream a trivial operation for real-time diff updates.
+        Stream a trivial text improvement request for real-time updates.
+        
+        Args:
+            operation: The user's request (e.g., "fix grammar", "make this more professional", "give me a short paragraph on India's independence")
+            text: The text to process
+            context: Optional context about the block/document
         
         Yields:
             Dictionary with streaming updates
@@ -369,9 +480,74 @@ class TrivialLLMClient:
                     "cached": False,
                     "duration": time.time() - start_time
                 }
+                
+            elif self.provider == "bedrock":
+                # Handle Bedrock streaming
+                try:
+                    stream_response = await asyncio.get_event_loop().run_in_executor(
+                        None,
+                        lambda: self._invoke_bedrock_model(prompt, config, stream=True)
+                    )
+                    
+                    result_buffer = ""
+                    
+                    # Process streaming response
+                    for event in stream_response['body']:
+                        chunk_data = json.loads(event['chunk']['bytes'])
+                        
+                        # Extract content based on model type
+                        content = ""
+                        if self.model.startswith("anthropic.claude"):
+                            if chunk_data.get('type') == 'content_block_delta':
+                                content = chunk_data.get('delta', {}).get('text', '')
+                        elif self.model.startswith("amazon.titan"):
+                            content = chunk_data.get('outputText', '')
+                        elif self.model.startswith("amazon.nova"):
+                            if chunk_data.get('contentBlockDelta'):
+                                content = chunk_data['contentBlockDelta'].get('text', '')
+                        else:
+                            # Try to extract content from common formats
+                            content = (chunk_data.get('text') or 
+                                     chunk_data.get('completion') or 
+                                     chunk_data.get('output', ''))
+                        
+                        if content:
+                            result_buffer += content
+                            yield {
+                                "type": "chunk",
+                                "content": content,
+                                "partial_result": result_buffer
+                            }
+                    
+                    # Cache the final result
+                    self._set_cache(cache_key, result_buffer)
+                    
+                    yield {
+                        "type": "complete",
+                        "result": result_buffer,
+                        "cached": False,
+                        "duration": time.time() - start_time
+                    }
+                    
+                except Exception as bedrock_error:
+                    logger.warning(f"Bedrock streaming failed, falling back to non-streaming: {bedrock_error}")
+                    # Fallback to non-streaming for Bedrock
+                    result = await asyncio.get_event_loop().run_in_executor(
+                        None,
+                        lambda: self._invoke_bedrock_model(prompt, config, stream=False)
+                    )
+                    result = result.strip() if result else text
+                    self._set_cache(cache_key, result)
+                    
+                    yield {
+                        "type": "complete",
+                        "result": result,
+                        "cached": False,
+                        "duration": time.time() - start_time
+                    }
             
         except Exception as e:
-            logger.error(f"Error in streaming trivial operation '{operation}': {e}")
+            logger.error(f"Error in streaming trivial request '{operation}': {e}")
             yield {
                 "type": "error",
                 "message": str(e),
@@ -380,7 +556,20 @@ class TrivialLLMClient:
     
     def get_supported_operations(self) -> List[str]:
         """Get list of supported trivial operations."""
-        return list(TRIVIAL_OPERATIONS.keys())
+        return [
+            "fix_grammar",
+            "improve_clarity", 
+            "make_concise",
+            "fix_spelling",
+            "improve_tone",
+            "expand_text",
+            "simplify_language",
+            "add_examples",
+            "summarize_content",
+            "generate_title",
+            "create_outline",
+            "general_improvement"
+        ]
     
     def is_enabled(self) -> bool:
         """Check if the trivial client is enabled and ready."""

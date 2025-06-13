@@ -645,70 +645,118 @@ export const BlockEditor = ({
     setIsAILoading(true);
     console.log(`⏳ BlockEditor: AI loading state set to true`);
     
-    // Remove the // command from the content - simplified approach
+    // Enhanced command removal logic
     const content = block.content;
     let newContent = content;
     let newCursorPosition = 0;
     
-    // Find all instances of '//' or '@' followed by the query text
-    let searchPattern = '//' + query;
-    let patternIndex = content.indexOf(searchPattern);
+    console.log(`🧹 BlockEditor: Starting command removal from content: "${content}"`);
     
-    // If not found with //, try with @
-    if (patternIndex < 0) {
-      searchPattern = '@' + query;
-      patternIndex = content.indexOf(searchPattern);
+    // Method 1: Try to find exact pattern match
+    const patterns = [`//${query}`, `@${query}`];
+    let patternFound = false;
+    
+    for (const searchPattern of patterns) {
+      const patternIndex = content.indexOf(searchPattern);
+      if (patternIndex >= 0) {
+        console.log(`🎯 BlockEditor: Found exact pattern '${searchPattern}' at position ${patternIndex}`);
+        
+        const beforePattern = content.substring(0, patternIndex);
+        const afterPattern = content.substring(patternIndex + searchPattern.length);
+        
+        // Remove trailing whitespace or newline after the command
+        let extraCharsToRemove = 0;
+        if (afterPattern.startsWith(' ')) {
+          extraCharsToRemove = 1;
+        } else if (afterPattern.startsWith('\n')) {
+          extraCharsToRemove = 1;
+        }
+        
+        newContent = beforePattern + afterPattern.substring(extraCharsToRemove);
+        newCursorPosition = patternIndex;
+        patternFound = true;
+        
+        console.log(`🔧 BlockEditor: Exact pattern removal:`, {
+          originalLength: content.length,
+          newLength: newContent.length,
+          patternIndex,
+          searchPattern,
+          extraCharsToRemove,
+          newCursorPosition
+        });
+        break;
+      }
     }
     
-    if (patternIndex >= 0) {
-      console.log(`🎯 BlockEditor: Found '${searchPattern}' at position ${patternIndex}`);
+    // Method 2: If exact pattern not found, try regex-based removal
+    if (!patternFound) {
+      console.log(`⚠️ BlockEditor: Exact pattern not found, trying regex-based removal`);
       
-              // Remove the command and query text
-      const beforePattern = content.substring(0, patternIndex);
-      const afterPattern = content.substring(patternIndex + searchPattern.length);
+      // Create regex patterns for more flexible matching
+      const regexPatterns = [
+        new RegExp(`//\\s*${query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*`, 'g'),
+        new RegExp(`@\\s*${query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*`, 'g'),
+        // Also try to match just the command markers if query is empty or whitespace
+        /\/\/\s*$/gm,
+        /@\s*$/gm
+      ];
       
-      // Check if there's a space or newline after the pattern that should also be removed
-      let extraCharsToRemove = 0;
-      if (afterPattern.startsWith(' ')) {
-        extraCharsToRemove = 1;
-      } else if (afterPattern.startsWith('\n')) {
-        extraCharsToRemove = 1;
+      let regexFound = false;
+      for (const regex of regexPatterns) {
+        const match = content.match(regex);
+        if (match && match[0]) {
+          console.log(`🎯 BlockEditor: Found regex match: "${match[0]}"`);
+          newContent = content.replace(regex, '');
+          regexFound = true;
+          break;
+        }
       }
       
-      newContent = beforePattern + afterPattern.substring(extraCharsToRemove);
-      newCursorPosition = patternIndex;
-      
-      console.log(`🔧 BlockEditor: Content reconstruction:`, {
-        originalLength: content.length,
-        newLength: newContent.length,
-        patternIndex,
-        searchPattern,
-        extraCharsToRemove,
-        newCursorPosition
-      });
-    } else {
-      console.log(`⚠️ BlockEditor: Pattern '${searchPattern}' not found in content`);
-      
-      // Fallback: try to remove commands from the beginning of lines
-      const lines = content.split('\n');
-      const newLines = lines.map(line => {
-        if (line.startsWith('//') || line.startsWith('@')) {
-          // Remove the command and any following whitespace on this line
-          return line.replace(/^(\/\/|@)\s*.*$/, '').trim();
-        }
-        return line;
-      });
-      newContent = newLines.join('\n');
-      
-      // Remove any empty lines that resulted from the removal
-      newContent = newContent.replace(/\n\s*\n/g, '\n').trim();
-      
-      console.log(`🔧 BlockEditor: Fallback content cleanup applied`);
+      if (!regexFound) {
+        console.log(`⚠️ BlockEditor: No regex matches, trying line-by-line removal`);
+        
+        // Method 3: Line-by-line removal as final fallback
+        const lines = content.split('\n');
+        const newLines = lines.map(line => {
+          const trimmedLine = line.trim();
+          
+          // Remove lines that are just commands
+          if (trimmedLine === '//' || trimmedLine === '@' || 
+              trimmedLine === `//${query}` || trimmedLine === `@${query}` ||
+              trimmedLine.startsWith('// ') || trimmedLine.startsWith('@ ')) {
+            return '';
+          }
+          
+          // Remove command from within lines
+          return line
+            .replace(new RegExp(`//\\s*${query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*`, 'g'), '')
+            .replace(new RegExp(`@\\s*${query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*`, 'g'), '')
+            .replace(/\/\/\s*$/, '')
+            .replace(/@\s*$/, '');
+        });
+        
+        newContent = newLines.join('\n');
+        
+        // Clean up multiple consecutive newlines and trim
+        newContent = newContent.replace(/\n\s*\n\s*\n/g, '\n\n').trim();
+        
+        console.log(`🔧 BlockEditor: Line-by-line removal applied`);
+      }
     }
+    
+    // Final cleanup: remove any remaining isolated command markers
+    newContent = newContent
+      .replace(/^\s*\/\/\s*$/gm, '')  // Remove lines with just //
+      .replace(/^\s*@\s*$/gm, '')    // Remove lines with just @
+      .replace(/\n\s*\n\s*\n/g, '\n\n') // Clean up multiple newlines
+      .trim();
+    
+    console.log(`🧹 BlockEditor: Final content after cleanup: "${newContent}"`);
+    console.log(`📊 BlockEditor: Content length change: ${content.length} → ${newContent.length}`);
     
     // Update the block content
     onUpdate({ content: newContent });
-    console.log(`✅ BlockEditor: Block content updated after // command removal`);
+    console.log(`✅ BlockEditor: Block content updated after command removal`);
     
     // Close the AI query selector
     setShowAIQuery(false);

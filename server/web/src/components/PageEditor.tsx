@@ -7,6 +7,7 @@ import { BottomStatusBar } from './BottomStatusBar';
 import { Button } from '@/components/ui/button';
 import { useBlockSelection } from '@/hooks/useBlockSelection';
 import { agentClient, AgentQueryResponse, StreamingCallbacks } from '@/lib/agent-client';
+import { orchestrationAgent } from '@/lib/orchestration/agent';
 import { StreamingStatusBlock } from './StreamingStatusBlock';
 import { useStorageManager } from '@/hooks/useStorageManager';
 
@@ -214,10 +215,201 @@ export const PageEditor = ({
     
   }, [deleteSelected, selectedBlocks, page.blocks, loggedOnUpdatePage, onDeleteBlock, clearSelection]);
 
-  // AI Query handler - Updated to use streaming API for real-time progress
+  // AI Query handler - Updated to use orchestration agent for smart routing
   const handleAIQuery = async (query: string, blockId: string) => {
     console.log(`🎯 PageEditor: handleAIQuery called`);
     console.log(`📝 PageEditor: Query='${query}', BlockId='${blockId}'`);
+    
+    // Get the current block for context
+    const currentBlock = page.blocks.find(b => b.id === blockId);
+    if (!currentBlock) {
+      console.error(`❌ PageEditor: Block ${blockId} not found`);
+      return;
+    }
+
+    // Create block context for orchestration agent
+    const blockContext = {
+      blockId: currentBlock.id,
+      content: currentBlock.content || '',
+      type: currentBlock.type || 'text',
+      pageContext: {
+        title: page.title || 'Untitled Page',
+        tags: []
+      }
+    };
+
+    console.log(`🤖 PageEditor: Starting orchestration classification...`);
+    console.log(`🤖 PageEditor: Block context:`, blockContext);
+
+    try {
+      // Use orchestration agent to classify the operation
+      const classification = await orchestrationAgent.classifyOperation(query, blockContext);
+      console.log(`🤖 PageEditor: Classification result:`, classification);
+      console.log(`🎯 PageEditor: Routing to ${classification.tier} tier (${Math.round(classification.confidence * 100)}% confidence)`);
+
+      // Route based on classification
+      if (classification.tier === 'trivial') {
+        console.log(`⚡ PageEditor: Routing to trivial client for fast processing`);
+        await handleTrivialQuery(query, blockId, classification);
+      } else {
+        console.log(`🚀 PageEditor: Routing to overpowered LLM for complex processing`);
+        await handleOverpoweredQuery(query, blockId, classification);
+      }
+
+    } catch (error) {
+      console.error(`❌ PageEditor: Orchestration classification failed:`, error);
+      console.log(`🔄 PageEditor: Falling back to overpowered LLM`);
+      
+      // Fallback to overpowered LLM
+      await handleOverpoweredQuery(query, blockId, {
+        tier: 'overpowered',
+        confidence: 0.5,
+        reasoning: 'Fallback due to classification error',
+        estimatedTime: 3000,
+        operationType: 'fallback_operation'
+      });
+    }
+  };
+
+  // Handle trivial operations using fast Bedrock client
+  const handleTrivialQuery = async (query: string, blockId: string, classification: any) => {
+    console.log(`⚡ PageEditor: Processing trivial query with fast client`);
+    
+    // Initialize streaming state for trivial operation
+    setStreamingState({
+      isStreaming: true,
+      status: 'Processing with fast AI...',
+      progress: 0,
+      blockId: blockId,
+      query: query
+    });
+
+    // Create new block immediately
+    const newBlockId = onAddBlock(blockId);
+    console.log(`➕ PageEditor: New block created for trivial operation: ${newBlockId}`);
+
+    // Set temporary status
+    setPendingAIUpdate({ 
+      blockId: newBlockId, 
+      content: `⚡ Processing: ${query}`, 
+    });
+
+    try {
+      console.log(`🌊 PageEditor: Starting real trivial client streaming...`);
+      
+      // Map classification operation to trivial operation
+      const operationMap = {
+        'text_editing': 'improve_clarity',
+        'grammar_fix': 'fix_grammar', 
+        'tone_adjustment': 'improve_tone',
+        'content_generation': 'expand_text',
+        'content_transformation': 'improve_clarity',
+        'formatting': 'improve_clarity'
+      };
+      
+      const trivialOperation = operationMap[classification.operationType] || 'improve_clarity';
+      console.log(`⚡ PageEditor: Mapped ${classification.operationType} -> ${trivialOperation}`);
+      
+      // Prepare request for trivial client
+      const trivialRequest = {
+        operation: trivialOperation,
+        text: query,
+        context: {
+          block_type: 'text',
+          classification: classification,
+          original_query: query
+        }
+      };
+      
+      console.log(`⚡ PageEditor: Trivial request:`, trivialRequest);
+      
+      // Call real trivial client streaming
+      await agentClient.streamTrivialOperation(
+        trivialRequest,
+        (chunk) => {
+          console.log(`⚡ PageEditor: Received trivial chunk:`, chunk);
+          
+          if (chunk.type === 'start') {
+            setStreamingState(prev => ({
+              ...prev,
+              status: `⚡ ${chunk.provider} (${chunk.model}) processing...`,
+              progress: 0.1
+            }));
+          } else if (chunk.type === 'chunk') {
+            // Update progress
+            setStreamingState(prev => ({
+              ...prev,
+              status: `⚡ Generating response...`,
+              progress: Math.min(prev.progress + 0.1, 0.9)
+            }));
+            
+            // Show streaming text in real-time using partial_result
+            if (chunk.partial_result) {
+              setPendingAIUpdate({ 
+                blockId: newBlockId, 
+                content: `⚡ **Fast AI Streaming...**\n\n${chunk.partial_result}\n\n`
+              });
+            }
+          } else if (chunk.type === 'complete') {
+            const result = chunk.result || query;
+            const duration = chunk.duration || 0;
+            const cached = chunk.cached || false;
+            
+            console.log(`✅ PageEditor: Trivial operation complete in ${duration.toFixed(2)}s ${cached ? '(cached)' : ''}`);
+            
+            // Update block with clean final result (no extra formatting)
+            // The trivial client now returns markdown-formatted text, so we keep it as regular text
+            // Check if the result contains markdown patterns that should be parsed into multiple blocks
+            const hasMultilineMarkdown = result.includes('\n') && 
+              (result.includes('## ') || result.includes('### ') || result.includes('- ') || result.includes('> '));
+            
+            if (hasMultilineMarkdown) {
+              console.log(`📝 PageEditor: Trivial result contains multiline markdown, triggering markdown parsing`);
+              // Use the markdown parsing system to handle complex markdown
+              handleMarkdownPaste(result, newBlockId);
+            } else {
+              console.log(`📝 PageEditor: Trivial result is simple text, updating block directly`);
+              setPendingAIUpdate({ 
+                blockId: newBlockId, 
+                content: result
+              });
+            }
+
+            setStreamingState({
+              isStreaming: false,
+              status: '',
+              progress: 0
+            });
+          } else if (chunk.type === 'error') {
+            console.error(`❌ PageEditor: Trivial streaming error:`, chunk.message);
+            throw new Error(chunk.message || 'Trivial operation failed');
+          }
+        },
+        (error) => {
+          console.error(`❌ PageEditor: Trivial streaming failed:`, error);
+          throw new Error(error);
+        }
+      );
+
+    } catch (error) {
+      console.error(`❌ PageEditor: Trivial query failed:`, error);
+      
+      // Show error and fallback to overpowered
+      setPendingAIUpdate({ 
+        blockId: newBlockId, 
+        content: `❌ **Trivial Client Error**\n\n${error.message}\n\n🔄 Falling back to main LLM...`
+      });
+      
+      // Wait a moment then fallback
+      setTimeout(async () => {
+        await handleOverpoweredQuery(query, blockId, classification);
+      }, 2000);
+    }
+  };
+
+  // Handle overpowered operations using main LLM
+  const handleOverpoweredQuery = async (query: string, blockId: string, classification: any) => {
+    console.log(`🚀 PageEditor: Processing overpowered query with main LLM`);
     
     // Initialize streaming state
     setStreamingState({
@@ -1055,13 +1247,13 @@ export const PageEditor = ({
           
           console.log(`✅ PageEditor: Pending Canvas update completed for blockId='${blockId}'`);
         } else if (content) {
-          // Create regular content block (for errors)
+          // Create regular content block (for errors and trivial results)
           console.log(`🎯 PageEditor: Executing pending content update for blockId='${blockId}'`);
         console.log(`🎯 PageEditor: Content preview:`, content.substring(0, 100) + '...');
         
         onUpdateBlock(blockId, {
           content: content,
-            type: 'quote' // Style error messages as quotes
+            type: 'text' // Use regular text blocks to allow markdown parsing
         });
         
           console.log(`✅ PageEditor: Pending content update completed for blockId='${blockId}'`);
