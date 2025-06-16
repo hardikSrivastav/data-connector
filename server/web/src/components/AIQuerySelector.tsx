@@ -9,6 +9,21 @@ import { type TrivialQueryRequest } from '@/lib/AgentClient';
 import { computeTextDiff, type DiffChange } from '@/lib/diff/textDiff';
 import { useAuth } from '@/contexts/AuthContext';
 
+interface StreamingStatusEntry {
+  type: 'status' | 'progress' | 'error' | 'complete' | 'partial_sql' | 'analysis_chunk';
+  message: string;
+  timestamp: string;
+  metadata?: any;
+}
+
+interface StreamingStep {
+  id: string;
+  label: string;
+  status: 'pending' | 'active' | 'complete' | 'error';
+  message?: string;
+  timestamp?: number;
+}
+
 interface AIQuerySelectorProps {
   query: string;
   onQuerySubmit: (query: string) => void;
@@ -16,6 +31,8 @@ interface AIQuerySelectorProps {
   isLoading?: boolean;
   streamingStatus?: string;
   streamingProgress?: number;
+  // Enhanced streaming props for real-time updates
+  streamingHistory?: StreamingStatusEntry[];
   // New diff mode props
   diffMode?: boolean;
   originalText?: string;
@@ -78,16 +95,16 @@ const AI_OPTIONS = [
   }
 ];
 
-export const AIQuerySelector = ({ 
-  query, 
-  onQuerySubmit, 
-  onClose, 
-  isLoading = false, 
+export default function AIQuerySelector({
+  query,
+  onQuerySubmit,
+  onClose,
+  isLoading = false,
   streamingStatus,
   streamingProgress,
-  // Diff mode props
+  streamingHistory,
   diffMode = false,
-  originalText = '',
+  originalText,
   onDiffAccept,
   onDiffDiscard,
   onDiffInsertBelow,
@@ -95,7 +112,7 @@ export const AIQuerySelector = ({
   blockContext,
   enableSmartRouting = true,
   editingText
-}: AIQuerySelectorProps) => {
+}: AIQuerySelectorProps) {
   const [inputValue, setInputValue] = useState(query);
   const [showDropdown, setShowDropdown] = useState(true);
   const [classification, setClassification] = useState<OperationClassification | null>(null);
@@ -818,29 +835,21 @@ export const AIQuerySelector = ({
 
       {/* Streaming Progress State - Only for main LLM operations */}
       {isLoading && !trivialStreamingState.isStreaming && (
-        <div className="absolute top-full left-0 mt-1 bg-card border border-border rounded-lg shadow-lg z-50 py-4 w-full">
+        <div className="absolute top-full left-0 mt-1 bg-card dark:bg-gray-800 border border-border dark:border-gray-700 rounded-lg shadow-lg z-50 py-4 w-full">
           <div className="px-4">
-            <div className="flex items-center justify-center gap-3 text-sm text-gray-600 mb-3">
+            <div className="flex items-center justify-center gap-3 text-sm text-gray-600 dark:text-gray-300 mb-3">
               <Loader2 className="h-4 w-4 animate-spin text-blue-500" />
-              <span className="font-medium">Generating...</span>
+              <span className="font-medium">AI Processing...</span>
             </div>
-            
-            {/* Streaming Status */}
-            {streamingStatus && (
-              <div className="text-center mb-3">
-                <div className="text-xs text-gray-500 mb-1">Current step:</div>
-                <div className="text-sm text-gray-700 font-medium">{streamingStatus}</div>
-              </div>
-            )}
             
             {/* Progress Bar */}
             {streamingProgress !== undefined && (
-              <div className="mb-3">
-                <div className="flex justify-between text-xs text-gray-500 mb-1">
+              <div className="mb-4">
+                <div className="flex justify-between text-xs text-gray-500 dark:text-gray-400 mb-1">
                   <span>Progress</span>
                   <span>{Math.round(streamingProgress * 100)}%</span>
                 </div>
-                <div className="w-full bg-gray-200 rounded-full h-1.5">
+                <div className="w-full bg-gray-200 dark:bg-gray-700 rounded-full h-1.5">
                   <div 
                     className="bg-blue-500 h-1.5 rounded-full transition-all duration-300 ease-out"
                     style={{ width: `${Math.round(streamingProgress * 100)}%` }}
@@ -849,56 +858,61 @@ export const AIQuerySelector = ({
               </div>
             )}
             
-            {/* Streaming Steps Indicator */}
-            <div className="space-y-1">
-              <div className="flex items-center gap-2 text-xs">
-                <div className={`w-2 h-2 rounded-full ${
-                  streamingStatus?.includes('classif') ? 'bg-blue-500' : 
-                  streamingStatus?.includes('databas') ? 'bg-green-500' : 'bg-gray-300'
-                }`} />
-                <span className={streamingStatus?.includes('classif') ? 'text-blue-600 font-medium' : 'text-gray-500'}>
-                  Analyzing query
-                </span>
-              </div>
+            {/* Live Status Feed - Show exactly what backend sends */}
+            <div className="space-y-2">
+              <div className="text-xs text-gray-500 dark:text-gray-400 font-medium mb-2">Live Updates:</div>
               
-              <div className="flex items-center gap-2 text-xs">
-                <div className={`w-2 h-2 rounded-full ${
-                  streamingStatus?.includes('schema') || streamingStatus?.includes('loading') ? 'bg-blue-500' : 
-                  streamingStatus?.includes('generat') ? 'bg-green-500' : 'bg-gray-300'
-                }`} />
-                <span className={streamingStatus?.includes('schema') || streamingStatus?.includes('loading') ? 'text-blue-600 font-medium' : 'text-gray-500'}>
-                  Loading schemas
-                </span>
-              </div>
+              {/* Current Status - Direct from backend */}
+              {streamingStatus && (
+                <div className="flex items-start gap-2 text-xs">
+                  <div className="w-2 h-2 rounded-full bg-blue-500 animate-pulse mt-1 flex-shrink-0" />
+                  <div className="flex-1">
+                    <div className="text-blue-600 dark:text-blue-400 font-medium">
+                      {streamingStatus}
+                    </div>
+                    <div className="text-gray-400 dark:text-gray-500 text-xs">
+                      {new Date().toLocaleTimeString()}
+                    </div>
+                  </div>
+                </div>
+              )}
               
-              <div className="flex items-center gap-2 text-xs">
-                <div className={`w-2 h-2 rounded-full ${
-                  streamingStatus?.includes('generat') ? 'bg-blue-500' : 
-                  streamingStatus?.includes('execut') ? 'bg-green-500' : 'bg-gray-300'
-                }`} />
-                <span className={streamingStatus?.includes('generat') ? 'text-blue-600 font-medium' : 'text-gray-500'}>
-                  Generating query
-                </span>
-              </div>
+              {/* Show streaming history if available */}
+              {streamingHistory && streamingHistory.length > 0 && (
+                <div className="max-h-32 overflow-y-auto space-y-1">
+                  {streamingHistory.slice(-5).map((entry, index) => (
+                    <div key={index} className="flex items-start gap-2 text-xs opacity-70">
+                      <div className={`w-1.5 h-1.5 rounded-full mt-1.5 flex-shrink-0 ${
+                        entry.type === 'error' ? 'bg-red-400' :
+                        entry.type === 'complete' ? 'bg-green-400' :
+                        'bg-gray-400'
+                      }`} />
+                      <div className="flex-1">
+                        <div className="text-gray-600 dark:text-gray-300">
+                          {entry.message}
+                        </div>
+                        <div className="text-gray-400 dark:text-gray-500 text-xs">
+                          {new Date(entry.timestamp).toLocaleTimeString()}
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
               
-              <div className="flex items-center gap-2 text-xs">
-                <div className={`w-2 h-2 rounded-full ${
-                  streamingStatus?.includes('execut') ? 'bg-blue-500' : 
-                  streamingStatus?.includes('analyz') || streamingStatus?.includes('insight') ? 'bg-green-500' : 'bg-gray-300'
-                }`} />
-                <span className={streamingStatus?.includes('execut') ? 'text-blue-600 font-medium' : 'text-gray-500'}>
-                  Executing query
-                </span>
-              </div>
-              
-              <div className="flex items-center gap-2 text-xs">
-                <div className={`w-2 h-2 rounded-full ${
-                  streamingStatus?.includes('analyz') || streamingStatus?.includes('insight') ? 'bg-blue-500' : 'bg-gray-300'
-                }`} />
-                <span className={streamingStatus?.includes('analyz') || streamingStatus?.includes('insight') ? 'text-blue-600 font-medium' : 'text-gray-500'}>
-                  Generating insights
-                </span>
-              </div>
+              {/* Fallback: If no history, just show current status prominently */}
+              {(!streamingHistory || streamingHistory.length === 0) && streamingStatus && (
+                <div className="bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg p-3">
+                  <div className="text-sm text-blue-800 dark:text-blue-200 font-medium">
+                    {streamingStatus}
+                  </div>
+                  {streamingProgress !== undefined && (
+                    <div className="text-xs text-blue-600 dark:text-blue-400 mt-1">
+                      {Math.round(streamingProgress * 100)}% complete
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
           </div>
         </div>

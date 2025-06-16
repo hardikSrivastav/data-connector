@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect, KeyboardEvent } from 'react';
 import { Block, Workspace, Page } from '@/types';
 import { BlockTypeSelector } from './BlockTypeSelector';
-import { AIQuerySelector } from './AIQuerySelector';
+import AIQuerySelector from './AIQuerySelector';
 import { InlineDiffEditor } from './InlineDiffEditor';
 import { TrivialLLMEditor } from './TrivialLLMEditor';
 import { TableBlock } from './TableBlock';
@@ -56,6 +56,12 @@ interface BlockEditorProps {
     progress: number;
     blockId?: string;
     query?: string;
+    history: Array<{
+      type: 'status' | 'progress' | 'error' | 'complete' | 'partial_sql' | 'analysis_chunk';
+      message: string;
+      timestamp: string;
+      metadata?: any;
+    }>;
   };
   // Markdown paste handler
   onMarkdownPaste?: (markdownText: string, blockId: string) => void;
@@ -1214,6 +1220,7 @@ export const BlockEditor = ({
             status={streamingState.status}
             progress={streamingState.progress}
             query={streamingState.query || block.content || ''}
+            streamingHistory={streamingState.history}
             onCancel={() => {
               // TODO: Implement streaming cancellation
               console.log('Cancel streaming requested');

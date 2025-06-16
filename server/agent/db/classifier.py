@@ -115,11 +115,27 @@ class DatabaseClassifier:
                 if "type" in source:
                     all_db_types.add(source["type"])
             
+            # Check if the question explicitly mentions a specific database type
+            question_lower = question.lower()
+            explicit_db_types = set()
+            for db_type in all_db_types:
+                if db_type.lower() in question_lower:
+                    explicit_db_types.add(db_type)
+                    logger.info(f"🎯 EXPLICIT DB MENTION: Found '{db_type}' mentioned in question")
+            
+            # If explicit database types are mentioned, only search those
+            if explicit_db_types:
+                search_db_types = explicit_db_types
+                logger.info(f"🎯 EXPLICIT DB SEARCH: Only searching explicitly mentioned databases: {search_db_types}")
+            else:
+                search_db_types = all_db_types
+                logger.info(f"🌐 FULL DB SEARCH: No explicit database mentions, searching all: {search_db_types}")
+            
             # Search for relevant schema in FAISS for each db type
             schema_info = {}
             relevance_scores = {}
             
-            for db_type in all_db_types:
+            for db_type in search_db_types:
                 # Search FAISS index for this db_type
                 try:
                     schema_results = await self.schema_searcher.search(
@@ -178,6 +194,8 @@ class DatabaseClassifier:
                     logger.warning(f"Error searching FAISS for {db_type}: {e}")
                     # Skip this db_type on error
                     continue
+            
+            logger.info(f"📊 SCHEMA SEARCH COMPLETE: Searched {len(search_db_types)} database types, found results for {len(schema_info)} types")
             
             return {
                 "schema_info": schema_info,

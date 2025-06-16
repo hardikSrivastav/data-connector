@@ -244,11 +244,22 @@ class SchemaSearcher:
         # Determine which database type(s) to search
         search_db_type = db_type or self.db_type
         
+        logger.info(f"🔍 SchemaSearcher.search called:")
+        logger.info(f"  - query: '{query}'")
+        logger.info(f"  - top_k: {top_k}")
+        logger.info(f"  - requested db_type: {db_type}")
+        logger.info(f"  - instance db_type: {self.db_type}")
+        logger.info(f"  - final search_db_type: {search_db_type}")
+        logger.info(f"  - loaded_types: {self.loaded_types}")
+        logger.info(f"  - available indexes: {list(self.indexes.keys())}")
+        
         # Load indexes if they haven't been loaded yet
         if not self.loaded_types:
+            logger.info("🔄 Loading indexes...")
             if not self.load_indexes():
-                logger.error("Failed to load indexes for search")
+                logger.error("❌ Failed to load indexes for search")
                 return []
+            logger.info(f"✅ Loaded indexes for types: {self.loaded_types}")
         
         # Get embedding for query
         embedder = SchemaEmbedder()
@@ -259,26 +270,43 @@ class SchemaSearcher:
         
         # Search in the specified database type(s)
         if search_db_type:
+            logger.info(f"🎯 Searching in specific db_type: {search_db_type}")
             if search_db_type in self.indexes:
+                logger.info(f"✅ Index found for {search_db_type}, searching...")
                 # Search in the specific database type
                 results = self._search_in_db_type(search_db_type, query_embedding_np, top_k)
+                logger.info(f"📊 Found {len(results)} results in {search_db_type}")
                 all_results.extend(results)
             else:
-                logger.warning(f"No index loaded for database type: {search_db_type}")
+                logger.warning(f"⚠️ No index loaded for database type: {search_db_type}")
+                logger.info(f"Available indexes: {list(self.indexes.keys())}")
         else:
+            logger.info(f"🌐 Searching in all loaded database types: {self.loaded_types}")
             # Search in all loaded database types
-            for db_type in self.loaded_types:
+            for db_type_iter in self.loaded_types:
                 # Get top_k/2 results from each database to ensure diversity
                 # But ensure at least 1 result per database
                 per_db_top_k = max(1, top_k // len(self.loaded_types))
-                results = self._search_in_db_type(db_type, query_embedding_np, per_db_top_k)
+                logger.info(f"🔍 Searching in {db_type_iter} with top_k={per_db_top_k}")
+                results = self._search_in_db_type(db_type_iter, query_embedding_np, per_db_top_k)
+                logger.info(f"📊 Found {len(results)} results in {db_type_iter}")
                 all_results.extend(results)
         
         # Sort all results by distance
         all_results.sort(key=lambda x: x["distance"])
         
+        # Log final results
+        logger.info(f"📊 Total results before filtering: {len(all_results)}")
+        final_results = all_results[:top_k]
+        logger.info(f"📊 Final results returned: {len(final_results)}")
+        
+        for i, result in enumerate(final_results):
+            result_db_type = result.get('db_type', 'unknown')
+            distance = result.get('distance', 0)
+            logger.info(f"  Result {i+1}: db_type={result_db_type}, distance={distance:.4f}")
+        
         # Return the top k results
-        return all_results[:top_k]
+        return final_results
     
     def _search_in_db_type(self, db_type: str, query_embedding_np: np.ndarray, top_k: int) -> List[Dict[str, Any]]:
         """

@@ -5,6 +5,7 @@ import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 import ReactMarkdown from 'react-markdown';
 import { TableDisplay } from './TableDisplay';
+import { ReasoningChain } from './ReasoningChain';
 
 interface CanvasBlockProps {
   block: Block;
@@ -47,9 +48,20 @@ export const CanvasBlock = ({
     const canvasData = block.properties?.canvasData;
     if (canvasData && (canvasData.fullAnalysis || canvasData.fullData || canvasData.sqlQuery)) {
       console.log('🎯 CanvasBlock: Generating preview from canvasData properties');
+      console.log('🎯 CanvasBlock: canvasData structure:', {
+        hasFullAnalysis: !!canvasData.fullAnalysis,
+        hasFullData: !!canvasData.fullData,
+        fullDataStructure: canvasData.fullData ? {
+          headers: canvasData.fullData.headers?.length,
+          rows: canvasData.fullData.rows?.length
+        } : null,
+        hasSqlQuery: !!canvasData.sqlQuery,
+        hasPreview: !!canvasData.preview
+      });
       
       // Use the existing preview data if available
       if (canvasData.preview) {
+        console.log('🎯 CanvasBlock: Using existing preview data');
         return {
           summary: canvasData.preview.summary,
           stats: canvasData.preview.stats || [],
@@ -72,11 +84,34 @@ export const CanvasBlock = ({
 
       let tablePreview = null;
       if (canvasData.fullData && canvasData.fullData.headers && canvasData.fullData.rows) {
+        console.log('🎯 CanvasBlock: Creating table preview from fullData:', {
+          headers: canvasData.fullData.headers,
+          rowCount: canvasData.fullData.rows.length,
+          firstRowSample: canvasData.fullData.rows[0]
+        });
+        
         tablePreview = {
           headers: canvasData.fullData.headers,
-          rows: canvasData.fullData.rows.slice(0, 3),
+          rows: canvasData.fullData.rows.slice(0, 3).map(row => 
+            canvasData.fullData.headers.map(header => {
+              const value = row[header];
+              // Handle Decimal and other special types
+              if (value === null || value === undefined) return '';
+              if (typeof value === 'object' && value.constructor && value.constructor.name === 'Decimal') {
+                return value.toString();
+              }
+              if (value instanceof Date) return value.toISOString();
+              return String(value);
+            })
+          ),
           totalRows: canvasData.fullData.rows.length
         };
+        
+        console.log('🎯 CanvasBlock: Table preview created:', {
+          headers: tablePreview.headers,
+          rowCount: tablePreview.rows.length,
+          totalRows: tablePreview.totalRows
+        });
       }
 
       return {
@@ -351,6 +386,10 @@ export const CanvasBlock = ({
 
               {/* Table Preview */}
             {preview.tablePreview && (
+                <div>
+                  <div className="text-xs text-gray-500 dark:text-gray-400 mb-2">
+                    Table Preview: {preview.tablePreview.headers?.length || 0} columns, {preview.tablePreview.rows?.length || 0} rows
+                  </div>
                 <TableDisplay
                   headers={preview.tablePreview.headers}
                   rows={preview.tablePreview.rows}
@@ -358,6 +397,28 @@ export const CanvasBlock = ({
                   title="Data Preview"
                   isPreview={true}
                   maxRows={3}
+                />
+                </div>
+              )}
+
+              {/* AI Reasoning Chain - Show if available */}
+              {block.properties?.canvasData?.reasoningChain && (
+                <ReasoningChain
+                  reasoningData={{
+                    events: block.properties.canvasData.reasoningChain.map(event => ({
+                      type: event.type as any,
+                      message: event.message,
+                      timestamp: event.timestamp,
+                      metadata: event.metadata
+                    })),
+                    originalQuery: block.properties.canvasData.originalQuery || 'Analysis Query',
+                    isComplete: true,
+                    lastUpdated: new Date().toISOString(),
+                    status: 'completed' as const,
+                    progress: 1.0
+                  }}
+                  title="How AI Solved This"
+                  collapsed={true}
                 />
               )}
                       </div>

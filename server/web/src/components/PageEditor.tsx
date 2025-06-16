@@ -27,6 +27,25 @@ interface PageEditorProps {
   onToggleSidebar?: () => void;
 }
 
+// Enhanced reasoning chain interface for better typing
+interface ReasoningChainEvent {
+  type: 'status' | 'progress' | 'error' | 'complete' | 'partial_sql' | 'analysis_chunk' | 'classifying' | 'database_selected' | 'schema_loading' | 'query_generating' | 'query_executing' | 'partial_results' | 'planning' | 'aggregating';
+  message: string;
+  timestamp: string;
+  metadata?: any;
+}
+
+interface ReasoningChainData {
+  events: ReasoningChainEvent[];
+  originalQuery: string;
+  sessionId?: string;
+  isComplete: boolean;
+  lastUpdated: string;
+  status: 'streaming' | 'completed' | 'failed' | 'cancelled';
+  progress: number;
+  currentStep?: string;
+}
+
 export const PageEditor = ({
   page,
   onUpdateBlock,
@@ -73,14 +92,25 @@ export const PageEditor = ({
     progress: number;
     blockId?: string;
     query?: string;
+    history: Array<{
+      type: 'status' | 'progress' | 'error' | 'complete' | 'partial_sql' | 'analysis_chunk';
+      message: string;
+      timestamp: string;
+      metadata?: any;
+    }>;
   }>({
     isStreaming: false,
     status: '',
-    progress: 0
+    progress: 0,
+    history: []
   });
-  const [diffModeBlockId, setDiffModeBlockId] = useState<string | null>(null); // Track which block is in diff mode
-  const addingBlockRef = useRef(false); // Track if we're currently adding a block to prevent loops
+  const [diffModeBlockId, setDiffModeBlockId] = useState<string | null>(null);
+  const addingBlockRef = useRef(false);
   
+  // New state for reasoning chain persistence
+  const [activeReasoningChains, setActiveReasoningChains] = useState<Map<string, ReasoningChainData>>(new Map());
+  const saveReasoningChainTimeoutRef = useRef<Map<string, NodeJS.Timeout>>(new Map());
+
   const {
     selectedBlocks,
     isDragging,
@@ -97,6 +127,187 @@ export const PageEditor = ({
     handleDrop,
     getSelectionInfo,
   } = useBlockSelection(page.blocks);
+
+  // Enhanced reasoning chain persistence functions
+  const saveReasoningChainDebounced = useCallback((blockId: string, reasoningData: ReasoningChainData) => {
+    console.log(`🧠 Debounced save reasoning chain for block ${blockId}`);
+    
+    // Clear existing timeout for this block
+    const existingTimeout = saveReasoningChainTimeoutRef.current.get(blockId);
+    if (existingTimeout) {
+      clearTimeout(existingTimeout);
+    }
+    
+    // Set new timeout
+    const timeout = setTimeout(async () => {
+      console.log(`💾 Executing save reasoning chain for block ${blockId}`);
+      try {
+        // Get current block - check both current page state and freshly fetch
+        const currentBlock = page.blocks.find(b => b.id === blockId);
+        if (!currentBlock) {
+          console.warn(`❌ Block ${blockId} not found in current page blocks, skipping reasoning chain save`);
+          console.log(`📋 Available blocks:`, page.blocks.map(b => ({ id: b.id, type: b.type })));
+          
+          // Don't throw error, just skip save - block might not be created yet
+          return;
+        }
+        
+        // Update block properties with reasoning chain
+        const updatedProperties = {
+          ...currentBlock.properties,
+          reasoningChain: reasoningData
+        };
+        
+        // Save to local storage via storage manager
+        const updatedBlock = {
+          ...currentBlock,
+          properties: updatedProperties,
+          updatedAt: new Date()
+        };
+        
+        await storageManager.saveBlock(updatedBlock, page.id);
+        console.log(`✅ Reasoning chain saved for block ${blockId}`);
+        
+        // Also update the block in the UI
+        onUpdateBlock(blockId, { properties: updatedProperties });
+        
+      } catch (error) {
+        console.error(`❌ Failed to save reasoning chain for block ${blockId}:`, error);
+      }
+      
+      // Remove timeout reference
+      saveReasoningChainTimeoutRef.current.delete(blockId);
+    }, 2000); // 2 second debounce
+    
+    saveReasoningChainTimeoutRef.current.set(blockId, timeout);
+  }, [page.blocks, page.id, storageManager, onUpdateBlock]);
+
+  const addReasoningChainEvent = useCallback((blockId: string, event: ReasoningChainEvent) => {
+    console.log(`🧠 Adding reasoning chain event for block ${blockId}:`, event.type, event.message);
+    
+    // Check if block exists before adding event
+    const blockExists = page.blocks.some(b => b.id === blockId);
+    if (!blockExists) {
+      console.warn(`🧠 Block ${blockId} not found when adding reasoning event, event will be cached`);
+      console.log(`📋 Available blocks:`, page.blocks.map(b => ({ id: b.id, type: b.type })));
+    }
+    
+    setActiveReasoningChains(prev => {
+      const current = prev.get(blockId) || {
+        events: [],
+        originalQuery: '',
+        isComplete: false,
+        lastUpdated: new Date().toISOString(),
+        status: 'streaming',
+        progress: 0
+      };
+      
+      const updated: ReasoningChainData = {
+        ...current,
+        events: [...current.events, event],
+        lastUpdated: new Date().toISOString(),
+        progress: event.type === 'complete' ? 1.0 : Math.min(current.progress + 0.1, 0.9),
+        currentStep: event.message
+      };
+      
+      const newMap = new Map(prev);
+      newMap.set(blockId, updated);
+      
+      // Only trigger save if block exists
+      if (blockExists) {
+        saveReasoningChainDebounced(blockId, updated);
+      } else {
+        console.log(`🧠 Deferring reasoning chain save for block ${blockId} until block is created`);
+      }
+      
+      return newMap;
+    });
+  }, [saveReasoningChainDebounced, page.blocks]);
+
+  const initializeReasoningChain = useCallback((blockId: string, query: string, sessionId?: string) => {
+    console.log(`🧠 Initializing reasoning chain for block ${blockId} with query: ${query}`);
+    
+    const initialData: ReasoningChainData = {
+      events: [{
+        type: 'status',
+        message: 'Starting AI query processing...',
+        timestamp: new Date().toISOString(),
+        metadata: { sessionId }
+      }],
+      originalQuery: query,
+      sessionId,
+      isComplete: false,
+      lastUpdated: new Date().toISOString(),
+      status: 'streaming',
+      progress: 0,
+      currentStep: 'Starting AI query processing...'
+    };
+    
+    setActiveReasoningChains(prev => {
+      const newMap = new Map(prev);
+      newMap.set(blockId, initialData);
+      return newMap;
+    });
+    
+    // Immediate save for initialization
+    saveReasoningChainDebounced(blockId, initialData);
+  }, [saveReasoningChainDebounced]);
+
+  const completeReasoningChain = useCallback((blockId: string, success: boolean = true, finalMessage?: string) => {
+    console.log(`🧠 Completing reasoning chain for block ${blockId}, success: ${success}`);
+    
+    setActiveReasoningChains(prev => {
+      const current = prev.get(blockId);
+      if (!current) return prev;
+      
+      const finalEvent: ReasoningChainEvent = {
+        type: success ? 'complete' : 'error',
+        message: finalMessage || (success ? 'Processing completed successfully' : 'Processing failed'),
+        timestamp: new Date().toISOString(),
+        metadata: { success, completedAt: new Date().toISOString() }
+      };
+      
+      const completed: ReasoningChainData = {
+        ...current,
+        events: [...current.events, finalEvent],
+        isComplete: true,
+        lastUpdated: new Date().toISOString(),
+        status: success ? 'completed' : 'failed',
+        progress: 1.0,
+        currentStep: finalEvent.message
+      };
+      
+      const newMap = new Map(prev);
+      newMap.set(blockId, completed);
+      
+      // Force immediate save for completion
+      setTimeout(() => saveReasoningChainDebounced(blockId, completed), 100);
+      
+      return newMap;
+    });
+  }, [saveReasoningChainDebounced]);
+
+  // Load existing reasoning chains on page load
+  useEffect(() => {
+    const loadExistingReasoningChains = () => {
+      console.log(`🧠 Loading existing reasoning chains for page ${page.id}`);
+      
+      page.blocks.forEach(block => {
+        if (block.properties?.reasoningChain) {
+          const reasoningData = block.properties.reasoningChain as ReasoningChainData;
+          console.log(`🧠 Found existing reasoning chain for block ${block.id}, events: ${reasoningData.events?.length || 0}, complete: ${reasoningData.isComplete}`);
+          
+          setActiveReasoningChains(prev => {
+            const newMap = new Map(prev);
+            newMap.set(block.id, reasoningData);
+            return newMap;
+          });
+        }
+      });
+    };
+    
+    loadExistingReasoningChains();
+  }, [page.id, page.blocks]);
 
   // Add logging wrapper for onUpdatePage
   const loggedOnUpdatePage = useCallback((updates: Partial<Page>) => {
@@ -215,7 +426,7 @@ export const PageEditor = ({
     
   }, [deleteSelected, selectedBlocks, page.blocks, loggedOnUpdatePage, onDeleteBlock, clearSelection]);
 
-  // AI Query handler - Updated to use orchestration agent for smart routing
+  // AI Query handler - Updated to use reasoning chain persistence
   const handleAIQuery = async (query: string, blockId: string) => {
     console.log(`🎯 PageEditor: handleAIQuery called`);
     console.log(`📝 PageEditor: Query='${query}', BlockId='${blockId}'`);
@@ -281,12 +492,22 @@ export const PageEditor = ({
       status: 'Processing with fast AI...',
       progress: 0,
       blockId: blockId,
-      query: query
+      query: query,
+      history: []
     });
 
     // Create new block immediately
     const newBlockId = onAddBlock(blockId);
     console.log(`➕ PageEditor: New block created for trivial operation: ${newBlockId}`);
+
+    // Initialize reasoning chain for trivial operations too
+    initializeReasoningChain(newBlockId, query);
+    addReasoningChainEvent(newBlockId, {
+      type: 'status',
+      message: `Fast AI processing (${classification.tier}): ${classification.operationType}`,
+      timestamp: new Date().toISOString(),
+      metadata: { classification, provider: 'trivial' }
+    });
 
     // Set temporary status
     setPendingAIUpdate({ 
@@ -309,6 +530,13 @@ export const PageEditor = ({
       
       const trivialOperation = operationMap[classification.operationType] || 'improve_clarity';
       console.log(`⚡ PageEditor: Mapped ${classification.operationType} -> ${trivialOperation}`);
+      
+      addReasoningChainEvent(newBlockId, {
+        type: 'status',
+        message: `Mapped operation: ${classification.operationType} → ${trivialOperation}`,
+        timestamp: new Date().toISOString(),
+        metadata: { mapping: operationMap, selectedOperation: trivialOperation }
+      });
       
       // Prepare request for trivial client
       const trivialRequest = {
@@ -335,6 +563,13 @@ export const PageEditor = ({
               status: `⚡ ${chunk.provider} (${chunk.model}) processing...`,
               progress: 0.1
             }));
+            
+            addReasoningChainEvent(newBlockId, {
+              type: 'status',
+              message: `Connected to ${chunk.provider} (${chunk.model})`,
+              timestamp: new Date().toISOString(),
+              metadata: { provider: chunk.provider, model: chunk.model }
+            });
           } else if (chunk.type === 'chunk') {
             // Update progress
             setStreamingState(prev => ({
@@ -342,6 +577,13 @@ export const PageEditor = ({
               status: `⚡ Generating response...`,
               progress: Math.min(prev.progress + 0.1, 0.9)
             }));
+            
+            addReasoningChainEvent(newBlockId, {
+              type: 'progress',
+              message: `Generating content chunk (${chunk.partial_result?.length || 0} chars)`,
+              timestamp: new Date().toISOString(),
+              metadata: { chunkSize: chunk.partial_result?.length }
+            });
             
             // Show streaming text in real-time using partial_result
             if (chunk.partial_result) {
@@ -357,15 +599,25 @@ export const PageEditor = ({
             
             console.log(`✅ PageEditor: Trivial operation complete in ${duration.toFixed(2)}s ${cached ? '(cached)' : ''}`);
             
-            // Update block with clean final result (no extra formatting)
-            // The trivial client now returns markdown-formatted text, so we keep it as regular text
-            // Check if the result contains markdown patterns that should be parsed into multiple blocks
+            addReasoningChainEvent(newBlockId, {
+              type: 'complete',
+              message: `Completed in ${duration.toFixed(2)}s ${cached ? '(cached)' : ''}`,
+              timestamp: new Date().toISOString(),
+              metadata: { duration, cached, resultLength: result.length }
+            });
+            
+            // Update block with clean final result
             const hasMultilineMarkdown = result.includes('\n') && 
               (result.includes('## ') || result.includes('### ') || result.includes('- ') || result.includes('> '));
             
             if (hasMultilineMarkdown) {
               console.log(`📝 PageEditor: Trivial result contains multiline markdown, triggering markdown parsing`);
-              // Use the markdown parsing system to handle complex markdown
+              addReasoningChainEvent(newBlockId, {
+                type: 'status',
+                message: 'Processing multiline markdown result',
+                timestamp: new Date().toISOString(),
+                metadata: { markdownDetected: true }
+              });
               handleMarkdownPaste(result, newBlockId);
             } else {
               console.log(`📝 PageEditor: Trivial result is simple text, updating block directly`);
@@ -375,18 +627,37 @@ export const PageEditor = ({
               });
             }
 
+            completeReasoningChain(newBlockId, true, `Fast AI processing completed successfully in ${duration.toFixed(2)}s`);
+
             setStreamingState({
               isStreaming: false,
               status: '',
-              progress: 0
+              progress: 0,
+              history: []
             });
           } else if (chunk.type === 'error') {
             console.error(`❌ PageEditor: Trivial streaming error:`, chunk.message);
+            
+            addReasoningChainEvent(newBlockId, {
+              type: 'error',
+              message: `Trivial client error: ${chunk.message}`,
+              timestamp: new Date().toISOString(),
+              metadata: { error: chunk.message }
+            });
+            
             throw new Error(chunk.message || 'Trivial operation failed');
           }
         },
         (error) => {
           console.error(`❌ PageEditor: Trivial streaming failed:`, error);
+          
+          addReasoningChainEvent(newBlockId, {
+            type: 'error',
+            message: `Streaming failed: ${error}`,
+            timestamp: new Date().toISOString(),
+            metadata: { error: error.toString() }
+          });
+          
           throw new Error(error);
         }
       );
@@ -399,6 +670,15 @@ export const PageEditor = ({
         blockId: newBlockId, 
         content: `❌ **Trivial Client Error**\n\n${error.message}\n\n🔄 Falling back to main LLM...`
       });
+      
+      addReasoningChainEvent(newBlockId, {
+        type: 'error',
+        message: `Trivial client failed: ${error.message}. Falling back to main LLM.`,
+        timestamp: new Date().toISOString(),
+        metadata: { error: error.message, fallback: true }
+      });
+      
+      completeReasoningChain(newBlockId, false, `Trivial client failed: ${error.message}`);
       
       // Wait a moment then fallback
       setTimeout(async () => {
@@ -417,12 +697,24 @@ export const PageEditor = ({
       status: 'Starting query processing...',
       progress: 0,
       blockId: blockId,
-      query: query
+      query: query,
+      history: []
     });
 
     // Create new block immediately for streaming progress
     const newBlockId = onAddBlock(blockId);
     console.log(`➕ PageEditor: New Canvas block created with id='${newBlockId}'`);
+
+    // Initialize reasoning chain
+    const sessionId = `session_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+    initializeReasoningChain(newBlockId, query, sessionId);
+    
+    addReasoningChainEvent(newBlockId, {
+      type: 'status',
+      message: `Starting overpowered LLM processing (${classification.tier})`,
+      timestamp: new Date().toISOString(),
+      metadata: { classification, sessionId }
+    });
 
     // Set temporary streaming status block  
     setPendingAIUpdate({ 
@@ -440,6 +732,7 @@ export const PageEditor = ({
         rows?: any[];
         analysis?: string;
         isCrossDatabase?: boolean;
+        finalRowCount?: number;
       } = {};
       
       // Call the streaming agent API
@@ -452,17 +745,41 @@ export const PageEditor = ({
           setStreamingState(prev => ({
             ...prev,
             status: message,
-            progress: Math.min(prev.progress + 0.1, 0.9)
+            progress: Math.min(prev.progress + 0.1, 0.9),
+            history: [...prev.history, {
+              type: 'status',
+              message,
+              timestamp: new Date().toISOString()
+            }]
           }));
+          
+          addReasoningChainEvent(newBlockId, {
+            type: 'status',
+            message,
+            timestamp: new Date().toISOString()
+          });
         },
         
         onClassifying: (message) => {
           console.log(`🔍 Classifying: ${message}`);
+          const statusMessage = `Analyzing query: ${message}`;
           setStreamingState(prev => ({
             ...prev,
-            status: `Analyzing query: ${message}`,
-            progress: 0.15
+            status: statusMessage,
+            progress: 0.15,
+            history: [...prev.history, {
+              type: 'status',
+              message: statusMessage,
+              timestamp: new Date().toISOString()
+            }]
           }));
+          
+          addReasoningChainEvent(newBlockId, {
+            type: 'classifying',
+            message: statusMessage,
+            timestamp: new Date().toISOString(),
+            metadata: { classifyingMessage: message }
+          });
         },
         
         onDatabasesSelected: (databases, reasoning, isCrossDatabase) => {
@@ -470,49 +787,125 @@ export const PageEditor = ({
           accumulatedData.databases = databases;
           accumulatedData.isCrossDatabase = isCrossDatabase;
           
+          const statusMessage = `Selected databases: ${databases.join(', ')}`;
           setStreamingState(prev => ({
             ...prev,
-            status: `Selected databases: ${databases.join(', ')}`,
-            progress: 0.25
+            status: statusMessage,
+            progress: 0.25,
+            history: [...prev.history, {
+              type: 'status',
+              message: statusMessage,
+              timestamp: new Date().toISOString(),
+              metadata: { databases, reasoning, isCrossDatabase }
+            }]
           }));
+          
+          addReasoningChainEvent(newBlockId, {
+            type: 'database_selected',
+            message: statusMessage,
+            timestamp: new Date().toISOString(),
+            metadata: { databases, reasoning, isCrossDatabase }
+          });
         },
         
         onSchemaLoading: (database, progress) => {
           console.log(`📋 Schema loading for ${database}: ${progress}`);
+          const statusMessage = `Loading ${database} schema...`;
           setStreamingState(prev => ({
             ...prev,
-            status: `Loading ${database} schema...`,
-            progress: 0.25 + (progress * 0.2) // 25% to 45%
+            status: statusMessage,
+            progress: 0.25 + (progress * 0.2), // 25% to 45%
+            history: [...prev.history, {
+              type: 'progress',
+              message: statusMessage,
+              timestamp: new Date().toISOString(),
+              metadata: { database, schemaProgress: progress }
+            }]
           }));
+          
+          addReasoningChainEvent(newBlockId, {
+            type: 'schema_loading',
+            message: statusMessage,
+            timestamp: new Date().toISOString(),
+            metadata: { database, schemaProgress: progress }
+          });
         },
         
         onQueryGenerating: (database) => {
           console.log(`⚙️ Generating query for ${database}`);
+          const statusMessage = `Generating query for ${database}...`;
           setStreamingState(prev => ({
             ...prev,
-            status: `Generating query for ${database}...`,
-            progress: 0.5
+            status: statusMessage,
+            progress: 0.5,
+            history: [...prev.history, {
+              type: 'status',
+              message: statusMessage,
+              timestamp: new Date().toISOString(),
+              metadata: { database }
+            }]
           }));
+          
+          addReasoningChainEvent(newBlockId, {
+            type: 'query_generating',
+            message: statusMessage,
+            timestamp: new Date().toISOString(),
+            metadata: { database }
+          });
         },
         
         onQueryExecuting: (database, sql) => {
           console.log(`🚀 Executing query on ${database}`);
           if (sql) accumulatedData.sqlQuery = sql;
           
+          const statusMessage = `Executing query on ${database}...`;
           setStreamingState(prev => ({
             ...prev,
-            status: `Executing query on ${database}...`,
-            progress: 0.65
+            status: statusMessage,
+            progress: 0.65,
+            history: [...prev.history, {
+              type: 'status',
+              message: statusMessage,
+              timestamp: new Date().toISOString(),
+              metadata: { database, sql }
+            }]
           }));
+          
+          addReasoningChainEvent(newBlockId, {
+            type: 'query_executing',
+            message: statusMessage,
+            timestamp: new Date().toISOString(),
+            metadata: { database, sql: sql?.substring(0, 200) + (sql?.length > 200 ? '...' : '') }
+          });
         },
         
         onPartialResults: (database, rowsCount, isComplete) => {
           console.log(`📊 Partial results from ${database}: ${rowsCount} rows`);
+          const statusMessage = `Received ${rowsCount} rows from ${database}`;
           setStreamingState(prev => ({
             ...prev,
-            status: `Received ${rowsCount} rows from ${database}`,
-            progress: isComplete ? 0.8 : 0.75
+            status: statusMessage,
+            progress: isComplete ? 0.8 : 0.75,
+            history: [...prev.history, {
+              type: 'progress',
+              message: statusMessage,
+              timestamp: new Date().toISOString(),
+              metadata: { database, rowsCount, isComplete }
+            }]
           }));
+          
+          addReasoningChainEvent(newBlockId, {
+            type: 'partial_results',
+            message: statusMessage,
+            timestamp: new Date().toISOString(),
+            metadata: { database, rowsCount, isComplete }
+          });
+          
+          // Store partial results count for later use
+          if (isComplete) {
+            console.log(`🔍 PageEditor: Storing final row count: ${rowsCount}`);
+            accumulatedData.finalRowCount = rowsCount;
+          }
         },
         
         onAnalysisGenerating: (message) => {
@@ -520,44 +913,184 @@ export const PageEditor = ({
           setStreamingState(prev => ({
             ...prev,
             status: message,
-            progress: 0.85
+            progress: 0.85,
+            history: [...prev.history, {
+              type: 'analysis_chunk',
+              message,
+              timestamp: new Date().toISOString()
+            }]
           }));
+          
+          addReasoningChainEvent(newBlockId, {
+            type: 'analysis_chunk',
+            message,
+            timestamp: new Date().toISOString()
+          });
         },
         
         onPlanning: (step, operationsPlanned) => {
           console.log(`📋 Planning: ${step}`);
+          const statusMessage = `Planning: ${step}`;
           setStreamingState(prev => ({
             ...prev,
-            status: `Planning: ${step}`,
-            progress: 0.4
+            status: statusMessage,
+            progress: 0.4,
+            history: [...prev.history, {
+              type: 'status',
+              message: statusMessage,
+              timestamp: new Date().toISOString(),
+              metadata: { operationsPlanned }
+            }]
           }));
+          
+          addReasoningChainEvent(newBlockId, {
+            type: 'planning',
+            message: statusMessage,
+            timestamp: new Date().toISOString(),
+            metadata: { operationsPlanned }
+          });
         },
         
         onAggregating: (step, progress) => {
           console.log(`🔗 Aggregating: ${step}`);
           const aggProgress = progress || 0;
+          const statusMessage = `Aggregating data: ${step}`;
           setStreamingState(prev => ({
             ...prev,
-            status: `Aggregating data: ${step}`,
-            progress: 0.7 + (aggProgress * 0.1)
+            status: statusMessage,
+            progress: 0.7 + (aggProgress * 0.1),
+            history: [...prev.history, {
+              type: 'progress',
+              message: statusMessage,
+              timestamp: new Date().toISOString(),
+              metadata: { aggregationProgress: aggProgress }
+            }]
           }));
+          
+          addReasoningChainEvent(newBlockId, {
+            type: 'aggregating',
+            message: statusMessage,
+            timestamp: new Date().toISOString(),
+            metadata: { aggregationProgress: aggProgress }
+          });
         },
         
-        onComplete: (results, sessionId) => {
+        onComplete: async (results, sessionId) => {
           console.log(`✅ PageEditor: Streaming completed!`);
           console.log(`📊 PageEditor: Final results:`, results);
+          console.log(`🔍 PageEditor: Results structure analysis:`, {
+            resultsType: typeof results,
+            resultsKeys: results ? Object.keys(results) : [],
+            hasRows: !!results?.rows,
+            rowsType: typeof results?.rows,
+            rowsLength: results?.rows?.length || 0,
+            rowsIsArray: Array.isArray(results?.rows),
+            hasAnalysis: !!results?.analysis,
+            analysisType: typeof results?.analysis,
+            hasSql: !!results?.sql,
+            sqlType: typeof results?.sql,
+            firstRowSample: results?.rows?.[0],
+            accumulatedDataBefore: {
+              hasRows: !!accumulatedData.rows,
+              rowsLength: accumulatedData.rows?.length || 0,
+              hasAnalysis: !!accumulatedData.analysis,
+              hasSql: !!accumulatedData.sqlQuery
+            }
+          });
           
           setStreamingState(prev => ({
             ...prev,
             status: 'Processing complete!',
-            progress: 1.0
+            progress: 1.0,
+            history: [...prev.history, {
+              type: 'complete',
+              message: 'Processing complete!',
+              timestamp: new Date().toISOString(),
+              metadata: { sessionId, resultsCount: results?.rows?.length || 0 }
+            }]
           }));
+          
+          addReasoningChainEvent(newBlockId, {
+            type: 'complete',
+            message: 'Processing complete!',
+            timestamp: new Date().toISOString(),
+            metadata: { sessionId, resultsCount: results?.rows?.length || 0 }
+          });
           
           // Process final results
           if (results) {
-            accumulatedData.rows = results.rows;
-            accumulatedData.analysis = results.analysis;
-            accumulatedData.sqlQuery = results.sql || accumulatedData.sqlQuery;
+            console.log(`🔍 PageEditor: Processing results object...`);            
+            console.log(`🔍 PageEditor: results type:`, typeof results);
+            console.log(`🔍 PageEditor: results.rows before assignment:`, results.rows);
+            console.log(`🔍 PageEditor: results.analysis before assignment:`, results.analysis);
+            console.log(`🔍 PageEditor: results.sql before assignment:`, results.sql);
+            
+            // Handle case where results might be a string (should be rare now with backend fix)
+            let parsedResults = results;
+            if (typeof results === 'string') {
+              console.log(`🔧 PageEditor: Results is a string, attempting JSON parse...`);
+              try {
+                parsedResults = JSON.parse(results);
+                console.log(`✅ PageEditor: Successfully parsed JSON results:`, {
+                  hasRows: !!parsedResults.rows,
+                  rowsLength: parsedResults.rows?.length || 0,
+                  hasAnalysis: !!parsedResults.analysis,
+                  hasSql: !!parsedResults.sql
+                });
+              } catch (parseError) {
+                console.error(`❌ PageEditor: JSON parse failed:`, parseError);
+                console.log(`🔍 PageEditor: Raw string preview:`, results.substring(0, 200) + '...');
+                // Keep original string if parsing fails
+                parsedResults = results;
+              }
+            }
+            
+            // Extract data from parsed results
+            accumulatedData.rows = parsedResults.rows;
+            accumulatedData.analysis = parsedResults.analysis;
+            accumulatedData.sqlQuery = parsedResults.sql || accumulatedData.sqlQuery;
+            
+            console.log(`🔍 PageEditor: accumulatedData after assignment:`, {
+              hasRows: !!accumulatedData.rows,
+              rowsLength: accumulatedData.rows?.length || 0,
+              rowsType: typeof accumulatedData.rows,
+              hasAnalysis: !!accumulatedData.analysis,
+              hasSql: !!accumulatedData.sqlQuery,
+              firstRowSample: accumulatedData.rows?.[0]
+            });
+          } else {
+            console.warn(`⚠️ PageEditor: results is null/undefined in onComplete`);
+          }
+          
+          // WORKAROUND: If we don't have rows data but we know there should be some (from finalRowCount),
+          // try to fetch the data directly from the backend
+          if ((!accumulatedData.rows || accumulatedData.rows.length === 0) && accumulatedData.finalRowCount && accumulatedData.finalRowCount > 0) {
+            console.log(`🔧 PageEditor: WORKAROUND - Attempting to fetch missing data directly...`);
+            console.log(`🔧 PageEditor: Expected ${accumulatedData.finalRowCount} rows but got ${accumulatedData.rows?.length || 0}`);
+            
+            try {
+              // Try to re-execute the query to get the data
+              const fallbackResponse = await agentClient.query({
+                question: query,
+                analyze: !!accumulatedData.analysis
+              });
+              
+              console.log(`🔧 PageEditor: Fallback query response:`, {
+                hasRows: !!fallbackResponse.rows,
+                rowsLength: fallbackResponse.rows?.length || 0,
+                hasAnalysis: !!fallbackResponse.analysis,
+                hasSql: !!fallbackResponse.sql
+              });
+              
+              if (fallbackResponse.rows && fallbackResponse.rows.length > 0) {
+                console.log(`✅ PageEditor: Successfully retrieved ${fallbackResponse.rows.length} rows via fallback`);
+                accumulatedData.rows = fallbackResponse.rows;
+                accumulatedData.analysis = fallbackResponse.analysis || accumulatedData.analysis;
+                accumulatedData.sqlQuery = fallbackResponse.sql || accumulatedData.sqlQuery;
+              }
+            } catch (fallbackError) {
+              console.error(`❌ PageEditor: Fallback query failed:`, fallbackError);
+            }
           }
           
           // Create canvas data from accumulated streaming data
@@ -567,33 +1100,101 @@ export const PageEditor = ({
             analysis: accumulatedData.analysis || ''
           };
           
-          const canvasData = createCanvasPreviewFromResponse(response, query);
-          
-          // Update the block with final canvas data
-          console.log(`💾 PageEditor: Updating with final Canvas data`);
-      setPendingAIUpdate({ 
-        blockId: newBlockId, 
-        canvasData: {
-              threadId: sessionId || `thread_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
-          threadName: generateThreadName(query),
-          isExpanded: false,
-          workspaceId: workspace.id,
-          pageId: page.id,
-          blockId: newBlockId,
-          fullAnalysis: canvasData.fullAnalysis,
-          fullData: canvasData.fullData,
-          sqlQuery: canvasData.sqlQuery,
-          preview: canvasData.preview,
-              blocks: []
+          console.log(`🎯 PageEditor: About to create canvas preview from response:`, {
+            hasRows: !!response.rows,
+            rowsLength: response.rows?.length || 0,
+            hasAnalysis: !!response.analysis,
+            hasSql: !!response.sql,
+            firstRowSample: response.rows?.[0],
+            responseStructure: {
+              rowsType: typeof response.rows,
+              rowsIsArray: Array.isArray(response.rows),
+              analysisLength: response.analysis?.length || 0,
+              sqlLength: response.sql?.length || 0
             }
           });
+          
+          const canvasData = createCanvasPreviewFromResponse(response, query);
+          
+          console.log(`🎯 PageEditor: Canvas data created:`, {
+            hasFullAnalysis: !!canvasData.fullAnalysis,
+            hasFullData: !!canvasData.fullData,
+            hasSqlQuery: !!canvasData.sqlQuery,
+            hasPreview: !!canvasData.preview,
+            fullDataStructure: canvasData.fullData ? {
+              headers: canvasData.fullData.headers?.length,
+              rows: canvasData.fullData.rows?.length
+            } : null,
+            previewStructure: canvasData.preview ? {
+              hasSummary: !!canvasData.preview.summary,
+              hasStats: !!canvasData.preview.stats,
+              hasTablePreview: !!canvasData.preview.tablePreview,
+              tablePreviewStructure: canvasData.preview.tablePreview ? {
+                headers: canvasData.preview.tablePreview.headers?.length,
+                rows: canvasData.preview.tablePreview.rows?.length
+              } : null
+            } : null
+          });
+          
+          // Create comprehensive canvas data object
+          const fullCanvasData = {
+            threadId: sessionId || `thread_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+            threadName: generateThreadName(query),
+            isExpanded: false,
+            workspaceId: workspace.id,
+            pageId: page.id,
+            blockId: newBlockId,
+            fullAnalysis: canvasData.fullAnalysis,
+            fullData: canvasData.fullData,
+            sqlQuery: canvasData.sqlQuery,
+            preview: canvasData.preview,
+            blocks: [],
+            // Store the complete reasoning chain
+            reasoningChain: activeReasoningChains.get(newBlockId),
+            originalQuery: query
+          };
+          
+          console.log(`🎯 PageEditor: Full canvas data object created:`, {
+            threadId: fullCanvasData.threadId,
+            threadName: fullCanvasData.threadName,
+            blockId: fullCanvasData.blockId,
+            hasFullAnalysis: !!fullCanvasData.fullAnalysis,
+            hasFullData: !!fullCanvasData.fullData,
+            fullDataSample: fullCanvasData.fullData ? {
+              headers: fullCanvasData.fullData.headers?.slice(0, 3),
+              firstRow: fullCanvasData.fullData.rows?.[0]?.slice(0, 3),
+              totalRows: fullCanvasData.fullData.rows?.length
+            } : null,
+            hasPreview: !!fullCanvasData.preview,
+            previewSample: fullCanvasData.preview ? {
+              summaryLength: fullCanvasData.preview.summary?.length,
+              statsCount: fullCanvasData.preview.stats?.length,
+              hasTablePreview: !!fullCanvasData.preview.tablePreview,
+              tablePreviewSample: fullCanvasData.preview.tablePreview ? {
+                headers: fullCanvasData.preview.tablePreview.headers?.slice(0, 3),
+                firstRow: fullCanvasData.preview.tablePreview.rows?.[0]?.slice(0, 3),
+                totalRows: fullCanvasData.preview.tablePreview.totalRows
+              } : null
+            } : null
+          });
+          
+          // Update the block with final canvas data
+          console.log(`💾 PageEditor: Setting pending AI update for blockId=${newBlockId}`);
+          setPendingAIUpdate({ 
+            blockId: newBlockId, 
+            canvasData: fullCanvasData
+          });
+          
+          // Complete reasoning chain
+          completeReasoningChain(newBlockId, true, 'Overpowered LLM processing completed successfully');
           
           // Clear streaming state
           setTimeout(() => {
             setStreamingState({
               isStreaming: false,
               status: '',
-              progress: 0
+              progress: 0,
+              history: []
             });
           }, 1000);
         },
@@ -603,19 +1204,36 @@ export const PageEditor = ({
           setStreamingState(prev => ({
             ...prev,
             status: `Error: ${error}`,
-            progress: 0
+            progress: 0,
+            history: [...prev.history, {
+              type: 'error',
+              message: `Error: ${error}`,
+              timestamp: new Date().toISOString(),
+              metadata: { errorCode, recoverable }
+            }]
           }));
+          
+          addReasoningChainEvent(newBlockId, {
+            type: 'error',
+            message: `Error: ${error}`,
+            timestamp: new Date().toISOString(),
+            metadata: { errorCode, recoverable }
+          });
           
           // Show error in the block
           const errorMessage = `❌ **Error:** ${error}\n\n${recoverable ? '🔄 You can try again.' : ''}`;
-      setPendingAIUpdate({ blockId: newBlockId, content: errorMessage });
+          setPendingAIUpdate({ blockId: newBlockId, content: errorMessage });
+          
+          // Complete reasoning chain with error
+          completeReasoningChain(newBlockId, false, `Processing failed: ${error}`);
           
           // Clear streaming state
           setTimeout(() => {
             setStreamingState({
               isStreaming: false,
               status: '',
-              progress: 0
+              progress: 0,
+              history: []
             });
           }, 2000);
         }
@@ -624,14 +1242,24 @@ export const PageEditor = ({
     } catch (error) {
       console.error('❌ PageEditor: Streaming setup failed:', error);
       
+      addReasoningChainEvent(newBlockId, {
+        type: 'error',
+        message: `Streaming setup failed: ${error.message}`,
+        timestamp: new Date().toISOString(),
+        metadata: { error: error.message }
+      });
+      
       // Fallback error handling
       const errorMessage = `❌ **Error:** ${error.message || 'Failed to start streaming query. Please check that the agent server is running.'}`;
       setPendingAIUpdate({ blockId: newBlockId, content: errorMessage });
       
+      completeReasoningChain(newBlockId, false, `Setup failed: ${error.message}`);
+      
       setStreamingState({
         isStreaming: false,
         status: '',
-        progress: 0
+        progress: 0,
+        history: []
       });
     }
   };
@@ -653,34 +1281,106 @@ export const PageEditor = ({
 
   // Create canvas preview data from AI response
   const createCanvasPreviewFromResponse = (response: AgentQueryResponse, query: string) => {
+    console.log('🎯 createCanvasPreviewFromResponse: Processing response:', {
+      hasRows: !!response.rows,
+      rowsLength: response.rows?.length || 0,
+      hasAnalysis: !!response.analysis,
+      hasSql: !!response.sql,
+      firstRowSample: response.rows?.[0] ? Object.keys(response.rows[0]).slice(0, 5) : []
+    });
+    
     const canvasData: any = {};
     
     // Store full analysis text
     if (response.analysis) {
       canvasData.fullAnalysis = response.analysis;
+      console.log('🎯 createCanvasPreviewFromResponse: Stored analysis:', response.analysis.substring(0, 100) + '...');
     }
     
     // Store SQL query
     if (response.sql) {
       canvasData.sqlQuery = response.sql;
+      console.log('🎯 createCanvasPreviewFromResponse: Stored SQL query:', response.sql.substring(0, 100) + '...');
     }
     
-    // Store full data
+    // Store full data - Handle mixed schemas from cross-database queries
     if (response.rows && response.rows.length > 0) {
-      const headers = Object.keys(response.rows[0]);
-      const rows = response.rows.map(row => 
-        headers.map(header => {
+      console.log('🎯 createCanvasPreviewFromResponse: Processing rows data...');
+      console.log('🎯 createCanvasPreviewFromResponse: Raw first row sample:', response.rows[0]);
+      
+      // Enhanced Decimal conversion function
+      const convertValue = (value: any): string => {
+        if (value === null || value === undefined) return '';
+        
+        // Handle Decimal objects specifically
+        if (typeof value === 'object' && value !== null) {
+          // Check for Decimal objects (they have a toString method and specific structure)
+          if (value.constructor && value.constructor.name === 'Decimal') {
+            console.log('🎯 createCanvasPreviewFromResponse: Converting Decimal:', value, '→', value.toString());
+            return value.toString();
+          }
+          // Handle other objects that might have toString
+          if (typeof value.toString === 'function') {
+            return value.toString();
+          }
+          // Fallback for complex objects
+          return JSON.stringify(value);
+        }
+        
+        // Handle Date objects
+        if (value instanceof Date) return value.toISOString();
+        
+        // Handle primitives
+        return String(value);
+      };
+      
+      // Get all unique headers across all rows to handle mixed schemas
+      const allHeaders = new Set<string>();
+      response.rows.forEach(row => {
+        if (row && typeof row === 'object') {
+          Object.keys(row).forEach(key => allHeaders.add(key));
+        }
+      });
+      
+      const headers = Array.from(allHeaders);
+      console.log('🎯 createCanvasPreviewFromResponse: Extracted headers:', headers.slice(0, 10), '... (showing first 10)');
+      
+      // Convert rows to consistent format, filling missing values with empty strings
+      const processedRows = response.rows.map((row, index) => {
+        if (!row || typeof row !== 'object') {
+          console.warn(`🎯 createCanvasPreviewFromResponse: Invalid row at index ${index}:`, row);
+          return headers.map(() => '');
+        }
+        
+        const convertedRow = headers.map(header => {
           const value = row[header];
-          if (value === null || value === undefined) return '';
-          return String(value);
-        })
-      );
+          const converted = convertValue(value);
+          
+          // Log Decimal conversions for debugging
+          if (typeof value === 'object' && value !== null && value.constructor && value.constructor.name === 'Decimal') {
+            console.log(`🎯 Row ${index}, Header ${header}: Decimal ${value} → ${converted}`);
+          }
+          
+          return converted;
+        });
+        
+        return convertedRow;
+      }).filter(row => row.some(cell => cell !== '')); // Remove completely empty rows
       
       canvasData.fullData = {
         headers,
-        rows,
-        totalRows: response.rows.length
+        rows: processedRows,
+        totalRows: processedRows.length
       };
+      
+      console.log('🎯 createCanvasPreviewFromResponse: Processed data:', {
+        headers: headers.length,
+        rows: processedRows.length,
+        sampleRow: processedRows[0]?.slice(0, 5) || [],
+        firstProcessedRow: processedRows[0]
+      });
+    } else {
+      console.log('🎯 createCanvasPreviewFromResponse: No rows data to process');
     }
     
     // Create preview data for collapsed view
@@ -698,69 +1398,96 @@ export const PageEditor = ({
       }
       
       preview.summary = formattedSummary;
+      console.log('🎯 createCanvasPreviewFromResponse: Created summary from analysis');
     } else if (response.rows && response.rows.length > 0) {
       const rowCount = response.rows.length;
-      const columnCount = Object.keys(response.rows[0]).length;
+      const uniqueHeaders = new Set<string>();
+      response.rows.forEach(row => {
+        if (row && typeof row === 'object') {
+          Object.keys(row).forEach(key => uniqueHeaders.add(key));
+        }
+      });
+      const columnCount = uniqueHeaders.size;
       
       preview.summary = `**Query Results Summary**\n\n✅ Query executed successfully\n\n📊 **${rowCount.toLocaleString()}** rows returned across **${columnCount}** columns\n\n*Click to expand and explore the full dataset with interactive charts and analysis.*`;
+      console.log('🎯 createCanvasPreviewFromResponse: Created default summary for rows');
     } else {
       preview.summary = `**Query Executed**\n\n✅ The SQL query processed successfully but returned no data rows.\n\n*This might indicate the query conditions didn't match any records, or the target dataset is empty.*`;
+      console.log('🎯 createCanvasPreviewFromResponse: Created empty results summary');
     }
     
     // Create stats
     const stats = [];
     
-    if (response.rows) {
+    if (response.rows && response.rows.length > 0) {
       stats.push({ label: 'Rows', value: response.rows.length.toLocaleString() });
       
-      if (response.rows.length > 0) {
-        const columns = Object.keys(response.rows[0]);
-        stats.push({ label: 'Columns', value: columns.length });
+      // Count unique columns across all rows
+      const uniqueHeaders = new Set<string>();
+      response.rows.forEach(row => {
+        if (row && typeof row === 'object') {
+          Object.keys(row).forEach(key => uniqueHeaders.add(key));
+        }
+      });
+      
+      if (uniqueHeaders.size > 0) {
+        stats.push({ label: 'Columns', value: uniqueHeaders.size.toString() });
         
         // Try to find numeric columns for additional stats
-        const numericColumns = columns.filter(col => {
-          const value = response.rows[0][col];
-          return typeof value === 'number' || !isNaN(Number(value));
-        });
-        
-        if (numericColumns.length > 0) {
-          stats.push({ label: 'Numeric Fields', value: numericColumns.length });
+        const sampleRow = response.rows.find(row => row && typeof row === 'object');
+        if (sampleRow) {
+          const numericColumns = Array.from(uniqueHeaders).filter(col => {
+            const value = sampleRow[col];
+            return typeof value === 'number' || 
+                   (typeof value === 'string' && !isNaN(Number(value)) && value !== '') ||
+                   (typeof value === 'object' && value && typeof value.toString === 'function' && !isNaN(Number(value.toString())));
+          });
+          
+          if (numericColumns.length > 0) {
+            stats.push({ label: 'Numeric Fields', value: numericColumns.length.toString() });
+          }
         }
       }
     }
     
     if (response.sql) {
-      stats.push({ label: 'SQL Lines', value: response.sql.split('\n').length });
+      stats.push({ label: 'SQL Lines', value: response.sql.split('\n').length.toString() });
     }
     
     if (stats.length > 0) {
       preview.stats = stats;
+      console.log('🎯 createCanvasPreviewFromResponse: Created stats:', stats);
     }
     
     // Create table preview (limited rows for collapsed view)
-    if (response.rows && response.rows.length > 0) {
-      const headers = Object.keys(response.rows[0]);
-      const rows = response.rows.slice(0, 5).map(row => 
-        headers.map(header => {
-          const value = row[header];
-          if (value === null || value === undefined) return '';
-          return String(value);
-        })
-      );
+    if (canvasData.fullData && canvasData.fullData.headers && canvasData.fullData.rows) {
+      const { headers, rows } = canvasData.fullData;
       
       preview.tablePreview = {
         headers,
-        rows,
-        totalRows: response.rows.length
+        rows: rows.slice(0, 5), // Show first 5 rows for preview
+        totalRows: rows.length
       };
+      
+      console.log('🎯 createCanvasPreviewFromResponse: Created table preview:', {
+        headers: headers.length,
+        previewRows: preview.tablePreview.rows.length,
+        totalRows: preview.tablePreview.totalRows,
+        samplePreviewRow: preview.tablePreview.rows[0]
+      });
     }
     
     // Add placeholder charts if we have numeric data
-    if (response.rows && response.rows.length > 0) {
-      const headers = Object.keys(response.rows[0]);
-      const numericColumns = headers.filter(col => {
-        const value = response.rows[0][col];
-        return typeof value === 'number' || (!isNaN(Number(value)) && value !== '');
+    if (canvasData.fullData && canvasData.fullData.headers && canvasData.fullData.rows.length > 0) {
+      const { headers, rows } = canvasData.fullData;
+      
+      // Find numeric columns by checking first few rows
+      const numericColumns = headers.filter(header => {
+        const headerIndex = headers.indexOf(header);
+        return rows.slice(0, Math.min(10, rows.length)).some(row => {
+          const value = row[headerIndex];
+          return value && !isNaN(Number(value)) && value !== '';
+        });
       });
       
       if (numericColumns.length >= 1) {
@@ -776,10 +1503,26 @@ export const PageEditor = ({
         }
         
         preview.charts = charts;
+        console.log('🎯 createCanvasPreviewFromResponse: Created chart placeholders:', charts.length);
       }
     }
     
     canvasData.preview = preview;
+    console.log('🎯 createCanvasPreviewFromResponse: Final canvasData structure:', {
+      hasFullAnalysis: !!canvasData.fullAnalysis,
+      hasFullData: !!canvasData.fullData,
+      hasSqlQuery: !!canvasData.sqlQuery,
+      hasPreview: !!canvasData.preview,
+      previewHasSummary: !!canvasData.preview?.summary,
+      previewHasStats: !!(canvasData.preview?.stats?.length),
+      previewHasTablePreview: !!canvasData.preview?.tablePreview,
+      fullDataStructure: canvasData.fullData ? {
+        headers: canvasData.fullData.headers?.length,
+        rows: canvasData.fullData.rows?.length,
+        sampleRow: canvasData.fullData.rows?.[0]?.slice(0, 3)
+      } : null
+    });
+    
     return canvasData;
   };
 
@@ -1226,42 +1969,85 @@ export const PageEditor = ({
     if (pendingAIUpdate) {
       const { blockId, content, canvasData } = pendingAIUpdate;
       console.log(`🎯 PageEditor: Checking pending AI update for blockId='${blockId}'`);
+      console.log(`🎯 PageEditor: pendingAIUpdate contents:`, {
+        blockId,
+        hasContent: !!content,
+        hasCanvasData: !!canvasData,
+        canvasDataKeys: canvasData ? Object.keys(canvasData) : [],
+        contentPreview: content?.substring(0, 50) + '...'
+      });
       
       // Check if the block now exists in the page state
       const blockExists = page.blocks.some(block => block.id === blockId);
       console.log(`🎯 PageEditor: Block exists in current page state: ${blockExists}`);
-      console.log(`🎯 PageEditor: Current page blocks:`, page.blocks.map(b => ({ id: b.id, content_length: b.content?.length || 0 })));
+      console.log(`🎯 PageEditor: Current page blocks:`, page.blocks.map(b => ({ id: b.id, content_length: b.content?.length || 0, type: b.type })));
       
       if (blockExists) {
         if (canvasData) {
           // Create Canvas block with preview data
           console.log(`🎯 PageEditor: Executing pending Canvas update for blockId='${blockId}'`);
+          console.log(`🎯 PageEditor: Canvas data being applied:`, {
+            threadName: canvasData.threadName,
+            hasFullAnalysis: !!canvasData.fullAnalysis,
+            hasFullData: !!canvasData.fullData,
+            fullDataSample: canvasData.fullData ? {
+              headers: canvasData.fullData.headers?.slice(0, 3),
+              firstRow: canvasData.fullData.rows?.[0]?.slice(0, 3),
+              totalRows: canvasData.fullData.rows?.length
+            } : null,
+            hasPreview: !!canvasData.preview,
+            previewSample: canvasData.preview ? {
+              summaryLength: canvasData.preview.summary?.length,
+              hasTablePreview: !!canvasData.preview.tablePreview,
+              tablePreviewStructure: canvasData.preview.tablePreview ? {
+                headers: canvasData.preview.tablePreview.headers?.length,
+                rows: canvasData.preview.tablePreview.rows?.length,
+                firstPreviewRow: canvasData.preview.tablePreview.rows?.[0]?.slice(0, 3)
+              } : null
+            } : null
+          });
           
-          onUpdateBlock(blockId, {
+          const blockUpdate = {
             content: canvasData.threadName,
-            type: 'canvas',
+            type: 'canvas' as const,
             properties: {
               canvasData: canvasData
             }
+          };
+          
+          console.log(`🎯 PageEditor: Block update object:`, {
+            content: blockUpdate.content,
+            type: blockUpdate.type,
+            hasCanvasData: !!blockUpdate.properties?.canvasData,
+            canvasDataStructure: blockUpdate.properties?.canvasData ? {
+              hasFullData: !!blockUpdate.properties.canvasData.fullData,
+              hasPreview: !!blockUpdate.properties.canvasData.preview
+            } : null
           });
           
-          console.log(`✅ PageEditor: Pending Canvas update completed for blockId='${blockId}'`);
+          console.log(`🎯 PageEditor: About to call onUpdateBlock...`);
+          onUpdateBlock(blockId, blockUpdate);
+          console.log(`✅ PageEditor: onUpdateBlock called for Canvas update`);
+          
         } else if (content) {
           // Create regular content block (for errors and trivial results)
           console.log(`🎯 PageEditor: Executing pending content update for blockId='${blockId}'`);
-        console.log(`🎯 PageEditor: Content preview:`, content.substring(0, 100) + '...');
+          console.log(`🎯 PageEditor: Content preview:`, content.substring(0, 100) + '...');
         
-        onUpdateBlock(blockId, {
-          content: content,
+          onUpdateBlock(blockId, {
+            content: content,
             type: 'text' // Use regular text blocks to allow markdown parsing
-        });
+          });
         
           console.log(`✅ PageEditor: Pending content update completed for blockId='${blockId}'`);
         }
         
+        console.log(`🎯 PageEditor: Clearing pending AI update`);
         setPendingAIUpdate(null);
       } else {
         console.log(`⏳ PageEditor: Block not yet available in page state, will retry on next render`);
+        console.log(`⏳ PageEditor: Expected blockId: ${blockId}`);
+        console.log(`⏳ PageEditor: Available blockIds:`, page.blocks.map(b => b.id));
       }
     }
   }, [pendingAIUpdate, page.blocks, onUpdateBlock]);

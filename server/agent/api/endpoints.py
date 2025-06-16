@@ -8,10 +8,11 @@ import re
 import json
 import traceback
 import asyncio
-from datetime import datetime
+from datetime import datetime, date
 import uuid
 import time
 import pandas as pd
+import decimal
 
 from ..db.db_orchestrator import Orchestrator
 from ..config.settings import Settings
@@ -37,6 +38,69 @@ logger = logging.getLogger(__name__)
 
 # Set up logging for auth
 auth_logger = logging.getLogger("agent_auth")
+
+# Configure endpoint-specific logging directory
+import os
+LOG_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "logs", "endpoints")
+os.makedirs(LOG_DIR, exist_ok=True)
+
+# Create separate loggers for each endpoint
+def create_endpoint_logger(endpoint_name: str) -> logging.Logger:
+    """Create a dedicated logger for an endpoint with its own file"""
+    endpoint_logger = logging.getLogger(f"endpoint.{endpoint_name}")
+    endpoint_logger.setLevel(logging.INFO)
+    
+    # Remove existing handlers to avoid duplicates
+    for handler in endpoint_logger.handlers[:]:
+        endpoint_logger.removeHandler(handler)
+    
+    # Create file handler
+    log_file = os.path.join(LOG_DIR, f"{endpoint_name}.log")
+    file_handler = logging.FileHandler(log_file)
+    file_handler.setLevel(logging.INFO)
+    
+    # Create formatter
+    formatter = logging.Formatter(
+        '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    )
+    file_handler.setFormatter(formatter)
+    
+    # Add handler to logger
+    endpoint_logger.addHandler(file_handler)
+    
+    # Prevent propagation to root logger to avoid duplicate logs
+    endpoint_logger.propagate = False
+    
+    return endpoint_logger
+
+# Create loggers for each endpoint
+health_logger = create_endpoint_logger("health")
+query_logger = create_endpoint_logger("query")
+cross_db_logger = create_endpoint_logger("cross_database_query")
+classify_logger = create_endpoint_logger("classify")
+sessions_logger = create_endpoint_logger("sessions")
+trivial_logger = create_endpoint_logger("trivial")
+database_logger = create_endpoint_logger("database")
+visualization_logger = create_endpoint_logger("visualization")
+orchestration_logger = create_endpoint_logger("orchestration")
+stream_logger = create_endpoint_logger("streaming")
+
+# Helper function to log request/response
+def log_request_response(endpoint_logger: logging.Logger, endpoint: str, request_data: dict, response_data: dict, duration: float, error: str = None):
+    """Log request and response data for an endpoint"""
+    log_entry = {
+        "endpoint": endpoint,
+        "timestamp": datetime.utcnow().isoformat(),
+        "duration_ms": round(duration * 1000, 2),
+        "request": request_data,
+        "response": response_data if not error else {"error": error},
+        "success": error is None
+    }
+    
+    if error:
+        endpoint_logger.error(f"Request failed: {json.dumps(log_entry, indent=2)}")
+    else:
+        endpoint_logger.info(f"Request completed: {json.dumps(log_entry, indent=2)}")
 
 # Create API router
 router = APIRouter()
@@ -169,38 +233,60 @@ async def health_check():
     """
     Health check endpoint - tests database connection
     """
+    start_time = time.time()
+    request_data = {"endpoint": "/health"}
+    
+    health_logger.info("🏥 Health check started")
     logger.info("🏥 API ENDPOINT: /health - Starting health check")
     
     try:
+        health_logger.info("Initializing settings")
         settings = Settings()
         
+        health_logger.info(f"Testing database connection - DB_TYPE: {settings.DB_TYPE}")
         # Test database connection using the default database
         orchestrator = Orchestrator(settings.connection_uri, db_type=settings.DB_TYPE)
         
         conn_ok = await orchestrator.test_connection()
+        health_logger.info(f"Database connection test result: {conn_ok}")
         logger.info(f"🔍 Database connection result: {conn_ok}")
         
         if not conn_ok:
-            response = HealthResponse(
-                status="degraded", 
-                message="Database connection failed"
-            )
+            response_data = {
+                "status": "degraded", 
+                "message": "Database connection failed"
+            }
+            duration = time.time() - start_time
+            log_request_response(health_logger, "/health", request_data, response_data, duration)
+            
+            response = HealthResponse(**response_data)
             logger.warning(f"⚠️ Health check degraded: {response.message}")
             return response
         
-        response = HealthResponse(
-            status="ok", 
-            message="Database connection is operational"
-        )
+        response_data = {
+            "status": "ok", 
+            "message": "Database connection is operational"
+        }
+        duration = time.time() - start_time
+        log_request_response(health_logger, "/health", request_data, response_data, duration)
+        
+        response = HealthResponse(**response_data)
+        health_logger.info(f"Health check completed successfully in {duration:.2f}s")
         logger.info(f"✅ Health check successful: {response.message}")
         return response
         
     except Exception as e:
+        duration = time.time() - start_time
+        error_msg = f"Health check failed: {str(e)}"
+        health_logger.error(f"Health check failed after {duration:.2f}s: {error_msg}")
+        health_logger.error(f"Exception details: {traceback.format_exc()}")
+        log_request_response(health_logger, "/health", request_data, {}, duration, error_msg)
+        
         logger.error(f"❌ Health check failed with exception: {str(e)}")
         logger.error(f"❌ Traceback: {traceback.format_exc()}")
         response = HealthResponse(
             status="error", 
-            message=f"Health check failed: {str(e)}"
+            message=error_msg
         )
         return response
 
@@ -216,13 +302,28 @@ async def query(request: QueryRequest, http_request: Request):
     Returns:
         QueryResponse containing the results, SQL query, and optional analysis
     """
+    start_time = time.time()
+    
     # Get current user for audit and isolation
     current_user = await get_current_user_from_request(http_request)
     
+    request_data = {
+        "endpoint": "/query",
+        "user": current_user,
+        "question": request.question,
+        "analyze": request.analyze,
+        "db_type": request.db_type,
+        "cross_database": request.cross_database,
+        "optimize": request.optimize
+    }
+    
+    query_logger.info(f"🚀 Query request started for user: {current_user}")
+    query_logger.info(f"Request details: {json.dumps(request_data, indent=2)}")
     logger.info(f"🚀 API ENDPOINT: /query - Processing enhanced request for user: {current_user}")
     logger.info(f"📥 Request received: question='{request.question}', analyze={request.analyze}, cross_database={request.cross_database}")
     
     try:
+        query_logger.info("Calling process_ai_query function")
         # Use the enhanced process_ai_query function
         result = await process_ai_query(
             question=request.question,
@@ -231,6 +332,8 @@ async def query(request: QueryRequest, http_request: Request):
             db_uri=request.db_uri,
             cross_database=request.cross_database
         )
+        
+        query_logger.info(f"process_ai_query completed: success={result.get('success', True)}, rows={len(result.get('rows', []))}")
         
         # Build response from result with user context
         response_data = {
@@ -248,19 +351,39 @@ async def query(request: QueryRequest, http_request: Request):
         
         response = QueryResponse(**response_data)
         
+        duration = time.time() - start_time
+        log_request_response(query_logger, "/query", request_data, {
+            "rows_count": len(response.rows),
+            "success": response.success,
+            "session_id": response.session_id,
+            "has_analysis": response.analysis is not None
+        }, duration)
+        
+        query_logger.info(f"Query completed successfully in {duration:.2f}s")
         logger.info(f"✅ Query processed successfully for user: {current_user}")
         logger.info(f"📤 Returning response: rows={len(response.rows)}, success={response.success}")
         
         return response
         
-    except HTTPException:
+    except HTTPException as he:
+        duration = time.time() - start_time
+        error_msg = f"HTTPException: {he.detail}"
+        query_logger.error(f"HTTPException after {duration:.2f}s: {error_msg}")
+        log_request_response(query_logger, "/query", request_data, {}, duration, error_msg)
+        
         # Re-raise HTTP exceptions as-is
         logger.error(f"❌ HTTPException occurred, re-raising")
         raise
     except Exception as e:
+        duration = time.time() - start_time
+        error_msg = f"Query execution failed: {str(e)}"
+        query_logger.error(f"Unexpected error after {duration:.2f}s: {error_msg}")
+        query_logger.error(f"Exception details: {traceback.format_exc()}")
+        log_request_response(query_logger, "/query", request_data, {}, duration, error_msg)
+        
         logger.error(f"❌ Unexpected error processing query: {str(e)}")
         logger.error(f"❌ Traceback: {traceback.format_exc()}")
-        raise HTTPException(status_code=500, detail=f"Query execution failed: {str(e)}")
+        raise HTTPException(status_code=500, detail=error_msg)
 
 @router.post("/cross-database-query", response_model=QueryResponse)
 async def cross_database_query(request: CrossDatabaseQueryRequest, http_request: Request):
@@ -274,14 +397,29 @@ async def cross_database_query(request: CrossDatabaseQueryRequest, http_request:
     Returns:
         QueryResponse with cross-database execution results
     """
+    start_time = time.time()
+    
     # Get current user for audit and isolation
     current_user = await get_current_user_from_request(http_request)
     
+    request_data = {
+        "endpoint": "/cross-database-query",
+        "user": current_user,
+        "question": request.question,
+        "analyze": request.analyze,
+        "optimize": request.optimize,
+        "dry_run": request.dry_run,
+        "save_session": request.save_session
+    }
+    
+    cross_db_logger.info(f"🌐 Cross-database query started for user: {current_user}")
+    cross_db_logger.info(f"Request details: {json.dumps(request_data, indent=2)}")
     logger.info(f"🌐 API ENDPOINT: /cross-database-query - Processing cross-database request for user: {current_user}")
     logger.info(f"📥 Request: question='{request.question}', optimize={request.optimize}, dry_run={request.dry_run}")
     
     try:
         if request.dry_run:
+            cross_db_logger.info("Executing dry run - plan generation only")
             # For dry run, only create and validate the plan
             cross_db_agent = CrossDatabaseAgent()
             result = await cross_db_agent.execute_query(
@@ -289,6 +427,8 @@ async def cross_database_query(request: CrossDatabaseQueryRequest, http_request:
                 optimize_plan=request.optimize, 
                 dry_run=True
             )
+            
+            cross_db_logger.info(f"Dry run completed: plan_exists={result.get('plan') is not None}")
             
             # Extract plan information
             plan_info = None
@@ -307,6 +447,7 @@ async def cross_database_query(request: CrossDatabaseQueryRequest, http_request:
                     ],
                     "validation": result.get("validation", {})
                 }
+                cross_db_logger.info(f"Plan generated with {len(plan.operations)} operations")
             
             response = QueryResponse(
                 rows=[{"message": "Dry run completed - plan generated but not executed"}],
@@ -316,6 +457,7 @@ async def cross_database_query(request: CrossDatabaseQueryRequest, http_request:
                 plan_info=plan_info
             )
         else:
+            cross_db_logger.info("Executing cross-database query")
             # Execute the cross-database query
             result = await query_engine.execute_cross_database_query(
                 request.question,
@@ -323,6 +465,8 @@ async def cross_database_query(request: CrossDatabaseQueryRequest, http_request:
                 optimize=request.optimize,
                 save_session=request.save_session
             )
+            
+            cross_db_logger.info(f"Cross-database execution completed: success={result.get('success', True)}, rows={len(result.get('rows', []))}")
             
             response = QueryResponse(
                 rows=result.get("rows", []),
@@ -334,13 +478,29 @@ async def cross_database_query(request: CrossDatabaseQueryRequest, http_request:
                 execution_summary=result.get("execution_summary")
             )
         
+        duration = time.time() - start_time
+        log_request_response(cross_db_logger, "/cross-database-query", request_data, {
+            "success": response.success,
+            "rows_count": len(response.rows),
+            "session_id": response.session_id,
+            "dry_run": request.dry_run,
+            "has_plan_info": response.plan_info is not None
+        }, duration)
+        
+        cross_db_logger.info(f"Cross-database query completed in {duration:.2f}s")
         logger.info(f"✅ Cross-database query processed: success={response.success}")
         return response
         
     except Exception as e:
+        duration = time.time() - start_time
+        error_msg = f"Cross-database query failed: {str(e)}"
+        cross_db_logger.error(f"Cross-database query failed after {duration:.2f}s: {error_msg}")
+        cross_db_logger.error(f"Exception details: {traceback.format_exc()}")
+        log_request_response(cross_db_logger, "/cross-database-query", request_data, {}, duration, error_msg)
+        
         logger.error(f"❌ Error in cross-database query: {str(e)}")
         logger.error(f"❌ Traceback: {traceback.format_exc()}")
-        raise HTTPException(status_code=500, detail=f"Cross-database query failed: {str(e)}")
+        raise HTTPException(status_code=500, detail=error_msg)
 
 @router.post("/classify", response_model=ClassifyResponse)
 async def classify_query(request: ClassifyRequest):
@@ -903,13 +1063,63 @@ async def get_metadata():
 # Streaming utility functions
 def create_stream_event(event_type: str, session_id: str, **kwargs) -> str:
     """Create a Server-Sent Event formatted string"""
+    import decimal
+    from datetime import datetime, date
+    
+    def convert_item(item):
+        """Convert non-JSON-serializable items to JSON-serializable format"""
+        if isinstance(item, decimal.Decimal):
+            return float(item)
+        elif isinstance(item, (datetime, date)):
+            return item.isoformat()
+        elif isinstance(item, dict):
+            return {k: convert_item(v) for k, v in item.items()}
+        elif isinstance(item, list):
+            return [convert_item(i) for i in item]
+        elif hasattr(item, '__dict__'):
+            # Handle custom objects by converting to dict
+            return convert_item(item.__dict__)
+        elif hasattr(item, '__class__') and hasattr(item.__class__, '__name__'):
+            # Handle enum objects and other complex types
+            if hasattr(item, 'value'):
+                return str(item.value)  # For enums
+            else:
+                return str(item)
+        else:
+            return item
+    
     event = {
         "type": event_type,
         "timestamp": datetime.utcnow().isoformat() + "Z",
         "session_id": session_id,
         **kwargs
     }
-    return f"data: {json.dumps(event)}\n\n"
+    
+    # Convert the event to handle Decimal and other non-serializable types
+    try:
+        converted_event = convert_item(event)
+        return f"data: {json.dumps(converted_event, ensure_ascii=False)}\n\n"
+    except (TypeError, ValueError) as e:
+        logger.error(f"❌ Event serialization failed: {e}")
+        logger.error(f"❌ Problematic event: {event}")
+        
+        # Enhanced fallback: recursively convert problematic items
+        def safe_convert(obj):
+            if isinstance(obj, (str, int, float, bool, type(None))):
+                return obj
+            elif isinstance(obj, decimal.Decimal):
+                return float(obj)
+            elif isinstance(obj, (datetime, date)):
+                return obj.isoformat()
+            elif isinstance(obj, dict):
+                return {k: safe_convert(v) for k, v in obj.items()}
+            elif isinstance(obj, list):
+                return [safe_convert(i) for i in obj]
+            else:
+                return str(obj)
+        
+        safe_event = safe_convert(event)
+        return f"data: {json.dumps(safe_event, ensure_ascii=False)}\n\n"
 
 async def process_ai_query_stream(
     question: str,

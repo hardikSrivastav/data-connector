@@ -103,9 +103,20 @@ export interface Block {
         }>;
         progressLogs: any[];
       };
+      // AI reasoning chain from streaming events
+      reasoningChain?: Array<{
+        type: 'status' | 'progress' | 'error' | 'complete' | 'partial_sql' | 'analysis_chunk';
+        message: string;
+        timestamp: string;
+        metadata?: any;
+      }>;
+      // Original query that generated this canvas
+      originalQuery?: string;
     };
     // Canvas page identification
     isCanvasPage?: boolean;
+    // Reasoning chain for query persistence
+    reasoningChain?: ReasoningChainData;
   };
 }
 
@@ -157,4 +168,22 @@ export interface PlotlyConfig {
 
 export interface ProcessedDataset {
   [key: string]: any;
+}
+
+export interface ReasoningEvent {
+  type: 'status' | 'progress' | 'error' | 'complete' | 'partial_sql' | 'analysis_chunk' | 'classifying' | 'database_selected' | 'schema_loading' | 'query_generating' | 'query_executing' | 'partial_results' | 'planning' | 'aggregating';
+  message: string;
+  timestamp: string;
+  metadata?: any;
+}
+
+export interface ReasoningChainData {
+  events: ReasoningEvent[];
+  originalQuery: string;
+  sessionId?: string;
+  isComplete: boolean;
+  lastUpdated: string;
+  status: 'streaming' | 'completed' | 'failed' | 'cancelled';
+  progress: number;
+  currentStep?: string;
 }

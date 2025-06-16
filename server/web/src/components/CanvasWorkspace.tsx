@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
-import { Page, Workspace, Block } from '@/types';
+import { Page, Workspace, Block, ReasoningChainData } from '@/types';
 import { agentClient, AgentQueryResponse } from '@/lib/agent-client';
+import { useStorageManager } from '@/hooks/useStorageManager';
 import { 
   BarChart3, 
   GitBranch, 
@@ -17,13 +18,15 @@ import {
   Download,
   Share,
   Settings,
-  Plus
+  Plus,
+  AlertTriangle
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { cn } from '@/lib/utils';
 import ReactMarkdown from 'react-markdown';
 import { TableDisplay } from './TableDisplay';
+import { ReasoningChain } from './ReasoningChain';
 
 interface CanvasWorkspaceProps {
   page: Page;
@@ -44,17 +47,25 @@ export const CanvasWorkspace = ({
   onUpdateBlock,
   onDeleteBlock
 }: CanvasWorkspaceProps) => {
+  const { storageManager } = useStorageManager({
+    edition: 'enterprise',
+    apiBaseUrl: import.meta.env.VITE_API_BASE || 'http://localhost:8787'
+  });
+  
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
-  const [selectedView, setSelectedView] = useState<'analysis' | 'data' | 'history'>('analysis');
+  const [selectedView, setSelectedView] = useState<'analysis' | 'data' | 'history' | 'reasoning'>('analysis');
   const [isQueryRunning, setIsQueryRunning] = useState(false);
+  const [reasoningChains, setReasoningChains] = useState<Map<string, ReasoningChainData>>(new Map());
+  const [incompleteChains, setIncompleteChains] = useState<Array<{ blockId: string; data: ReasoningChainData }>>();
 
-  // Check if page is empty but has canvas data available, and populate it
+  // Enhanced initialization to populate with canvas data and load reasoning chains
   useEffect(() => {
-    console.log('🎨 CanvasWorkspace: Checking if page needs population...');
+    console.log('🎨 CanvasWorkspace: Enhanced initialization starting...');
     console.log('🎨 CanvasWorkspace: Page blocks count:', page.blocks.length);
     
-    // If page is empty or only has a basic heading, check for canvas data
+    const initializeCanvasWorkspace = async () => {
+      // Check if page is empty but has canvas data available, and populate it
     const hasOnlyBasicContent = page.blocks.length <= 1 || 
       (page.blocks.length === 1 && page.blocks[0].type === 'heading1');
     
@@ -72,7 +83,6 @@ export const CanvasWorkspace = ({
         console.log('🎯 CanvasWorkspace: Found canvas block with data, checking if it still exists...');
         
         // Double-check that the canvas block still exists in its page
-        // (it might have been deleted but the canvas page still exists)
         const canvasBlockStillExists = workspace.pages.some(p => 
           p.blocks.some(b => b.id === canvasBlock.id && b.type === 'canvas')
         );
@@ -135,27 +145,6 @@ export const CanvasWorkspace = ({
             });
           }
           
-          // Add key insights from analysis
-          if (canvasData.fullAnalysis) {
-            const insights = canvasData.fullAnalysis.split('\n').filter(line => 
-              line.toLowerCase().includes('insight') || 
-              line.toLowerCase().includes('finding') ||
-              line.toLowerCase().includes('trend') ||
-              line.toLowerCase().includes('pattern')
-            );
-            
-            insights.forEach(insight => {
-              if (insight.trim()) {
-                blocks.push({
-                  id: `insight_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
-                  type: 'quote' as const,
-                  content: insight.trim(),
-                  order: nextOrder++
-                });
-              }
-            });
-          }
-          
           // Add divider for future analyses
           blocks.push({
             id: `divider_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
@@ -168,20 +157,54 @@ export const CanvasWorkspace = ({
           
           // Update the page with the populated blocks
           onUpdatePage({ blocks });
-        } else {
-          console.log('🗑️ CanvasWorkspace: Canvas block was deleted, not populating page');
-          console.log('🧹 CanvasWorkspace: This canvas page should probably be cleaned up');
-          
-          // The canvas page exists but its associated canvas block was deleted
-          // This suggests the page cleanup didn't happen properly during block deletion
-          // For safety, we won't auto-populate it, but we could log this as an issue
+          }
         }
-      } else {
-        console.log('📝 CanvasWorkspace: No canvas data found for this page');
       }
-    } else {
-      console.log('✅ CanvasWorkspace: Page already has content, skipping population');
-    }
+
+      // Load reasoning chains from blocks
+      const chains = new Map<string, ReasoningChainData>();
+      const incomplete: Array<{ blockId: string; data: ReasoningChainData }> = [];
+      
+      page.blocks.forEach(block => {
+        // Check for reasoning chains in block properties
+        if (block.properties?.reasoningChain) {
+          const reasoningData = block.properties.reasoningChain as ReasoningChainData;
+          console.log(`🧠 CanvasWorkspace: Found reasoning chain for block ${block.id}, events: ${reasoningData.events?.length || 0}, complete: ${reasoningData.isComplete}`);
+          
+          chains.set(block.id, reasoningData);
+          
+          // Check if this is an incomplete chain
+          if (!reasoningData.isComplete && reasoningData.status === 'streaming') {
+            incomplete.push({ blockId: block.id, data: reasoningData });
+          }
+        }
+        
+        // Also check legacy canvas data format
+        if (block.properties?.canvasData?.reasoningChain) {
+          const legacyReasoningData = block.properties.canvasData.reasoningChain;
+          console.log(`🧠 CanvasWorkspace: Found legacy reasoning chain for block ${block.id}`);
+          
+          // Convert legacy format to new format
+          const convertedData: ReasoningChainData = {
+            events: legacyReasoningData || [],
+            originalQuery: block.properties.canvasData.originalQuery || 'Legacy Query',
+            sessionId: block.properties.canvasData.threadId,
+            isComplete: true, // Assume legacy chains are complete
+            lastUpdated: new Date().toISOString(),
+            status: 'completed',
+            progress: 1.0
+          };
+          
+          chains.set(block.id, convertedData);
+      }
+      });
+      
+      console.log(`🧠 CanvasWorkspace: Loaded ${chains.size} reasoning chains, ${incomplete.length} incomplete`);
+      setReasoningChains(chains);
+      setIncompleteChains(incomplete);
+    };
+
+    initializeCanvasWorkspace();
   }, [page.id, page.blocks.length, workspace.pages, onUpdatePage]);
 
   // Get analysis data from page blocks
@@ -206,7 +229,8 @@ export const CanvasWorkspace = ({
       { label: 'TOTAL BLOCKS', value: page.blocks.length.toString() },
       { label: 'ANALYSIS SECTIONS', value: headingBlocks.length.toString() },
       { label: 'DATA TABLES', value: tableBlocks.length.toString() },
-      { label: 'KEY INSIGHTS', value: quoteBlocks.length.toString() }
+      { label: 'KEY INSIGHTS', value: quoteBlocks.length.toString() },
+      { label: 'REASONING CHAINS', value: reasoningChains.size.toString() }
     ];
 
     return {
@@ -220,16 +244,15 @@ export const CanvasWorkspace = ({
 
   const analysisData = getAnalysisData();
 
-  const handleRunNewQuery = async () => {
-    const queryText = prompt('Enter your SQL query or natural language question:');
-    if (!queryText || queryText.trim() === '') return;
+  // Enhanced query handler with reasoning chain recovery
+  const handleRunNewQuery = async (queryText?: string) => {
+    const finalQuery = queryText || prompt('Enter your SQL query or natural language question:');
+    if (!finalQuery || finalQuery.trim() === '') return;
     
-    let loadingId: string | null = null; // Declare outside try block
-    
-    try {
-      console.log('🚀 CanvasWorkspace: Executing new query:', queryText);
+    console.log('🚀 CanvasWorkspace: Executing new query:', finalQuery);
       setIsQueryRunning(true);
       
+    try {
       // Add a timestamp heading for this analysis
       const timestamp = new Date().toLocaleString();
       const headingId = onAddBlock ? onAddBlock(undefined, 'heading2') : null;
@@ -240,25 +263,30 @@ export const CanvasWorkspace = ({
       }
       
       // Add loading indicator
-      loadingId = onAddBlock ? onAddBlock(undefined, 'text') : null;
+      const loadingId = onAddBlock ? onAddBlock(undefined, 'text') : null;
       if (loadingId && onUpdateBlock) {
         onUpdateBlock(loadingId, {
           content: '🔄 Running query and analyzing results...'
         });
       }
       
-      // Execute the query via agent client
-      const response: AgentQueryResponse = await agentClient.query({
-        question: queryText.trim(),
+      // Execute query via agent API (this will trigger reasoning chain persistence in PageEditor)
+      const response = await agentClient.query({
+        question: finalQuery.trim(),
         analyze: true
       });
       
       console.log('✅ CanvasWorkspace: Query completed successfully');
+      console.log('📊 CanvasWorkspace: Response data:', {
+        rowsCount: response.rows?.length || 0,
+        hasAnalysis: !!response.analysis,
+        sql: response.sql?.substring(0, 100) + '...'
+      });
       
       // Update loading text with query details
       if (loadingId && onUpdateBlock) {
         onUpdateBlock(loadingId, {
-          content: `**Query:** ${response.sql || queryText}`
+          content: `**Query:** ${response.sql || finalQuery}`
         });
       }
       
@@ -272,15 +300,37 @@ export const CanvasWorkspace = ({
         }
       }
       
-      // Add query results as table
+      // Add query results as table with proper data conversion
       if (response.rows && response.rows.length > 0) {
+        console.log('📊 CanvasWorkspace: Converting query results to table...');
+        
+        // Convert response data, handling Decimal and other special types
+        const convertValue = (value: any): string => {
+          if (value === null || value === undefined) return '';
+          if (typeof value === 'object' && value.constructor && value.constructor.name === 'Decimal') {
+            return value.toString();
+          }
+          if (value instanceof Date) return value.toISOString();
+          return String(value);
+        };
+        
+        // Get headers from first row
+        const headers = Object.keys(response.rows[0]);
+        console.log('📊 CanvasWorkspace: Table headers:', headers);
+        
+        // Convert rows to string arrays, handling special types
+        const tableData = response.rows.map(row => 
+          headers.map(header => convertValue(row[header]))
+        );
+        
+        console.log('📊 CanvasWorkspace: Table data sample:', {
+          headers,
+          firstRow: tableData[0],
+          totalRows: tableData.length
+        });
+        
         const tableId = onAddBlock ? onAddBlock(undefined, 'table') : null;
         if (tableId && onUpdateBlock) {
-          const headers = Object.keys(response.rows[0]);
-          const tableData = response.rows.map(row => 
-            headers.map(header => String(row[header] || ''))
-          );
-          
           onUpdateBlock(tableId, {
             content: 'Query Results',
                 properties: {
@@ -292,28 +342,9 @@ export const CanvasWorkspace = ({
               }
             }
           });
+          
+          console.log('✅ CanvasWorkspace: Table block created successfully with ID:', tableId);
         }
-      }
-      
-      // Add key insights as quotes if available
-      if (response.analysis) {
-        // Extract insights from analysis (simple approach)
-        const insights = response.analysis.split('\n').filter(line => 
-          line.toLowerCase().includes('insight') || 
-          line.toLowerCase().includes('finding') ||
-          line.toLowerCase().includes('trend')
-        );
-        
-        insights.forEach(insight => {
-          if (insight.trim()) {
-            const quoteId = onAddBlock ? onAddBlock(undefined, 'quote') : null;
-            if (quoteId && onUpdateBlock) {
-              onUpdateBlock(quoteId, {
-                content: insight.trim()
-              });
-            }
-          }
-        });
       }
       
       // Add divider for next analysis
@@ -322,23 +353,27 @@ export const CanvasWorkspace = ({
     } catch (error) {
       console.error('❌ CanvasWorkspace: Query failed:', error);
       
-      // Update loading text with error
-      if (loadingId && onUpdateBlock) {
-        onUpdateBlock(loadingId, {
-          content: `❌ **Error:** ${error.message || 'Query execution failed'}`
-        });
-      }
-      
-      // Add error details as quote
+      // Show error
       const errorId = onAddBlock ? onAddBlock(undefined, 'quote') : null;
       if (errorId && onUpdateBlock) {
         onUpdateBlock(errorId, {
-          content: `Error details: ${error.message || 'Unknown error occurred'}`
+          content: `❌ **Error:** ${error.message || 'Query execution failed'}`
         });
       }
     } finally {
       setIsQueryRunning(false);
     }
+  };
+
+  // Recovery handlers
+  const handleResumeQuery = async (query: string) => {
+    console.log('🔄 CanvasWorkspace: Resuming interrupted query:', query);
+    await handleRunNewQuery(query);
+  };
+
+  const handleRetryQuery = async (query: string) => {
+    console.log('🔄 CanvasWorkspace: Retrying failed query:', query);
+    await handleRunNewQuery(query);
   };
 
   return (
@@ -379,8 +414,19 @@ export const CanvasWorkspace = ({
               <div className="text-xs text-gray-500 dark:text-gray-400 space-y-1">
                 <div>Status: <span className="font-medium text-green-600 dark:text-green-400">Ready</span></div>
                 <div>Blocks: {page.blocks.length}</div>
+                <div>Reasoning Chains: {reasoningChains.size}</div>
                 <div>Created: {new Date(page.createdAt).toLocaleDateString()}</div>
               </div>
+              
+              {/* Incomplete queries alert */}
+              {incompleteChains && incompleteChains.length > 0 && (
+                <div className="mt-3 p-2 bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-700 rounded text-xs">
+                  <div className="flex items-center gap-1 text-yellow-800 dark:text-yellow-200">
+                    <AlertTriangle className="h-3 w-3" />
+                    {incompleteChains.length} incomplete queries found
+                  </div>
+                </div>
+              )}
             </div>
 
             {/* Search */}
@@ -454,7 +500,7 @@ export const CanvasWorkspace = ({
               <Button 
                 size="sm" 
                 variant="outline" 
-                onClick={handleRunNewQuery}
+                onClick={() => handleRunNewQuery()}
                 disabled={isQueryRunning}
               >
                 <Play className="h-4 w-4 mr-2" />
@@ -479,7 +525,8 @@ export const CanvasWorkspace = ({
             {[
               { id: 'analysis', label: 'Analysis', icon: Eye },
               { id: 'data', label: 'Data', icon: Database },
-              { id: 'history', label: 'History', icon: Clock }
+              { id: 'history', label: 'History', icon: Clock },
+              { id: 'reasoning', label: 'AI Reasoning', icon: GitBranch }
             ].map(({ id, label, icon: Icon }) => (
               <button
                 key={id}
@@ -493,6 +540,11 @@ export const CanvasWorkspace = ({
               >
                 <Icon className="h-4 w-4" />
                 {label}
+                {id === 'reasoning' && incompleteChains && incompleteChains.length > 0 && (
+                  <span className="ml-1 px-1.5 py-0.5 text-xs bg-yellow-500 text-white rounded-full">
+                    {incompleteChains.length}
+                  </span>
+                )}
               </button>
             ))}
           </div>
@@ -514,7 +566,7 @@ export const CanvasWorkspace = ({
               </div>
 
               {/* Key Statistics */}
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+              <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
                 {analysisData.stats.map((stat, index) => (
                   <div key={index} className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg p-4 text-center">
                     <div className="text-xs text-gray-500 dark:text-gray-400 uppercase tracking-wide">{stat.label}</div>
@@ -527,7 +579,7 @@ export const CanvasWorkspace = ({
                 <div className="bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg p-4">
                 <h3 className="font-medium text-gray-900 dark:text-gray-100 mb-3">Quick Actions</h3>
                 <div className="flex gap-2">
-                  <Button size="sm" variant="outline" onClick={handleRunNewQuery}>
+                  <Button size="sm" variant="outline" onClick={() => handleRunNewQuery()}>
                     <Plus className="h-4 w-4 mr-2" />
                     Add Analysis
                   </Button>
@@ -551,11 +603,9 @@ export const CanvasWorkspace = ({
                 showControls={true}
                 maxRows={50}
                 onDownload={() => {
-                  // TODO: Implement CSV download
                   console.log('Download CSV');
                 }}
                 onFilter={() => {
-                  // TODO: Implement filtering
                   console.log('Filter data');
                 }}
               />
@@ -564,7 +614,7 @@ export const CanvasWorkspace = ({
                   <Database className="h-12 w-12 text-gray-400 dark:text-gray-500 mx-auto mb-4" />
                   <h3 className="text-lg font-medium text-gray-900 dark:text-gray-100 mb-2">No Data Available</h3>
                   <p className="text-gray-500 dark:text-gray-400 mb-6">Run a query to see data results here.</p>
-                  <Button onClick={handleRunNewQuery}>
+                  <Button onClick={() => handleRunNewQuery()}>
                     <Play className="h-4 w-4 mr-2" />
                     Run Query
                   </Button>
@@ -600,13 +650,67 @@ export const CanvasWorkspace = ({
                     <Clock className="h-12 w-12 text-gray-400 dark:text-gray-500 mx-auto mb-4" />
                     <h3 className="text-lg font-medium text-gray-900 dark:text-gray-100 mb-2">No Analysis History</h3>
                     <p className="text-gray-500 dark:text-gray-400 mb-6">Your analysis steps will appear here as you work.</p>
-                    <Button onClick={handleRunNewQuery}>
+                    <Button onClick={() => handleRunNewQuery()}>
                       <Play className="h-4 w-4 mr-2" />
                       Start Analysis
                     </Button>
                   </div>
                 )}
               </div>
+            </div>
+          )}
+
+          {selectedView === 'reasoning' && (
+            <div className="max-w-4xl mx-auto space-y-6">
+              <div className="flex items-center justify-between">
+                <h2 className="text-lg font-semibold text-gray-900 dark:text-gray-100">AI Reasoning Chains</h2>
+                <div className="text-sm text-gray-500 dark:text-gray-400">
+                  {reasoningChains.size} total chain{reasoningChains.size !== 1 ? 's' : ''}
+                </div>
+              </div>
+              
+              {/* Incomplete chains notification */}
+              {incompleteChains && incompleteChains.length > 0 && (
+                <div className="bg-yellow-50 dark:bg-yellow-900/30 border border-yellow-200 dark:border-yellow-700 rounded-lg p-4">
+                  <div className="flex items-center gap-2 mb-2">
+                    <AlertTriangle className="h-5 w-5 text-yellow-600 dark:text-yellow-400" />
+                    <h3 className="font-medium text-yellow-900 dark:text-yellow-100">Incomplete Queries Found</h3>
+                  </div>
+                  <p className="text-sm text-yellow-800 dark:text-yellow-200 mb-3">
+                    {incompleteChains.length} query{incompleteChains.length !== 1 ? 'ies were' : ' was'} interrupted. You can resume or retry them.
+                  </p>
+                </div>
+              )}
+
+              {/* Reasoning chains display */}
+              {Array.from(reasoningChains.entries()).length > 0 ? (
+                <div className="space-y-4">
+                  {Array.from(reasoningChains.entries()).map(([blockId, reasoningData]) => (
+                      <ReasoningChain
+                      key={blockId}
+                      reasoningData={reasoningData}
+                      title={`Block ${blockId.substring(0, 8)} - AI Reasoning`}
+                        collapsed={false}
+                      showRecoveryOptions={!reasoningData.isComplete}
+                      onResumeQuery={handleResumeQuery}
+                      onRetryQuery={handleRetryQuery}
+                    />
+                  ))}
+                        </div>
+              ) : (
+                    <div className="text-center py-12">
+                      <GitBranch className="h-12 w-12 text-gray-400 dark:text-gray-500 mx-auto mb-4" />
+                      <h3 className="text-lg font-medium text-gray-900 dark:text-gray-100 mb-2">No AI Reasoning Available</h3>
+                      <p className="text-gray-500 dark:text-gray-400 mb-6">
+                        The AI reasoning chain will appear here after running queries. 
+                        This shows how the AI thinks through problems step by step.
+                      </p>
+                  <Button onClick={() => handleRunNewQuery()}>
+                        <Play className="h-4 w-4 mr-2" />
+                        Run Query to See Reasoning
+                      </Button>
+                    </div>
+              )}
             </div>
           )}
         </div>

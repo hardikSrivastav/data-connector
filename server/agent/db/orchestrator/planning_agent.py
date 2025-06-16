@@ -150,16 +150,24 @@ class PlanningAgent:
         Returns:
             List of database types in order of relevance
         """
+        logger.info(f"🔍 CLASSIFICATION: Starting database classification for: '{question}'")
+        
         try:
             # Use the LLM-based classifier with the schema_classifier template
+            logger.info(f"🔍 CLASSIFICATION: Rendering schema_classifier template")
             prompt = self.llm_client.render_template(
                 "schema_classifier.tpl",
                 user_question=question
             )
             
+            logger.info(f"🔍 CLASSIFICATION: Calling LLM with prompt length: {len(prompt)} chars")
+            logger.info(f"🔍 CLASSIFICATION: LLM client type: {self.llm_client.__class__.__name__}")
+            
             # Call LLM to classify database types
             json_str = await self._call_llm(prompt)
-                
+            
+            logger.info(f"🔍 CLASSIFICATION: LLM returned: '{json_str[:200]}...' (truncated)")
+            
             result = json.loads(json_str)
             
             # Get the selected databases
@@ -167,27 +175,39 @@ class PlanningAgent:
             
             # Log classification rationale
             rationale = result.get("rationale", {})
-            logger.info(f"Database classification rationale: {rationale}")
+            logger.info(f"🔍 LLM Database classification for question: '{question}'")
+            logger.info(f"🔍 LLM Selected databases: {selected_dbs}")
+            logger.info(f"🔍 LLM Classification rationale: {rationale}")
             
             # Clear cached schema metadata since we're not using the fallback
             self.cached_schema_metadata = None
             
             # If LLM returned valid results, use them
             if selected_dbs:
-                logger.info(f"LLM classified databases: {selected_dbs}")
+                logger.info(f"✅ Using LLM classification results: {selected_dbs}")
                 return selected_dbs
                 
             # If LLM returned empty results, fall back to rule-based classifier
-            logger.info("LLM classification returned empty results, falling back to rule-based classifier")
+            logger.warning("⚠️ LLM classification returned empty results, falling back to rule-based classifier")
             db_types, schema_metadata = await self._fallback_classification(question)
             # Cache the schema metadata for later use
             self.cached_schema_metadata = schema_metadata
             return db_types
             
-        except Exception as e:
-            logger.error(f"Error in LLM database classification: {e}")
+        except json.JSONDecodeError as e:
+            logger.error(f"❌ JSON parsing error in LLM classification: {e}")
+            logger.error(f"❌ Raw LLM response: '{json_str}'")
             # Fall back to rule-based classifier
-            logger.info("Error in LLM classification, falling back to rule-based classifier")
+            logger.warning("⚠️ JSON parsing error in LLM classification, falling back to rule-based classifier")
+            db_types, schema_metadata = await self._fallback_classification(question)
+            # Cache the schema metadata for later use
+            self.cached_schema_metadata = schema_metadata
+            return db_types
+        except Exception as e:
+            logger.error(f"❌ Error in LLM database classification: {e}")
+            logger.error(f"❌ Exception type: {type(e).__name__}")
+            # Fall back to rule-based classifier
+            logger.warning("⚠️ Error in LLM classification, falling back to rule-based classifier")
             db_types, schema_metadata = await self._fallback_classification(question)
             # Cache the schema metadata for later use
             self.cached_schema_metadata = schema_metadata
@@ -241,20 +261,28 @@ class PlanningAgent:
         Returns:
             List of schema metadata objects
         """
+        logger.info(f"📊 _get_schema_info called with db_types: {db_types}")
+        logger.info(f"📊 Question for schema search: '{question}'")
+        
         all_schema_info = []
         
         # For each database type, retrieve schema information
         for db_type in db_types:
+            logger.info(f"🔍 Processing schema for database type: {db_type}")
             try:
                 # Search for relevant schema in FAISS index, using the question for better relevance
                 # If question is empty, fall back to a generic search term
                 search_query = question if question else "database schema"
+                
+                logger.info(f"🔍 Searching FAISS for db_type='{db_type}' with query='{search_query}'")
                 
                 schema_results = await self.schema_searcher.search(
                     query=search_query,
                     top_k=self.schema_items_per_db,
                     db_type=db_type
                 )
+                
+                logger.info(f"📊 FAISS returned {len(schema_results)} results for {db_type}")
                 
                 # Add to combined results
                 all_schema_info.extend(schema_results)
@@ -295,7 +323,12 @@ class PlanningAgent:
                         if 'type' in schema_item:
                             item_type = schema_item.get('type')
                     
-                    logger.info(f"  Schema {i+1}: {item_type} '{item_name}'")
+                    # Check if this schema item actually belongs to the requested db_type
+                    actual_db_type = schema_item.get('db_type', 'unknown')
+                    if actual_db_type != db_type:
+                        logger.warning(f"⚠️ Schema mismatch! Requested {db_type} but got {actual_db_type} for {item_type} '{item_name}'")
+                    
+                    logger.info(f"  Schema {i+1}: {item_type} '{item_name}' (db_type: {actual_db_type})")
                     
                     # Log columns if available
                     if 'columns' in schema_item:
@@ -314,10 +347,11 @@ class PlanningAgent:
                             preview = content[:100] + "..." if len(content) > 100 else content
                             logger.info(f"    Content preview: {preview}")
                 
-                logger.info(f"Retrieved {len(schema_results)} schema items for {db_type}")
+                logger.info(f"✅ Retrieved {len(schema_results)} schema items for {db_type}")
             except Exception as e:
-                logger.error(f"Error retrieving schema for {db_type}: {e}")
+                logger.error(f"❌ Error retrieving schema for {db_type}: {e}")
         
+        logger.info(f"📊 Total schema items collected: {len(all_schema_info)}")
         return all_schema_info
     
     async def _generate_plan(self, question: str, db_types: List[str], 
