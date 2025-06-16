@@ -2867,3 +2867,212 @@ def get_llm_client() -> LLMClient:
         return FallbackLLMClient(clients)
     else:
         raise ValueError("No valid LLM clients could be initialized. Check your configuration.")
+
+class OrchestrationClassificationClient:
+    """
+    Lightweight LLM client for fast orchestration classification operations.
+    Uses AWS Bedrock with Claude Haiku for 1-token classification.
+    """
+    
+    def __init__(self):
+        self.settings = Settings()
+        self.client = None
+        self.enabled = True
+        self.model_id = 'anthropic.claude-3-haiku-20240307-v1:0'
+        
+        self._initialize_client()
+        logger.info(f"Initialized OrchestrationClassificationClient with Bedrock")
+    
+    def _initialize_client(self):
+        """Initialize AWS Bedrock client with proper credential handling."""
+        try:
+            import boto3
+            import os
+            from botocore.exceptions import ClientError, NoCredentialsError
+            
+            # Use same credential pattern as trivial client
+            region = os.getenv("AWS_REGION", "us-east-1")
+            
+            try:
+                self.client = boto3.client(
+                    "bedrock-runtime",
+                    region_name=region
+                )
+                
+                # Test credentials by making a simple call to bedrock (not bedrock-runtime)
+                # Use a separate client just for testing credentials
+                test_client = boto3.client("bedrock", region_name=region)
+                test_client.list_foundation_models()
+                logger.info(f"Successfully initialized Bedrock classification client in region: {region}")
+                
+            except NoCredentialsError:
+                logger.error("AWS credentials not found for classification client")
+                self.enabled = False
+                raise ValueError("AWS credentials not found. Please configure AWS credentials via environment variables, AWS profile, or IAM role.")
+            except ClientError as e:
+                if e.response['Error']['Code'] == 'UnauthorizedOperation':
+                    logger.error("AWS credentials don't have permission to access Bedrock")
+                    self.enabled = False
+                    raise ValueError("AWS credentials don't have permission to access Bedrock. Please check IAM permissions.")
+                else:
+                    logger.error(f"AWS Bedrock initialization failed: {e}")
+                    self.enabled = False
+                    raise ValueError(f"AWS Bedrock initialization failed: {e}")
+            except Exception as e:
+                logger.error(f"Unexpected error calling Bedrock: {e}")
+                self.enabled = False
+                raise ValueError(f"Unexpected error calling Bedrock: {e}")
+                
+        except Exception as e:
+            logger.error(f"Failed to initialize classification client: {e}")
+            self.enabled = False
+            raise
+    
+    def is_enabled(self) -> bool:
+        """Check if the classification client is properly enabled."""
+        return self.enabled
+    
+    async def classify_operation(self, request: str, context: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Classify an operation using ultra-fast LLM routing with 1-token response.
+        
+        Args:
+            request: The user's request text
+            context: Context dictionary with block information
+            
+        Returns:
+            Dict with classification results
+        """
+        if not self.enabled:
+            raise ValueError("Classification client is not available")
+        
+        try:
+            import json
+            import time
+            
+            logger.info(f"🧠 CLASSIFICATION: Classifying request: '{request}'")
+            logger.info(f"🧠 CLASSIFICATION: Context type: {context.get('type', 'unknown')}")
+            
+            # Build the prompt for 1-token classification (same as TypeScript version)
+            prompt = f"""Classify this user request as either TRIVIAL or DATA_ANALYSIS.
+
+TRIVIAL operations (use fast client):
+- Grammar/spelling fixes
+- Tone adjustments  
+- Text formatting
+- Simple rewrites
+- Content generation
+- Basic text improvements
+
+DATA_ANALYSIS operations (use powerful client):
+- Data analysis queries
+- Statistical calculations
+- Database operations
+- Chart/graph generation
+- Complex data insights
+- Cross-database queries
+
+Request: "{request}"
+Context: {context.get('type', 'text')} block, {len(context.get('content', ''))} characters
+
+Respond with exactly one token: TRIVIAL or DATA_ANALYSIS"""
+
+            start_time = time.time()
+            
+            # Call Bedrock with 1-token limit (same model as TypeScript version)
+            response = self.client.invoke_model(
+                modelId=self.model_id,
+                body=json.dumps({
+                    "anthropic_version": "bedrock-2023-05-31",
+                    "max_tokens": 1,
+                    "temperature": 0,
+                    "messages": [
+                        {
+                            "role": "user", 
+                            "content": prompt
+                        }
+                    ]
+                })
+            )
+            
+            processing_time = (time.time() - start_time) * 1000  # Convert to ms
+            
+            # Parse response
+            response_body = json.loads(response['body'].read())
+            output = response_body['content'][0]['text'].strip().upper()
+            
+            logger.info(f"🧠 CLASSIFICATION: Bedrock response: '{output}' in {int(processing_time)}ms")
+            
+            # Determine if trivial - look for TRIVIAL token in response
+            is_trivial = 'TRIVIAL' in output
+            
+            # Calculate confidence based on response clarity and processing time
+            confidence = 0.9 if output in ['TRIVIAL', 'DATA_ANALYSIS'] else 0.7
+            if processing_time < 300:
+                confidence += 0.05
+            
+            # Determine operation type (same logic as TypeScript version)
+            def infer_operation_type(request_text: str, is_trivial: bool) -> str:
+                req = request_text.lower()
+                if is_trivial:
+                    if 'grammar' in req or 'spell' in req or 'fix' in req:
+                        return 'grammar_fix'
+                    if 'tone' in req or 'formal' in req or 'casual' in req:
+                        return 'tone_adjustment'
+                    if 'format' in req or 'indent' in req:
+                        return 'formatting'
+                    if 'rephrase' in req or 'rewrite' in req:
+                        return 'text_transformation'
+                    return 'simple_edit'
+                else:
+                    if 'analyze' in req or 'data' in req:
+                        return 'data_analysis'
+                    if 'generate' in req or 'create' in req:
+                        return 'content_generation'
+                    if 'research' in req or 'find' in req:
+                        return 'research_operation'
+                    return 'complex_operation'
+            
+            operation_type = infer_operation_type(request, is_trivial)
+            estimated_time = 500 if is_trivial else 3000
+            tier = 'trivial' if is_trivial else 'overpowered'
+            
+            logger.info(f"🧠 CLASSIFICATION: Final classification: {tier.upper()} ({operation_type}, {int(confidence * 100)}% confidence)")
+            
+            return {
+                "tier": tier,
+                "confidence": confidence,
+                "reasoning": f"Bedrock LLM classification: {'TRIVIAL (fast client)' if is_trivial else 'DATA ANALYSIS (overpowered)'} in {int(processing_time)}ms with {int(confidence * 100)}% confidence",
+                "estimated_time": estimated_time,
+                "operation_type": operation_type
+            }
+            
+        except Exception as e:
+            logger.error(f"🧠 CLASSIFICATION: LLM classification failed: {e}")
+            # Fallback to regex classification (same as TypeScript version)
+            import re
+            data_analysis_patterns = r'\b(analyze|analysis|statistical|metrics|calculate|chart|graph|data\s+insight|database\s+quer|sql\s+quer)\b'
+            is_data_analysis = bool(re.search(data_analysis_patterns, request, re.IGNORECASE))
+            
+            tier = 'overpowered' if is_data_analysis else 'trivial'
+            operation_type = 'data_analysis' if is_data_analysis else 'text_editing'
+            
+            logger.info(f"🧠 CLASSIFICATION: Fallback classification: {tier.upper()} ({operation_type})")
+            
+            return {
+                "tier": tier,
+                "confidence": 0.7,
+                "reasoning": f"Fallback regex classification: {'DATA ANALYSIS detected' if is_data_analysis else 'TEXT EDITING (default)'} due to LLM error: {str(e)}",
+                "estimated_time": 3000 if is_data_analysis else 500,
+                "operation_type": operation_type
+            }
+
+# Global instance for the classification client
+_classification_client = None
+
+def get_classification_client() -> OrchestrationClassificationClient:
+    """Get the global classification client instance."""
+    global _classification_client
+    if _classification_client is None:
+        _classification_client = OrchestrationClassificationClient()
+    return _classification_client

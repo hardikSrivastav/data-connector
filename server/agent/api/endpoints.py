@@ -2318,3 +2318,77 @@ async def get_agent_auth_status(request: Request):
             "timestamp": datetime.utcnow().isoformat(),
             "server": "agent"
         }
+
+# Add new request/response models after the existing TrivialHealthResponse class
+class OrchestrationClassifyRequest(BaseModel):
+    request: str
+    context: Dict[str, Any]
+
+class OrchestrationClassifyResponse(BaseModel):
+    tier: str  # 'trivial' | 'overpowered' | 'hybrid'
+    confidence: float
+    reasoning: str
+    estimated_time: int
+    operation_type: str
+
+@router.post("/orchestration/classify", response_model=OrchestrationClassifyResponse)
+async def classify_orchestration_operation(request: OrchestrationClassifyRequest):
+    """
+    Classify an operation using LLM-based orchestration routing.
+    This provides the same classification that would happen server-side with AWS Bedrock.
+    """
+    try:
+        # Use the dedicated classification client
+        from ..llm.client import get_classification_client
+        
+        classification_client = get_classification_client()
+        
+        if not classification_client.is_enabled():
+            # Fallback to regex classification if client is not available
+            import re
+            data_analysis_patterns = r'\b(analyze|analysis|statistical|metrics|calculate|chart|graph|data\s+insight|database\s+quer|sql\s+quer)\b'
+            is_data_analysis = bool(re.search(data_analysis_patterns, request.request, re.IGNORECASE))
+            
+            tier = 'overpowered' if is_data_analysis else 'trivial'
+            operation_type = 'data_analysis' if is_data_analysis else 'text_editing'
+            
+            logger.info(f"🧠 ORCHESTRATION: Fallback classification (client disabled): {tier.upper()} ({operation_type})")
+            
+            return OrchestrationClassifyResponse(
+                tier=tier,
+                confidence=0.7,
+                reasoning=f"Fallback regex classification: {'DATA ANALYSIS detected' if is_data_analysis else 'TEXT EDITING (default)'} due to classification client unavailable",
+                estimated_time=3000 if is_data_analysis else 500,
+                operation_type=operation_type
+            )
+        
+        # Use the classification client
+        result = await classification_client.classify_operation(request.request, request.context)
+        
+        return OrchestrationClassifyResponse(
+            tier=result["tier"],
+            confidence=result["confidence"],
+            reasoning=result["reasoning"],
+            estimated_time=result["estimated_time"],
+            operation_type=result["operation_type"]
+        )
+        
+    except Exception as e:
+        logger.error(f"🧠 ORCHESTRATION: Classification endpoint failed: {e}")
+        # Final fallback to regex classification
+        import re
+        data_analysis_patterns = r'\b(analyze|analysis|statistical|metrics|calculate|chart|graph|data\s+insight|database\s+quer|sql\s+quer)\b'
+        is_data_analysis = bool(re.search(data_analysis_patterns, request.request, re.IGNORECASE))
+        
+        tier = 'overpowered' if is_data_analysis else 'trivial'
+        operation_type = 'data_analysis' if is_data_analysis else 'text_editing'
+        
+        logger.info(f"🧠 ORCHESTRATION: Final fallback classification: {tier.upper()} ({operation_type})")
+        
+        return OrchestrationClassifyResponse(
+            tier=tier,
+            confidence=0.7,
+            reasoning=f"Fallback regex classification: {'DATA ANALYSIS detected' if is_data_analysis else 'TEXT EDITING (default)'} due to endpoint error: {str(e)}",
+            estimated_time=3000 if is_data_analysis else 500,
+            operation_type=operation_type
+        )
