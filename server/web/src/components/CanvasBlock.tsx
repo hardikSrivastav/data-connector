@@ -234,8 +234,10 @@ export const CanvasBlock = ({
       <div className="w-full canvas-block">
         <div 
         className={cn(
-          "group border rounded-lg hover:border-gray-300 transition-colors cursor-pointer overflow-hidden canvas-preview",
-          isCanvasPageMissing ? "border-orange-300 bg-orange-50" : "border-gray-200"
+          "group border rounded-lg hover:border-gray-300 dark:hover:border-gray-600 transition-colors cursor-pointer overflow-hidden canvas-preview",
+          isCanvasPageMissing 
+            ? "border-orange-300 dark:border-orange-600 bg-orange-50 dark:bg-orange-900/20" 
+            : "border-gray-200 dark:border-gray-700"
         )}
         onClick={(e) => {
           // Don't navigate if clicking on interactive elements
@@ -253,16 +255,16 @@ export const CanvasBlock = ({
         >
           {/* Header */}
         <div className={cn(
-          "flex items-center justify-between p-4 border-b border-gray-200",
-          isCanvasPageMissing ? "bg-orange-100" : "bg-gray-50"
+          "flex items-center justify-between p-4 border-b border-gray-200 dark:border-gray-700",
+          isCanvasPageMissing ? "bg-orange-100 dark:bg-orange-900/30" : "bg-gray-50 dark:bg-gray-800"
         )}>
             <div className="flex items-center gap-3">
               <div className="flex items-center gap-2">
               <BarChart3 className={cn(
                 "h-5 w-5",
-                isCanvasPageMissing ? "text-orange-600" : "text-blue-600"
+                isCanvasPageMissing ? "text-orange-600 dark:text-orange-400" : "text-blue-600 dark:text-blue-400"
               )} />
-                <ChevronRight className="h-4 w-4 text-gray-400 group-hover:text-gray-600 transition-colors" />
+                <ChevronRight className="h-4 w-4 text-gray-400 dark:text-gray-500 group-hover:text-gray-600 dark:group-hover:text-gray-300 transition-colors" />
               </div>
               
               {showNameEditor ? (
@@ -273,13 +275,13 @@ export const CanvasBlock = ({
                   onBlur={handleNameSubmit}
                   onKeyDown={handleKeyDown}
                 placeholder="Name your canvas analysis..."
-                  className="font-medium text-gray-900 bg-transparent border-none outline-none focus:ring-0 flex-1 min-w-0"
+                  className="font-medium text-gray-900 dark:text-gray-100 bg-transparent border-none outline-none focus:ring-0 flex-1 min-w-0"
                   autoFocus
                   onClick={(e) => e.stopPropagation()}
                 />
               ) : (
                 <span 
-                  className="font-medium text-gray-900"
+                  className="font-medium text-gray-900 dark:text-gray-100"
                   onDoubleClick={(e) => {
                     e.stopPropagation();
                     setShowNameEditor(true);
@@ -290,21 +292,21 @@ export const CanvasBlock = ({
               )}
             
             {isCanvasPageMissing && (
-              <span className="text-xs text-orange-600 bg-orange-200 px-2 py-1 rounded">
+              <span className="text-xs text-orange-600 dark:text-orange-400 bg-orange-200 dark:bg-orange-800 px-2 py-1 rounded">
                 Page Missing
               </span>
             )}
           </div>
             
             <div className="flex items-center gap-2">
-              <span className="text-xs text-gray-500 bg-white px-2 py-1 rounded">
+              <span className="text-xs text-gray-500 dark:text-gray-400 bg-white dark:bg-gray-800 px-2 py-1 rounded">
               Canvas
               </span>
             <Maximize2 className={cn(
               "h-4 w-4 transition-colors",
               isCanvasPageMissing 
-                ? "text-orange-400 group-hover:text-orange-600" 
-                : "text-gray-400 group-hover:text-blue-600"
+                ? "text-orange-400 dark:text-orange-500 group-hover:text-orange-600 dark:group-hover:text-orange-400" 
+                : "text-gray-400 dark:text-gray-500 group-hover:text-blue-600 dark:group-hover:text-blue-400"
             )} />
           </div>
         </div>
@@ -312,8 +314,8 @@ export const CanvasBlock = ({
         {/* Preview Content */}
         {isCanvasPageMissing ? (
           <div className="p-4 space-y-4">
-            <div className="text-sm text-orange-700 bg-orange-100 p-3 rounded-lg border-l-4 border-orange-300">
-              <div className="flex items-center gap-2 font-medium text-orange-900 mb-1">
+            <div className="text-sm text-orange-700 dark:text-orange-300 bg-orange-100 dark:bg-orange-900/30 p-3 rounded-lg border-l-4 border-orange-300 dark:border-orange-600">
+              <div className="flex items-center gap-2 font-medium text-orange-900 dark:text-orange-100 mb-1">
                 <Eye className="h-4 w-4" />
                 Canvas Page Missing
               </div>
@@ -324,12 +326,12 @@ export const CanvasBlock = ({
             <div className="p-4 space-y-4">
               {/* Summary */}
             {preview.summary && (
-                <div className="text-sm text-gray-700 bg-blue-50 p-3 rounded-lg border-l-4 border-blue-200">
-                  <div className="flex items-center gap-2 font-medium text-blue-900 mb-1">
+                <div className="text-sm text-gray-700 dark:text-gray-300 bg-blue-50 dark:bg-blue-900/30 p-3 rounded-lg border-l-4 border-blue-200 dark:border-blue-600">
+                  <div className="flex items-center gap-2 font-medium text-blue-900 dark:text-blue-100 mb-1">
                     <Eye className="h-4 w-4" />
                   Analysis Summary
                   </div>
-                  <div className="prose prose-sm max-w-none text-sm text-gray-700">
+                  <div className="prose prose-sm max-w-none text-sm text-gray-700 dark:text-gray-300">
                   <ReactMarkdown children={preview.summary} />
                   </div>
                 </div>
@@ -339,9 +341,9 @@ export const CanvasBlock = ({
             {preview.stats && preview.stats.length > 0 && (
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
                 {preview.stats.map((stat, index) => (
-                    <div key={index} className="bg-white border border-gray-200 rounded-lg p-3 text-center">
-                      <div className="text-xs text-gray-500 uppercase tracking-wide">{stat.label}</div>
-                      <div className="text-lg font-semibold text-gray-900 mt-1">{stat.value}</div>
+                    <div key={index} className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg p-3 text-center">
+                      <div className="text-xs text-gray-500 dark:text-gray-400 uppercase tracking-wide">{stat.label}</div>
+                      <div className="text-lg font-semibold text-gray-900 dark:text-gray-100 mt-1">{stat.value}</div>
                     </div>
                   ))}
                 </div>
@@ -362,8 +364,8 @@ export const CanvasBlock = ({
         ) : threadName ? (
           // Show basic preview for named canvases without content yet
             <div className="p-4 space-y-4">
-              <div className="text-sm text-gray-700 bg-blue-50 p-3 rounded-lg border-l-4 border-blue-200">
-                <div className="flex items-center gap-2 font-medium text-blue-900 mb-1">
+              <div className="text-sm text-gray-700 dark:text-gray-300 bg-blue-50 dark:bg-blue-900/30 p-3 rounded-lg border-l-4 border-blue-200 dark:border-blue-600">
+                <div className="flex items-center gap-2 font-medium text-blue-900 dark:text-blue-100 mb-1">
                   <Eye className="h-4 w-4" />
                 Analysis Workspace
                 </div>
@@ -372,27 +374,27 @@ export const CanvasBlock = ({
 
             {/* Empty state stats */}
               <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-                <div className="bg-white border border-gray-200 rounded-lg p-3 text-center">
-                <div className="text-xs text-gray-500 uppercase tracking-wide">Blocks</div>
-                <div className="text-lg font-semibold text-gray-900 mt-1">0</div>
+                <div className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg p-3 text-center">
+                <div className="text-xs text-gray-500 dark:text-gray-400 uppercase tracking-wide">Blocks</div>
+                <div className="text-lg font-semibold text-gray-900 dark:text-gray-100 mt-1">0</div>
                 </div>
-                <div className="bg-white border border-gray-200 rounded-lg p-3 text-center">
-                <div className="text-xs text-gray-500 uppercase tracking-wide">Tables</div>
-                <div className="text-lg font-semibold text-gray-900 mt-1">0</div>
+                <div className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg p-3 text-center">
+                <div className="text-xs text-gray-500 dark:text-gray-400 uppercase tracking-wide">Tables</div>
+                <div className="text-lg font-semibold text-gray-900 dark:text-gray-100 mt-1">0</div>
                 </div>
-                <div className="bg-white border border-gray-200 rounded-lg p-3 text-center">
-                  <div className="text-xs text-gray-500 uppercase tracking-wide">Insights</div>
-                <div className="text-lg font-semibold text-gray-900 mt-1">0</div>
+                <div className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg p-3 text-center">
+                  <div className="text-xs text-gray-500 dark:text-gray-400 uppercase tracking-wide">Insights</div>
+                <div className="text-lg font-semibold text-gray-900 dark:text-gray-100 mt-1">0</div>
               </div>
-              <div className="bg-white border border-gray-200 rounded-lg p-3 text-center">
-                <div className="text-xs text-gray-500 uppercase tracking-wide">Status</div>
-                <div className="text-lg font-semibold text-gray-900 mt-1">Ready</div>
+              <div className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg p-3 text-center">
+                <div className="text-xs text-gray-500 dark:text-gray-400 uppercase tracking-wide">Status</div>
+                <div className="text-lg font-semibold text-gray-900 dark:text-gray-100 mt-1">Ready</div>
                 </div>
               </div>
             </div>
           ) : (
             <div className="p-6 text-center">
-              <div className="flex flex-col items-center gap-3 text-gray-500">
+              <div className="flex flex-col items-center gap-3 text-gray-500 dark:text-gray-400">
                 <Activity className="h-8 w-8" />
                 <div>
                   <div className="font-medium">Ready for Analysis</div>
@@ -426,7 +428,7 @@ export const CanvasBlock = ({
                 e.preventDefault();
                 openCanvasPage();
               }}
-              className="text-orange-600 border-orange-300 hover:bg-orange-50"
+              className="text-orange-600 dark:text-orange-400 border-orange-300 dark:border-orange-600 hover:bg-orange-50 dark:hover:bg-orange-900/30"
             >
               Recreate Page
             </Button>

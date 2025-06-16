@@ -183,6 +183,43 @@ class LLMClient:
         }
         return event
 
+    def _serialize_data_for_llm(self, data: Any) -> str:
+        """
+        Convert data to JSON-serializable format for LLM APIs.
+        Handles Decimal objects and other non-serializable types.
+        
+        Args:
+            data: Data to serialize
+            
+        Returns:
+            JSON string representation of the data
+        """
+        import decimal
+        from datetime import datetime, date
+        
+        def convert_item(item):
+            if isinstance(item, decimal.Decimal):
+                return float(item)
+            elif isinstance(item, (datetime, date)):
+                return item.isoformat()
+            elif isinstance(item, dict):
+                return {k: convert_item(v) for k, v in item.items()}
+            elif isinstance(item, list):
+                return [convert_item(i) for i in item]
+            elif hasattr(item, '__dict__'):
+                # Handle custom objects by converting to dict
+                return convert_item(item.__dict__)
+            else:
+                return item
+        
+        try:
+            converted = convert_item(data)
+            # Convert to JSON string
+            return json.dumps(converted, indent=2)
+        except (TypeError, ValueError) as e:
+            logger.warning(f"Data serialization issue: {e}. Using string representation.")
+            return str(data)
+
     async def generate_ga4_query(self, prompt: str) -> str:
         """
         Generate a GA4 query from a prompt.
@@ -596,7 +633,7 @@ class OpenAIClient(LLMClient):
         
         # Prepare the data for the prompt
         # Convert rows to string to avoid sending too much data
-        data_str = json.dumps(rows[:100], indent=2)  # Limit to 100 rows
+        data_str = self._serialize_data_for_llm(rows[:100])  # Limit to 100 rows
         
         # Choose appropriate prompt based on result type
         if is_vector_search:
@@ -666,7 +703,7 @@ class OpenAIClient(LLMClient):
                                            session_id=session_id)
             
             # Prepare the data for the prompt
-            data_str = json.dumps(rows[:100], indent=2)  # Limit to 100 rows
+            data_str = self._serialize_data_for_llm(rows[:100])  # Limit to 100 rows
             
             # Choose appropriate prompt based on result type
             if is_vector_search:
@@ -1490,7 +1527,7 @@ class AnthropicClient(LLMClient):
         # Convert rows to a string representation
         # Limit to first 20 rows for brevity and to avoid token limits
         results_sample = rows[:20]
-        results_str = json.dumps(results_sample, indent=2)
+        results_str = self._serialize_data_for_llm(results_sample)
         total_rows = len(rows)
         
         # Create a prompt for the analysis
@@ -2019,7 +2056,7 @@ class AnthropicClient(LLMClient):
                                            session_id=session_id)
             
             # Prepare data
-            data_str = json.dumps(rows[:100], indent=2)
+            data_str = self._serialize_data_for_llm(rows[:100])
             
             if is_vector_search:
                 prompt = f"""

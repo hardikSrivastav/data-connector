@@ -37,9 +37,9 @@ export const TableDisplay = ({
       {(title !== "Data Table" || showControls) && (
         <div className="flex items-center justify-between mb-3 px-1">
           <div className="flex items-center gap-2">
-            <Database className="h-4 w-4 text-gray-400" />
-            <span className="text-sm font-medium text-gray-700">{title}</span>
-            <span className="text-xs text-gray-400">
+            <Database className="h-4 w-4 text-gray-400 dark:text-gray-500" />
+            <span className="text-sm font-medium text-gray-700 dark:text-gray-200">{title}</span>
+            <span className="text-xs text-gray-400 dark:text-gray-500">
               {actualTotalRows.toLocaleString()} {actualTotalRows === 1 ? 'row' : 'rows'}
             </span>
           </div>
@@ -68,11 +68,11 @@ export const TableDisplay = ({
         <table className="w-full">
           {/* Notion-style headers */}
           <thead>
-            <tr className="border-b border-gray-200">
+            <tr className="border-b border-gray-200 dark:border-gray-700">
               {headers.map((header, index) => (
                 <th 
                   key={index} 
-                  className="text-left py-2 px-3 font-medium text-sm text-gray-600 bg-gray-50/50"
+                  className="text-left py-2 px-3 font-medium text-sm text-gray-600 dark:text-gray-300 bg-gray-50/50 dark:bg-gray-800/50"
                 >
                   {header || `Column ${index + 1}`}
                 </th>
@@ -85,10 +85,10 @@ export const TableDisplay = ({
             {displayRows.map((row, rowIndex) => (
               <tr 
                 key={rowIndex} 
-                className="border-b border-gray-100 hover:bg-gray-50/30 transition-colors duration-150"
+                className="border-b border-gray-100 dark:border-gray-800 hover:bg-gray-50/30 dark:hover:bg-gray-800/30 transition-colors duration-150"
               >
                 {row.map((cell, cellIndex) => (
-                  <td key={cellIndex} className="py-2 px-3 text-sm text-gray-900">
+                  <td key={cellIndex} className="py-2 px-3 text-sm text-gray-900 dark:text-gray-100">
                     {typeof cell === 'string' && cell.length > 80 ? (
                       <div className="max-w-xs truncate" title={cell}>
                         {cell}
@@ -108,7 +108,7 @@ export const TableDisplay = ({
       
       {/* Notion-style footer for preview */}
       {isPreview && hasMoreRows && (
-        <div className="text-center py-2 px-3 text-xs text-gray-400 border-t border-gray-100 bg-gray-50/30">
+        <div className="text-center py-2 px-3 text-xs text-gray-400 dark:text-gray-500 border-t border-gray-100 dark:border-gray-800 bg-gray-50/30 dark:bg-gray-800/30">
           +{(actualTotalRows - displayRows.length).toLocaleString()} more rows
         </div>
       )}

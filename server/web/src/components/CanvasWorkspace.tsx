@@ -342,14 +342,14 @@ export const CanvasWorkspace = ({
   };
 
   return (
-    <div className="flex h-screen bg-white">
+    <div className="flex h-screen bg-white dark:bg-gray-900">
       {/* Sidebar - Analysis History */}
       <div className={cn(
-        "border-r border-gray-200 bg-gray-50 transition-all duration-200",
+        "border-r border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800 transition-all duration-200",
         sidebarCollapsed ? "w-12" : "w-80"
       )}>
         {/* Sidebar Header */}
-        <div className="p-4 border-b border-gray-200">
+        <div className="p-4 border-b border-gray-200 dark:border-gray-700">
           <div className="flex items-center justify-between">
             <Button
               variant="ghost"
@@ -361,8 +361,8 @@ export const CanvasWorkspace = ({
             </Button>
             {!sidebarCollapsed && (
               <div className="flex items-center gap-2">
-                <GitBranch className="h-4 w-4 text-gray-600" />
-                <span className="font-medium text-sm">Analysis History</span>
+                <GitBranch className="h-4 w-4 text-gray-600 dark:text-gray-300" />
+                <span className="font-medium text-sm text-gray-900 dark:text-gray-100">Analysis History</span>
               </div>
             )}
           </div>
@@ -371,22 +371,22 @@ export const CanvasWorkspace = ({
         {!sidebarCollapsed && (
           <>
             {/* Canvas Info */}
-            <div className="p-4 border-b border-gray-200">
+            <div className="p-4 border-b border-gray-200 dark:border-gray-700">
               <div className="flex items-center gap-2 mb-2">
-                <BarChart3 className="h-5 w-5 text-blue-600" />
-                <h2 className="font-semibold">{page.title}</h2>
+                <BarChart3 className="h-5 w-5 text-blue-600 dark:text-blue-400" />
+                <h2 className="font-semibold text-gray-900 dark:text-gray-100">{page.title}</h2>
               </div>
-              <div className="text-xs text-gray-500 space-y-1">
-                <div>Status: <span className="font-medium text-green-600">Ready</span></div>
+              <div className="text-xs text-gray-500 dark:text-gray-400 space-y-1">
+                <div>Status: <span className="font-medium text-green-600 dark:text-green-400">Ready</span></div>
                 <div>Blocks: {page.blocks.length}</div>
                 <div>Created: {new Date(page.createdAt).toLocaleDateString()}</div>
               </div>
             </div>
 
             {/* Search */}
-            <div className="p-4 border-b border-gray-200">
+            <div className="p-4 border-b border-gray-200 dark:border-gray-700">
               <div className="relative">
-                <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-gray-400" />
+                <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-gray-400 dark:text-gray-500" />
                 <Input
                   placeholder="Search analysis..."
                   value={searchQuery}
@@ -399,27 +399,27 @@ export const CanvasWorkspace = ({
             {/* Analysis Sections */}
             <div className="flex-1 overflow-y-auto">
               <div className="p-4">
-                <h3 className="text-sm font-medium text-gray-700 mb-3">Analysis Sections</h3>
+                <h3 className="text-sm font-medium text-gray-700 dark:text-gray-200 mb-3">Analysis Sections</h3>
                 <div className="space-y-2">
                   {page.blocks
                     .filter(block => block.type.startsWith('heading'))
                     .map((block, index) => (
                       <div
                         key={block.id}
-                        className="p-3 rounded-lg border border-gray-200 hover:border-gray-300 hover:bg-gray-50 cursor-pointer transition-colors"
+                        className="p-3 rounded-lg border border-gray-200 dark:border-gray-700 hover:border-gray-300 dark:hover:border-gray-600 hover:bg-gray-50 dark:hover:bg-gray-700 cursor-pointer transition-colors"
                     >
                       <div className="flex items-center gap-2 mb-1">
-                          <div className="w-2 h-2 rounded-full bg-blue-500" />
-                          <span className="text-sm font-medium">{block.content || `Section ${index + 1}`}</span>
+                          <div className="w-2 h-2 rounded-full bg-blue-500 dark:bg-blue-400" />
+                          <span className="text-sm font-medium text-gray-900 dark:text-gray-100">{block.content || `Section ${index + 1}`}</span>
                       </div>
-                        <div className="text-xs text-gray-500">
+                        <div className="text-xs text-gray-500 dark:text-gray-400">
                           {new Date().toLocaleString()}
                       </div>
                       </div>
                     ))}
                   
                   {page.blocks.filter(block => block.type.startsWith('heading')).length === 0 && (
-                    <div className="text-sm text-gray-500 text-center py-4">
+                    <div className="text-sm text-gray-500 dark:text-gray-400 text-center py-4">
                       No analysis sections yet. Run a query to get started.
                     </div>
                   )}
@@ -433,20 +433,20 @@ export const CanvasWorkspace = ({
       {/* Main Content Area */}
       <div className="flex-1 flex flex-col">
         {/* Header */}
-        <div className="border-b border-gray-200 bg-white">
+        <div className="border-b border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900">
           <div className="flex items-center justify-between p-4">
             <div className="flex items-center gap-4">
               <Button
                 variant="ghost"
                 size="sm"
                 onClick={onNavigateBack}
-                className="text-gray-600 hover:text-gray-900"
+                className="text-gray-600 dark:text-gray-300 hover:text-gray-900 dark:hover:text-gray-100"
               >
                 ← Back to Page
               </Button>
               <div className="flex items-center gap-2">
-                <BarChart3 className="h-5 w-5 text-blue-600" />
-                <h1 className="text-lg font-semibold">{page.title}</h1>
+                <BarChart3 className="h-5 w-5 text-blue-600 dark:text-blue-400" />
+                <h1 className="text-lg font-semibold text-gray-900 dark:text-gray-100">{page.title}</h1>
               </div>
             </div>
             
@@ -475,7 +475,7 @@ export const CanvasWorkspace = ({
           </div>
 
           {/* View Tabs */}
-          <div className="flex border-t border-gray-200">
+          <div className="flex border-t border-gray-200 dark:border-gray-700">
             {[
               { id: 'analysis', label: 'Analysis', icon: Eye },
               { id: 'data', label: 'Data', icon: Database },
@@ -486,8 +486,8 @@ export const CanvasWorkspace = ({
                 className={cn(
                   "flex items-center gap-2 px-4 py-3 text-sm font-medium border-b-2 transition-colors",
                   selectedView === id
-                    ? "border-blue-500 text-blue-600"
-                    : "border-transparent text-gray-600 hover:text-gray-900"
+                    ? "border-blue-500 dark:border-blue-400 text-blue-600 dark:text-blue-400"
+                    : "border-transparent text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-100"
                 )}
                 onClick={() => setSelectedView(id as any)}
               >
@@ -503,12 +503,12 @@ export const CanvasWorkspace = ({
           {selectedView === 'analysis' && (
             <div className="max-w-4xl mx-auto space-y-6">
               {/* Current Analysis Summary */}
-              <div className="bg-blue-50 border border-blue-200 rounded-lg p-6">
+              <div className="bg-blue-50 dark:bg-blue-900/30 border border-blue-200 dark:border-blue-700 rounded-lg p-6">
                 <div className="flex items-center gap-2 mb-4">
-                  <Eye className="h-5 w-5 text-blue-600" />
-                  <h2 className="text-lg font-semibold text-blue-900">Current Analysis</h2>
+                  <Eye className="h-5 w-5 text-blue-600 dark:text-blue-400" />
+                  <h2 className="text-lg font-semibold text-blue-900 dark:text-blue-100">Current Analysis</h2>
                 </div>
-                <div className="prose prose-sm max-w-none">
+                <div className="prose prose-sm max-w-none dark:prose-invert">
                   <ReactMarkdown>{analysisData.currentAnalysis}</ReactMarkdown>
                 </div>
               </div>
@@ -516,16 +516,16 @@ export const CanvasWorkspace = ({
               {/* Key Statistics */}
               <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
                 {analysisData.stats.map((stat, index) => (
-                  <div key={index} className="bg-white border border-gray-200 rounded-lg p-4 text-center">
-                    <div className="text-xs text-gray-500 uppercase tracking-wide">{stat.label}</div>
-                    <div className="text-2xl font-bold text-gray-900 mt-1">{stat.value}</div>
+                  <div key={index} className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg p-4 text-center">
+                    <div className="text-xs text-gray-500 dark:text-gray-400 uppercase tracking-wide">{stat.label}</div>
+                    <div className="text-2xl font-bold text-gray-900 dark:text-gray-100 mt-1">{stat.value}</div>
                   </div>
                 ))}
               </div>
 
               {/* Quick Actions */}
-                <div className="bg-gray-50 border border-gray-200 rounded-lg p-4">
-                <h3 className="font-medium text-gray-900 mb-3">Quick Actions</h3>
+                <div className="bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg p-4">
+                <h3 className="font-medium text-gray-900 dark:text-gray-100 mb-3">Quick Actions</h3>
                 <div className="flex gap-2">
                   <Button size="sm" variant="outline" onClick={handleRunNewQuery}>
                     <Plus className="h-4 w-4 mr-2" />
@@ -561,9 +561,9 @@ export const CanvasWorkspace = ({
               />
               ) : (
                 <div className="text-center py-12">
-                  <Database className="h-12 w-12 text-gray-400 mx-auto mb-4" />
-                  <h3 className="text-lg font-medium text-gray-900 mb-2">No Data Available</h3>
-                  <p className="text-gray-500 mb-6">Run a query to see data results here.</p>
+                  <Database className="h-12 w-12 text-gray-400 dark:text-gray-500 mx-auto mb-4" />
+                  <h3 className="text-lg font-medium text-gray-900 dark:text-gray-100 mb-2">No Data Available</h3>
+                  <p className="text-gray-500 dark:text-gray-400 mb-6">Run a query to see data results here.</p>
                   <Button onClick={handleRunNewQuery}>
                     <Play className="h-4 w-4 mr-2" />
                     Run Query
@@ -575,31 +575,31 @@ export const CanvasWorkspace = ({
 
           {selectedView === 'history' && (
             <div className="max-w-4xl mx-auto">
-              <h2 className="text-lg font-semibold mb-6">Analysis History</h2>
+              <h2 className="text-lg font-semibold text-gray-900 dark:text-gray-100 mb-6">Analysis History</h2>
               <div className="space-y-4">
                 {analysisData.analysisHistory.length > 0 ? (
                   analysisData.analysisHistory.map((block, index) => (
-                    <div key={block.id} className="border border-gray-200 rounded-lg p-6">
+                    <div key={block.id} className="border border-gray-200 dark:border-gray-700 rounded-lg p-6 bg-white dark:bg-gray-800">
                     <div className="flex items-center justify-between mb-4">
                       <div className="flex items-center gap-3">
-                          <div className="w-3 h-3 rounded-full bg-blue-500" />
-                          <h3 className="font-medium">Analysis Step {index + 1}</h3>
+                          <div className="w-3 h-3 rounded-full bg-blue-500 dark:bg-blue-400" />
+                          <h3 className="font-medium text-gray-900 dark:text-gray-100">Analysis Step {index + 1}</h3>
                       </div>
-                      <span className="text-sm text-gray-500">
+                      <span className="text-sm text-gray-500 dark:text-gray-400">
                           {new Date().toLocaleString()}
                       </span>
                     </div>
                     
-                      <div className="prose prose-sm max-w-none">
+                      <div className="prose prose-sm max-w-none dark:prose-invert">
                         <ReactMarkdown>{block.content}</ReactMarkdown>
                       </div>
                     </div>
                   ))
                 ) : (
                   <div className="text-center py-12">
-                    <Clock className="h-12 w-12 text-gray-400 mx-auto mb-4" />
-                    <h3 className="text-lg font-medium text-gray-900 mb-2">No Analysis History</h3>
-                    <p className="text-gray-500 mb-6">Your analysis steps will appear here as you work.</p>
+                    <Clock className="h-12 w-12 text-gray-400 dark:text-gray-500 mx-auto mb-4" />
+                    <h3 className="text-lg font-medium text-gray-900 dark:text-gray-100 mb-2">No Analysis History</h3>
+                    <p className="text-gray-500 dark:text-gray-400 mb-6">Your analysis steps will appear here as you work.</p>
                     <Button onClick={handleRunNewQuery}>
                       <Play className="h-4 w-4 mr-2" />
                       Start Analysis
