@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useWorkspace } from '@/hooks/useWorkspace';
 import { useAuth } from '@/contexts/AuthContext';
+import { useStorageManager } from '@/hooks/useStorageManager';
 import { Sidebar } from '@/components/Sidebar';
 import { PageEditor } from '@/components/PageEditor';
 import { CanvasWorkspace } from '@/components/CanvasWorkspace';
@@ -28,6 +29,11 @@ const Index = () => {
     setWorkspace
   } = useWorkspace();
 
+  const { storageManager } = useStorageManager({
+    edition: 'enterprise',
+    apiBaseUrl: import.meta.env.VITE_API_BASE || 'http://localhost:8787'
+  });
+
   // Add keyboard shortcut for sidebar toggle (Cmd+\ or Ctrl+\)
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -51,6 +57,30 @@ const Index = () => {
     
     const newPage = await createPage(canvasData.threadName || 'Canvas Analysis');
     console.log('🎨 createCanvasPage: Created canvas page:', newPage);
+    
+    // If we have reasoning chain data, update it to point to the new Canvas page
+    if (canvasData.reasoningChain?.sessionId) {
+      console.log('🧠 createCanvasPage: Updating reasoning chain to point to Canvas page:', {
+        sessionId: canvasData.reasoningChain.sessionId,
+        originalPageId: canvasData.originalPageId || canvasData.pageId,
+        newCanvasPageId: newPage.id
+      });
+      
+      try {
+        // Update the reasoning chain to point to the Canvas page
+        const updatedReasoningChain = {
+          ...canvasData.reasoningChain,
+          pageId: newPage.id,  // Canvas page where results will be displayed
+          originalPageId: canvasData.originalPageId || canvasData.pageId  // Original page where query was made
+        };
+        
+        // Save the updated reasoning chain
+        await storageManager.saveReasoningChain(updatedReasoningChain);
+        console.log('✅ createCanvasPage: Reasoning chain updated successfully');
+      } catch (error) {
+        console.warn('⚠️ createCanvasPage: Failed to update reasoning chain:', error);
+      }
+    }
     
     // Start with a heading block
     const blocks = [];

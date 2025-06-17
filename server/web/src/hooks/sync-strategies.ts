@@ -19,9 +19,10 @@ export class EnterpriseSyncStrategy implements SyncStrategy {
     const response = await fetch(url, {
       method: 'POST',
       headers: { 
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${this.getAuthToken()}`
+        'Content-Type': 'application/json'
+        // No Authorization header - using httpOnly cookies for SSO
       },
+      credentials: 'include', // Include cookies for SSO authentication
       body: JSON.stringify(data)
     });
     
@@ -40,9 +41,7 @@ export class EnterpriseSyncStrategy implements SyncStrategy {
   
   async fetchFromServer<T>(endpoint: string): Promise<T> {
     const response = await fetch(`${this.config.apiBaseUrl}/api/storage/${endpoint}`, {
-      headers: {
-        'Authorization': `Bearer ${this.getAuthToken()}`
-      }
+      credentials: 'include' // Include cookies for SSO authentication
     });
     
     if (!response.ok) {
@@ -59,18 +58,13 @@ export class EnterpriseSyncStrategy implements SyncStrategy {
     }
   }
   
-  private getAuthToken(): string {
-    // Get JWT token from enterprise SSO context
-    return localStorage.getItem('enterprise_token') || '';
-  }
-  
   private logDataAccess(data: any): void {
     // Audit logging for enterprise compliance
     const auditEntry = {
       timestamp: new Date(),
       action: 'data_sync',
       dataType: data.entity || 'unknown',
-      userId: localStorage.getItem('user_id'),
+      userId: 'authenticated_user', // Will be determined server-side from session
     };
     
     // Send to audit endpoint (non-blocking)
@@ -82,9 +76,10 @@ export class EnterpriseSyncStrategy implements SyncStrategy {
       await fetch(`${this.config.apiBaseUrl}/api/audit`, {
         method: 'POST',
         headers: { 
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${this.getAuthToken()}`
+          'Content-Type': 'application/json'
+          // No Authorization header - using httpOnly cookies for SSO
         },
+        credentials: 'include', // Include cookies for SSO authentication
         body: JSON.stringify(auditEntry)
       });
     } catch (error) {

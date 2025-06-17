@@ -161,45 +161,73 @@ export const CanvasWorkspace = ({
         }
       }
 
-      // Load reasoning chains from blocks
+      // Load reasoning chains from server API (with OR logic for page_id and original_page_id)
       const chains = new Map<string, ReasoningChainData>();
       const incomplete: Array<{ blockId: string; data: ReasoningChainData }> = [];
       
+      try {
+        console.log(`🧠 CanvasWorkspace: Loading reasoning chains from server for page ${page.id}`);
+        const serverReasoningChains = await storageManager.getReasoningChainsForPage(page.id);
+        console.log(`🧠 CanvasWorkspace: Found ${serverReasoningChains.length} reasoning chains from server`);
+        
+        serverReasoningChains.forEach(chain => {
+          if (chain.sessionId) {
+            const chainKey = chain.blockId || chain.sessionId; // Use blockId if available, otherwise sessionId
+            chains.set(chainKey, chain);
+            console.log(`🧠 CanvasWorkspace: Loaded server reasoning chain ${chain.sessionId}, events: ${chain.events?.length || 0}, complete: ${chain.isComplete}`);
+            
+            // Check if this is an incomplete chain
+            if (!chain.isComplete && chain.status === 'streaming') {
+              incomplete.push({ blockId: chainKey, data: chain });
+            }
+          }
+        });
+      } catch (error) {
+        console.error(`❌ CanvasWorkspace: Failed to load reasoning chains from server:`, error);
+      }
+      
+      // Fallback: Also check for reasoning chains in block properties (legacy support)
       page.blocks.forEach(block => {
         // Check for reasoning chains in block properties
         if (block.properties?.reasoningChain) {
           const reasoningData = block.properties.reasoningChain as ReasoningChainData;
-          console.log(`🧠 CanvasWorkspace: Found reasoning chain for block ${block.id}, events: ${reasoningData.events?.length || 0}, complete: ${reasoningData.isComplete}`);
+          console.log(`🧠 CanvasWorkspace: Found legacy reasoning chain in block ${block.id}, events: ${reasoningData.events?.length || 0}, complete: ${reasoningData.isComplete}`);
           
-          chains.set(block.id, reasoningData);
-          
-          // Check if this is an incomplete chain
-          if (!reasoningData.isComplete && reasoningData.status === 'streaming') {
-            incomplete.push({ blockId: block.id, data: reasoningData });
+          // Only add if not already loaded from server
+          if (!chains.has(block.id)) {
+            chains.set(block.id, reasoningData);
+            
+            // Check if this is an incomplete chain
+            if (!reasoningData.isComplete && reasoningData.status === 'streaming') {
+              incomplete.push({ blockId: block.id, data: reasoningData });
+            }
           }
         }
         
         // Also check legacy canvas data format
         if (block.properties?.canvasData?.reasoningChain) {
           const legacyReasoningData = block.properties.canvasData.reasoningChain;
-          console.log(`🧠 CanvasWorkspace: Found legacy reasoning chain for block ${block.id}`);
+          console.log(`🧠 CanvasWorkspace: Found legacy canvas reasoning chain for block ${block.id}`);
           
-          // Convert legacy format to new format
-          const convertedData: ReasoningChainData = {
-            events: legacyReasoningData || [],
-            originalQuery: block.properties.canvasData.originalQuery || 'Legacy Query',
-            sessionId: block.properties.canvasData.threadId,
-            isComplete: true, // Assume legacy chains are complete
-            lastUpdated: new Date().toISOString(),
-            status: 'completed',
-            progress: 1.0
-          };
-          
-          chains.set(block.id, convertedData);
-      }
+          // Only add if not already loaded from server
+          if (!chains.has(block.id)) {
+            // Convert legacy format to new format
+            const convertedData: ReasoningChainData = {
+              events: legacyReasoningData || [],
+              originalQuery: block.properties.canvasData.originalQuery || 'Legacy Query',
+              sessionId: block.properties.canvasData.threadId,
+              isComplete: true, // Assume legacy chains are complete
+              lastUpdated: new Date().toISOString(),
+              status: 'completed',
+              progress: 1.0
+            };
+            
+            chains.set(block.id, convertedData);
+          }
+        }
       });
       
-      console.log(`🧠 CanvasWorkspace: Loaded ${chains.size} reasoning chains, ${incomplete.length} incomplete`);
+      console.log(`🧠 CanvasWorkspace: Total loaded ${chains.size} reasoning chains, ${incomplete.length} incomplete`);
       setReasoningChains(chains);
       setIncompleteChains(incomplete);
     };

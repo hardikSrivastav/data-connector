@@ -1,8 +1,8 @@
 """
 Request-level authentication for Ceneca Agent Server
 
-Provides authentication checking without requiring FastAPI middleware.
-Used as dependencies in route handlers.
+Provides STRICT authentication checking for enterprise deployment.
+NO DEVELOPMENT FALLBACKS - All requests must be properly authenticated.
 """
 
 import logging
@@ -30,9 +30,18 @@ async def get_session_manager(request: Request):
     """Get session manager from auth manager"""
     try:
         from .auth_manager import auth_manager
+        if not auth_manager.session_manager:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Authentication system not properly configured"
+            )
         return auth_manager.session_manager
-    except Exception:
-        return None
+    except Exception as e:
+        logger.error(f"Failed to get session manager: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Authentication system unavailable"
+        )
 
 async def extract_session_id(request: Request) -> Optional[str]:
     """
@@ -58,15 +67,10 @@ async def get_current_user_optional(request: Request) -> Optional[SessionData]:
     Get current user if authenticated, None otherwise
     
     Does not raise exceptions - returns None for unauthenticated requests
+    ENTERPRISE MODE: Always requires proper authentication
     """
-    # Skip if auth is disabled
-    if not is_auth_enabled(request):
-        return None
-    
     try:
         session_manager = await get_session_manager(request)
-        if not session_manager:
-            return None
         
         session_id = await extract_session_id(request)
         if not session_id:
@@ -85,38 +89,60 @@ async def get_current_user_optional(request: Request) -> Optional[SessionData]:
         
         return session_data
         
+    except HTTPException:
+        # Re-raise HTTP exceptions (auth system unavailable)
+        raise
     except Exception as e:
         logger.error(f"Error getting current user: {e}")
         return None
 
-async def get_current_user(request: Request) -> SessionData:
+async def get_current_user_strict(request: Request) -> SessionData:
     """
-    Get current authenticated user
+    Get current authenticated user with STRICT enterprise authentication
+    
+    NO FALLBACKS - Always requires valid Okta session
     
     Raises HTTPException if not authenticated
     """
-    # Skip auth if disabled
-    if not is_auth_enabled(request):
-        # Create a dummy user for development
-        return SessionData(
-            session_id="dev-session",
-            user_id="dev-user",
-            email="dev@example.com",
-            name="Development User",
-            groups=["dev"],
-            roles=["admin"],
-            provider="development"
+    # Check if auth system is properly initialized
+    try:
+        from .auth_manager import auth_manager
+        if not auth_manager.is_initialized:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Authentication system not initialized"
+            )
+        
+        if not auth_manager.is_enabled:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Authentication is disabled - enterprise mode requires SSO"
+            )
+    except ImportError:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Authentication system not available"
         )
     
     user = await get_current_user_optional(request)
     if not user:
+        logger.warning(f"Unauthorized access attempt to {request.url.path}")
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Authentication required",
+            detail="Authentication required - valid Okta session needed",
             headers={"WWW-Authenticate": "Bearer"},
         )
     
     return user
+
+async def get_current_user(request: Request) -> SessionData:
+    """
+    DEPRECATED: Use get_current_user_strict for enterprise mode
+    
+    This function now redirects to strict authentication
+    """
+    logger.warning("get_current_user() is deprecated - use get_current_user_strict()")
+    return await get_current_user_strict(request)
 
 async def require_role(required_roles: List[str]):
     """
@@ -128,10 +154,7 @@ async def require_role(required_roles: List[str]):
     Returns:
         Dependency function
     """
-    async def role_checker(request: Request, current_user: SessionData = Depends(get_current_user)) -> SessionData:
-        if not is_auth_enabled(request):
-            return current_user  # Skip role check if auth disabled
-        
+    async def role_checker(request: Request, current_user: SessionData = Depends(get_current_user_strict)) -> SessionData:
         if not any(role in current_user.roles for role in required_roles):
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
@@ -142,7 +165,7 @@ async def require_role(required_roles: List[str]):
     
     return role_checker
 
-async def require_admin(request: Request, current_user: SessionData = Depends(get_current_user)) -> SessionData:
+async def require_admin(request: Request, current_user: SessionData = Depends(get_current_user_strict)) -> SessionData:
     """
     Require admin role
     
@@ -156,9 +179,6 @@ async def require_admin(request: Request, current_user: SessionData = Depends(ge
     Raises:
         HTTPException: If user is not admin
     """
-    if not is_auth_enabled(request):
-        return current_user  # Skip role check if auth disabled
-    
     if 'admin' not in current_user.roles:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
@@ -182,7 +202,6 @@ def is_public_route(path: str) -> bool:
         '/auth/login',
         '/auth/callback',
         '/auth/health',
-        '/auth/status',
         '/docs',
         '/openapi.json',
         '/favicon.ico'

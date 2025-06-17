@@ -32,19 +32,26 @@ async def auth_status():
 # Include agent router
 router.include_router(agent_router, prefix="/agent", tags=["agent"])
 
-# Always include basic auth router - this will be populated during startup
-try:
-    from agent.auth.endpoints import create_basic_auth_router
-    
-    # Create a basic auth router that will work whether SSO is enabled or not
-    basic_auth_router = create_basic_auth_router()
-    router.include_router(basic_auth_router, prefix="/agent", tags=["authentication"])
-    logger.info("📱 Basic authentication router included")
-    
-except Exception as e:
-    logger.warning(f"Failed to include auth router: {e}")
+def setup_auth_router(app):
+    """Setup auth router from app state after startup"""
+    try:
+        # Get the auth router from app state (set during startup)
+        auth_router = getattr(app.state, 'auth_router', None)
+        
+        if auth_router:
+            # Include auth router at /api/agent/auth to match frontend expectations
+            router.include_router(auth_router, prefix="/agent", tags=["authentication"])
+            logger.info("🔐 Auth router included at /api/agent/auth")
+            return True
+        else:
+            logger.warning("🔐 No auth router found in app state")
+            return False
+            
+    except Exception as e:
+        logger.error(f"Failed to setup auth router: {e}")
+        return False
 
 def add_auth_router_if_enabled():
-    """Legacy function - auth router is now always included"""
-    logger.info("🔐 Auth router already included during setup")
+    """Legacy function - auth router is now handled by setup_auth_router"""
+    logger.info("🔐 Auth router setup is now handled by setup_auth_router function")
     return True

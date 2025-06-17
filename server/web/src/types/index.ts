@@ -188,13 +188,14 @@ export interface ReasoningChainEvent {
 export interface ReasoningChainData {
   events: ReasoningChainEvent[];
   originalQuery: string;
-  sessionId: string;
+  sessionId?: string;
   isComplete: boolean;
   lastUpdated: string;
   status: 'streaming' | 'completed' | 'failed' | 'cancelled';
   progress: number;
   currentStep?: string;
-  pageId?: string;
+  pageId?: string;  // Canvas page ID (where results are displayed)
+  originalPageId?: string;  // Original page ID (where query was made)
   blockId?: string;
 }
 

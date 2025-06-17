@@ -3,6 +3,7 @@ Authentication endpoints for Ceneca Agent Server
 
 Provides SSO login, callback, logout, and user info endpoints.
 All authentication logic is kept server-side for maximum security.
+ENTERPRISE MODE ONLY - No development fallbacks.
 """
 
 import logging
@@ -16,7 +17,7 @@ from pydantic import BaseModel
 from .config import AuthConfig
 from .oidc_handler import OIDCHandler
 from .session_manager import SessionManager, SessionData
-from .request_auth import get_current_user, require_admin
+from .request_auth import get_current_user_strict, require_admin
 
 logger = logging.getLogger(__name__)
 
@@ -52,10 +53,12 @@ class AuthHealthResponse(BaseModel):
     session_manager: Dict[str, Any]
     oidc_handler: Dict[str, Any]
     message: Optional[str] = None
+    mode: str = "enterprise"
 
 def create_auth_router(auth_config: AuthConfig, oidc_handler: OIDCHandler, session_manager: SessionManager) -> APIRouter:
     """
     Create authentication router with configured handlers
+    ENTERPRISE MODE: Requires properly configured SSO
     
     Args:
         auth_config: Authentication configuration
@@ -64,10 +67,16 @@ def create_auth_router(auth_config: AuthConfig, oidc_handler: OIDCHandler, sessi
         
     Returns:
         Configured FastAPI router
+        
+    Raises:
+        ValueError: If SSO is not properly configured
     """
-    router = APIRouter(prefix="/auth", tags=["authentication"])
+    if not auth_config.enabled:
+        raise ValueError("Enterprise mode requires enabled SSO authentication")
     
-    @router.post("/login", response_model=LoginResponse)
+    router = APIRouter(tags=["authentication"])
+    
+    @router.post("/auth/login", response_model=LoginResponse)
     async def initiate_login(request: Request):
         """
         Initiate SSO login flow
@@ -76,12 +85,6 @@ def create_auth_router(auth_config: AuthConfig, oidc_handler: OIDCHandler, sessi
             Login response with authorization URL
         """
         logger.info("🔐 AUTH ENDPOINT: /auth/login - Initiating SSO login")
-        
-        if not auth_config.enabled:
-            raise HTTPException(
-                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                detail="SSO authentication is disabled"
-            )
         
         try:
             # Generate authorization URL
@@ -102,7 +105,7 @@ def create_auth_router(auth_config: AuthConfig, oidc_handler: OIDCHandler, sessi
                 detail=f"Failed to initiate login: {str(e)}"
             )
     
-    @router.get("/callback")
+    @router.get("/auth/callback")
     async def handle_callback(
         request: Request, 
         response: Response, 
@@ -125,12 +128,6 @@ def create_auth_router(auth_config: AuthConfig, oidc_handler: OIDCHandler, sessi
         """
         logger.info(f"🔐 AUTH ENDPOINT: /auth/callback - Handling OIDC callback")
         logger.info(f"Callback parameters: code={'***' if code else None}, state={state[:8] + '...' if state else None}, error={error}")
-        
-        if not auth_config.enabled:
-            raise HTTPException(
-                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                detail="SSO authentication is disabled"
-            )
         
         # Handle OAuth error responses
         if error:
@@ -186,8 +183,8 @@ def create_auth_router(auth_config: AuthConfig, oidc_handler: OIDCHandler, sessi
                 detail=f"Authentication failed: {str(e)}"
             )
     
-    @router.get("/user", response_model=UserInfoResponse)
-    async def get_current_user_info(current_user: SessionData = Depends(get_current_user)):
+    @router.get("/auth/user", response_model=UserInfoResponse)
+    async def get_current_user_info(current_user: SessionData = Depends(get_current_user_strict)):
         """
         Get current authenticated user information
         
@@ -210,7 +207,7 @@ def create_auth_router(auth_config: AuthConfig, oidc_handler: OIDCHandler, sessi
             session_expires=current_user.expires_at
         )
     
-    @router.post("/logout", response_model=LogoutResponse)
+    @router.post("/auth/logout", response_model=LogoutResponse)
     async def logout(request: Request, response: Response):
         """
         Logout current user and clear session
@@ -260,7 +257,7 @@ def create_auth_router(auth_config: AuthConfig, oidc_handler: OIDCHandler, sessi
                 detail=f"Logout failed: {str(e)}"
             )
     
-    @router.get("/health", response_model=AuthHealthResponse)
+    @router.get("/auth/health", response_model=AuthHealthResponse)
     async def auth_health_check():
         """
         Authentication system health check
@@ -274,42 +271,41 @@ def create_auth_router(auth_config: AuthConfig, oidc_handler: OIDCHandler, sessi
             # Check session manager
             session_health = await session_manager.health_check()
             
-            # Check OIDC handler (only if SSO is enabled)
-            oidc_health = {}
-            if auth_config.enabled:
-                oidc_health = await oidc_handler.health_check()
+            # Check OIDC handler
+            oidc_health = await oidc_handler.health_check()
             
             # Determine overall status
             overall_status = "healthy"
             message = None
             
-            if auth_config.enabled:
-                if oidc_health.get("status") != "healthy":
-                    overall_status = "degraded"
-                    message = f"OIDC handler issue: {oidc_health.get('error', 'Unknown error')}"
+            if oidc_health.get("status") != "healthy":
+                overall_status = "degraded"
+                message = f"OIDC handler issue: {oidc_health.get('error', 'Unknown error')}"
             
             return AuthHealthResponse(
                 status=overall_status,
-                sso_enabled=auth_config.enabled,
-                provider=auth_config.oidc.provider if auth_config.enabled else "none",
+                sso_enabled=True,  # Always true in enterprise mode
+                provider=auth_config.oidc.provider,
                 session_manager=session_health,
                 oidc_handler=oidc_health,
-                message=message
+                message=message,
+                mode="enterprise"
             )
             
         except Exception as e:
             logger.error(f"Auth health check failed: {e}")
             return AuthHealthResponse(
                 status="error",
-                sso_enabled=auth_config.enabled,
-                provider=auth_config.oidc.provider if auth_config.enabled else "none",
+                sso_enabled=True,
+                provider=auth_config.oidc.provider,
                 session_manager={"error": str(e)},
                 oidc_handler={"error": str(e)},
-                message=f"Health check failed: {str(e)}"
+                message=f"Health check failed: {str(e)}",
+                mode="enterprise"
             )
     
     # Admin-only endpoints
-    @router.get("/sessions")
+    @router.get("/auth/sessions")
     async def list_sessions(admin_user: SessionData = Depends(require_admin)):
         """
         List active sessions (admin only)
@@ -328,7 +324,8 @@ def create_auth_router(auth_config: AuthConfig, oidc_handler: OIDCHandler, sessi
             return {
                 "active_sessions_count": active_sessions,
                 "session_timeout": session_manager.session_timeout,
-                "storage_type": "redis" if session_manager.use_redis else "memory"
+                "storage_type": "redis" if session_manager.use_redis else "memory",
+                "mode": "enterprise"
             }
             
         except Exception as e:
@@ -338,7 +335,7 @@ def create_auth_router(auth_config: AuthConfig, oidc_handler: OIDCHandler, sessi
                 detail=f"Failed to list sessions: {str(e)}"
             )
     
-    @router.post("/sessions/cleanup")
+    @router.post("/auth/sessions/cleanup")
     async def cleanup_sessions(admin_user: SessionData = Depends(require_admin)):
         """
         Clean up expired sessions (admin only)
@@ -356,7 +353,8 @@ def create_auth_router(auth_config: AuthConfig, oidc_handler: OIDCHandler, sessi
             
             return {
                 "cleaned_sessions": cleaned_count,
-                "message": f"Cleaned up {cleaned_count} expired sessions"
+                "message": f"Cleaned up {cleaned_count} expired sessions",
+                "mode": "enterprise"
             }
             
         except Exception as e:
@@ -364,226 +362,6 @@ def create_auth_router(auth_config: AuthConfig, oidc_handler: OIDCHandler, sessi
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail=f"Session cleanup failed: {str(e)}"
-            )
-    
-    return router
-
-def create_basic_auth_router() -> APIRouter:
-    """
-    Create basic authentication router that works for both SSO enabled and disabled
-    
-    Dynamically checks SSO status and responds appropriately
-    
-    Returns:
-        FastAPI router with auth endpoints
-    """
-    router = APIRouter(prefix="/auth", tags=["authentication"])
-    
-    @router.get("/health", response_model=AuthHealthResponse)
-    async def auth_health_check():
-        """
-        Get authentication system health status
-        
-        Returns:
-            Authentication health status
-        """
-        logger.info("🔐 AUTH ENDPOINT: /auth/health - Checking auth system health")
-        
-        try:
-            from .auth_manager import auth_manager
-            
-            if auth_manager.is_initialized and auth_manager.is_enabled:
-                # SSO is enabled - get real health status
-                health = await auth_manager.health_check()
-                return AuthHealthResponse(
-                    status=health.get("status", "unknown"),
-                    sso_enabled=True,
-                    provider=health.get("provider", "unknown"),
-                    session_manager=health.get("session_manager", {}),
-                    oidc_handler=health.get("oidc_handler", {}),
-                    message=health.get("message")
-                )
-            else:
-                # SSO is disabled
-                return AuthHealthResponse(
-                    status="disabled",
-                    sso_enabled=False,
-                    provider="none",
-                    session_manager={"status": "disabled"},
-                    oidc_handler={"status": "disabled"},
-                    message="SSO authentication is disabled"
-                )
-        except Exception as e:
-            logger.error(f"Auth health check failed: {e}")
-            return AuthHealthResponse(
-                status="error",
-                sso_enabled=False,
-                provider="unknown",
-                session_manager={"status": "error"},
-                oidc_handler={"status": "error"},
-                message=f"Health check failed: {str(e)}"
-            )
-    
-    @router.post("/login")
-    async def login_dynamic(request: Request):
-        """Login endpoint that works for both SSO enabled and disabled"""
-        try:
-            from .auth_manager import auth_manager
-            
-            if auth_manager.is_initialized and auth_manager.is_enabled:
-                # SSO is enabled - proceed with real login
-                if not auth_manager.auth_config.enabled:
-                    raise HTTPException(
-                        status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                        detail="SSO authentication is disabled"
-                    )
-                
-                # Generate authorization URL
-                auth_url, state, code_verifier = auth_manager.oidc_handler.generate_authorization_url()
-                
-                logger.info(f"Generated authorization URL for state: {state[:8]}...")
-                
-                return LoginResponse(
-                    authorization_url=auth_url,
-                    state=state,
-                    message="Redirect to authorization URL to complete login"
-                )
-            else:
-                # SSO is disabled
-                raise HTTPException(
-                    status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                    detail="SSO authentication is disabled. Enable SSO in auth-config.yaml to use this endpoint."
-                )
-        except Exception as e:
-            logger.error(f"Login failed: {e}")
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail=f"Login failed: {str(e)}"
-            )
-    
-    @router.get("/callback")
-    async def callback_dynamic(request: Request, response: Response, code: str, state: str):
-        """Callback endpoint that works for both SSO enabled and disabled"""
-        try:
-            from .auth_manager import auth_manager
-            
-            if auth_manager.is_initialized and auth_manager.is_enabled:
-                # SSO is enabled - process callback
-                session_id = await auth_manager.oidc_handler.handle_callback(code, state)
-                
-                # Set secure session cookie
-                response = RedirectResponse(
-                    url=f"http://localhost:8080/",  # Redirect to web frontend
-                    status_code=status.HTTP_302_FOUND
-                )
-                
-                # Set httpOnly cookie for maximum security
-                response.set_cookie(
-                    key="ceneca_session",
-                    value=session_id,
-                    max_age=auth_manager.auth_config.session_timeout,
-                    httponly=True,  # Prevents JavaScript access
-                    secure=False,   # Set to True in production with HTTPS
-                    samesite="lax",  # CSRF protection
-                    path="/"
-                )
-                
-                logger.info(f"Successfully authenticated user, redirecting to frontend")
-                return response
-            else:
-                # SSO is disabled
-                raise HTTPException(
-                    status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                    detail="SSO authentication is disabled"
-                )
-        except Exception as e:
-            logger.error(f"Callback failed: {e}")
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail=f"Callback failed: {str(e)}"
-            )
-    
-    @router.get("/user", response_model=UserInfoResponse)
-    async def user_info_dynamic(request: Request):
-        """User info endpoint that works for both SSO enabled and disabled"""
-        try:
-            from .auth_manager import auth_manager
-            from .request_auth import get_current_user_optional
-            
-            if auth_manager.is_initialized and auth_manager.is_enabled:
-                # SSO is enabled - get real user info
-                user = await get_current_user_optional(request)
-                if not user:
-                    raise HTTPException(
-                        status_code=status.HTTP_401_UNAUTHORIZED,
-                        detail="Not authenticated"
-                    )
-                
-                return UserInfoResponse(
-                    user_id=user.user_id,
-                    email=user.email,
-                    name=user.name,
-                    groups=user.groups,
-                    roles=user.roles,
-                    provider=user.provider,
-                    session_created=user.created_at,
-                    session_expires=user.expires_at,
-                    authenticated=True
-                )
-            else:
-                # SSO is disabled - return dev user
-                return UserInfoResponse(
-                    user_id="dev-user",
-                    email="dev@example.com",
-                    name="Development User",
-                    groups=["dev"],
-                    roles=["admin"],
-                    provider="development",
-                    session_created=0,
-                    session_expires=0,
-                    authenticated=False
-                )
-        except HTTPException:
-            raise
-        except Exception as e:
-            logger.error(f"User info failed: {e}")
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail=f"Failed to get user info: {str(e)}"
-            )
-    
-    @router.post("/logout", response_model=LogoutResponse)
-    async def logout_dynamic(request: Request, response: Response):
-        """Logout endpoint that works for both SSO enabled and disabled"""
-        try:
-            from .auth_manager import auth_manager
-            
-            if auth_manager.is_initialized and auth_manager.is_enabled:
-                # SSO is enabled - real logout
-                session_id = request.cookies.get('ceneca_session')
-                
-                if session_id and auth_manager.session_manager:
-                    await auth_manager.session_manager.delete_session(session_id)
-                    logger.info(f"Deleted session: {session_id[:8]}...")
-                
-                # Clear session cookie
-                response.delete_cookie("ceneca_session", path="/")
-                
-                return LogoutResponse(
-                    success=True,
-                    message="Successfully logged out"
-                )
-            else:
-                # SSO is disabled
-                return LogoutResponse(
-                    success=True,
-                    message="SSO authentication is disabled - no session to logout"
-                )
-        except Exception as e:
-            logger.error(f"Logout failed: {e}")
-            return LogoutResponse(
-                success=False,
-                message=f"Logout failed: {str(e)}"
             )
     
     return router 

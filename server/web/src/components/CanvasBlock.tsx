@@ -402,25 +402,59 @@ export const CanvasBlock = ({
               )}
 
               {/* AI Reasoning Chain - Show if available */}
-              {block.properties?.canvasData?.reasoningChain && (
-                <ReasoningChain
-                  reasoningData={{
-                    events: block.properties.canvasData.reasoningChain.map(event => ({
-                      type: event.type as any,
-                      message: event.message,
-                      timestamp: event.timestamp,
-                      metadata: event.metadata
-                    })),
-                    originalQuery: block.properties.canvasData.originalQuery || 'Analysis Query',
-                    isComplete: true,
-                    lastUpdated: new Date().toISOString(),
-                    status: 'completed' as const,
-                    progress: 1.0
-                  }}
-                  title="How AI Solved This"
-                  collapsed={true}
-                />
-              )}
+              {block.properties?.canvasData?.reasoningChain && (() => {
+                const reasoningChain = block.properties.canvasData.reasoningChain as any;
+                
+                // Handle new object format with events array
+                if (reasoningChain && typeof reasoningChain === 'object' && !Array.isArray(reasoningChain) && reasoningChain.events) {
+                  return (
+                    <ReasoningChain
+                      reasoningData={{
+                        events: Array.isArray(reasoningChain.events) 
+                          ? reasoningChain.events.map((event: any) => ({
+                              type: event.type as any,
+                              message: event.message,
+                              timestamp: event.timestamp,
+                              metadata: event.metadata
+                            }))
+                          : [],
+                        originalQuery: block.properties.canvasData.originalQuery || 'Analysis Query',
+                        isComplete: reasoningChain.isComplete ?? true,
+                        lastUpdated: reasoningChain.lastUpdated || new Date().toISOString(),
+                        status: reasoningChain.status || 'completed',
+                        progress: reasoningChain.progress ?? 1.0
+                      }}
+                      title="How AI Solved This"
+                      collapsed={true}
+                    />
+                  );
+                }
+                
+                // Handle old array format (legacy)
+                if (Array.isArray(reasoningChain)) {
+                  return (
+                    <ReasoningChain
+                      reasoningData={{
+                        events: reasoningChain.map((event: any) => ({
+                          type: event.type as any,
+                          message: event.message,
+                          timestamp: event.timestamp,
+                          metadata: event.metadata
+                        })),
+                        originalQuery: block.properties.canvasData.originalQuery || 'Analysis Query',
+                        isComplete: true,
+                        lastUpdated: new Date().toISOString(),
+                        status: 'completed' as const,
+                        progress: 1.0
+                      }}
+                      title="How AI Solved This"
+                      collapsed={true}
+                    />
+                  );
+                }
+                
+                return null;
+              })()}
                       </div>
         ) : threadName ? (
           // Show basic preview for named canvases without content yet

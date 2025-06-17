@@ -2,7 +2,7 @@
 Authentication manager for Ceneca Agent Server
 
 Centralizes initialization and management of all authentication components.
-Provides a single interface for setting up SSO authentication.
+ENTERPRISE MODE ONLY - No development fallbacks allowed.
 """
 
 import logging
@@ -20,6 +20,7 @@ logger = logging.getLogger(__name__)
 class AuthManager:
     """
     Manages all authentication components for the Ceneca agent server
+    ENTERPRISE MODE: Requires proper SSO configuration
     """
     
     def __init__(self):
@@ -30,20 +31,23 @@ class AuthManager:
         self.auth_middleware: Optional[AuthMiddleware] = None
         self._initialized = False
         
-        logger.info("Created AuthManager instance")
+        logger.info("Created AuthManager instance (Enterprise Mode)")
     
     async def initialize(self, config_path: Optional[str] = None) -> bool:
         """
-        Initialize authentication system
+        Initialize authentication system in ENTERPRISE MODE
         
         Args:
             config_path: Optional path to auth config file
             
         Returns:
             True if authentication is enabled and initialized successfully
+            
+        Raises:
+            RuntimeError: If SSO is not properly configured for enterprise deployment
         """
         try:
-            logger.info("🔐 Initializing authentication system...")
+            logger.info("🔐 Initializing authentication system (Enterprise Mode)...")
             
             # Load authentication configuration
             self.auth_config = AuthConfig.load_from_file(config_path)
@@ -52,9 +56,11 @@ class AuthManager:
             logger.info(f"Authentication config loaded: SSO {'enabled' if self.auth_config.enabled else 'disabled'}")
             
             if not self.auth_config.enabled:
-                logger.info("SSO authentication is disabled - running in open mode")
-                self._initialized = True
-                return False
+                logger.error("🚨 ENTERPRISE MODE VIOLATION: SSO authentication is disabled")
+                raise RuntimeError(
+                    "Enterprise deployment requires SSO authentication. "
+                    "Enable SSO in auth-config.yaml or use development deployment."
+                )
             
             # Initialize session manager
             # Check if Redis should be used (in production)
@@ -75,28 +81,31 @@ class AuthManager:
             
             logger.info(f"OIDC handler initialized for provider: {self.auth_config.oidc.provider}")
             
-            # Test OIDC connectivity
+            # Test OIDC connectivity - REQUIRED in enterprise mode
             try:
                 await self.oidc_handler.get_provider_config()
                 logger.info("✅ OIDC provider connectivity test successful")
             except Exception as e:
-                logger.warning(f"⚠️  OIDC provider connectivity test failed: {e}")
-                logger.warning("Authentication will still work, but there might be connectivity issues")
+                logger.error(f"❌ OIDC provider connectivity test failed: {e}")
+                raise RuntimeError(
+                    f"Enterprise mode requires working OIDC connectivity. "
+                    f"Provider {self.auth_config.oidc.provider} is not reachable: {e}"
+                )
             
             self._initialized = True
-            logger.info("🔐 Authentication system initialized successfully")
+            logger.info("🔐 Authentication system initialized successfully (Enterprise Mode)")
             return True
             
         except FileNotFoundError as e:
-            logger.warning(f"Auth config not found: {e}")
-            logger.info("Running without authentication (development mode)")
-            self._initialized = True
-            return False
+            logger.error(f"Auth config not found: {e}")
+            raise RuntimeError(
+                f"Enterprise deployment requires auth-config.yaml. File not found: {e}"
+            )
         except Exception as e:
             logger.error(f"Failed to initialize authentication: {e}")
-            logger.info("Running without authentication due to initialization failure")
-            self._initialized = True
-            return False
+            raise RuntimeError(
+                f"Enterprise authentication initialization failed: {e}"
+            )
     
     def create_middleware(self, app):
         """
@@ -106,18 +115,19 @@ class AuthManager:
             app: FastAPI application instance
             
         Returns:
-            AuthMiddleware instance if SSO is enabled, None otherwise
+            AuthMiddleware instance
+            
+        Raises:
+            RuntimeError: If not properly initialized
         """
         if not self._initialized:
             raise RuntimeError("AuthManager not initialized. Call initialize() first.")
         
         if not self.auth_config or not self.auth_config.enabled:
-            logger.info("Authentication middleware not created - SSO disabled")
-            return None
+            raise RuntimeError("Enterprise mode requires enabled authentication")
         
         if not self.session_manager or not self.oidc_handler:
-            logger.error("Cannot create middleware - auth components not initialized")
-            return None
+            raise RuntimeError("Cannot create middleware - auth components not initialized")
         
         self.auth_middleware = AuthMiddleware(
             app=app,
@@ -134,17 +144,18 @@ class AuthManager:
         
         Returns:
             FastAPI router with authentication endpoints
+            
+        Raises:
+            RuntimeError: If not properly initialized
         """
         if not self._initialized:
             raise RuntimeError("AuthManager not initialized. Call initialize() first.")
         
         if not self.auth_config or not self.auth_config.enabled:
-            logger.info("Authentication router not created - SSO disabled")
-            return None
+            raise RuntimeError("Enterprise mode requires enabled authentication")
         
         if not self.session_manager or not self.oidc_handler:
-            logger.error("Cannot create auth router - auth components not initialized")
-            return None
+            raise RuntimeError("Cannot create auth router - auth components not initialized")
         
         auth_router = create_auth_router(
             auth_config=self.auth_config,
@@ -165,19 +176,23 @@ class AuthManager:
         if not self._initialized:
             return {
                 "status": "not_initialized",
-                "message": "AuthManager not initialized"
+                "message": "AuthManager not initialized",
+                "mode": "enterprise"
             }
         
         if not self.auth_config or not self.auth_config.enabled:
             return {
                 "status": "disabled",
-                "message": "SSO authentication is disabled"
+                "message": "SSO authentication is disabled - ENTERPRISE MODE VIOLATION",
+                "mode": "enterprise",
+                "error": "Enterprise deployment requires SSO"
             }
         
         health_data = {
             "status": "enabled",
             "provider": self.auth_config.oidc.provider,
-            "session_timeout": self.auth_config.session_timeout
+            "session_timeout": self.auth_config.session_timeout,
+            "mode": "enterprise"
         }
         
         try:
@@ -204,7 +219,7 @@ class AuthManager:
     
     @property
     def is_enabled(self) -> bool:
-        """Check if authentication is enabled"""
+        """Check if authentication is enabled (ALWAYS required in enterprise mode)"""
         return (
             self._initialized and 
             self.auth_config is not None and 

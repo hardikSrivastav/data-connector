@@ -2461,35 +2461,27 @@ def _estimate_render_time(dataset_size: int, chart_type: str) -> float:
     return base_time * multiplier
 
 # Authentication dependency for agent server
-async def get_current_user_from_request(request: Request) -> Optional[str]:
+async def get_current_user_from_request(request: Request) -> str:
     """
-    Extract current user from request headers or cookies
+    Extract current user from request using STRICT enterprise authentication
     
-    This will receive user context from the web server
+    NO FALLBACKS - Must have valid Okta session
     """
     try:
-        # Method 1: Check for user ID in headers (passed from web server)
-        user_id = request.headers.get('X-User-ID')
-        if user_id:
-            auth_logger.info(f"🔐 Agent: User from header: {user_id}")
-            return user_id
+        # Import the enterprise auth system
+        from ..auth.request_auth import get_current_user_strict
         
-        # Method 2: Check session cookie (same as web server)
-        session_cookie = request.cookies.get('ceneca_session')
-        if session_cookie:
-            # Use same logic as web server for consistency
-            user_id = f"user_{hash(session_cookie) % 10000}"
-            auth_logger.info(f"🔐 Agent: User from cookie: {user_id}")
-            return user_id
+        # Use the strict authentication
+        session_data = await get_current_user_strict(request)
+        user_id = session_data.user_id
         
-        # Method 3: Development fallback
-        dev_user = "dev_user_12345"
-        auth_logger.info(f"🔐 Agent: Using dev user: {dev_user}")
-        return dev_user
+        auth_logger.info(f"🔐 Agent: Authenticated user: {user_id} ({session_data.email})")
+        return user_id
         
     except Exception as e:
-        auth_logger.error(f"🔐 Agent: Error extracting user: {str(e)}")
-        return "dev_user_12345"
+        auth_logger.error(f"🔐 Agent: Authentication failed: {str(e)}")
+        # Re-raise the exception to ensure no fallback
+        raise
 
 # Helper to add user context to query results
 def add_user_context_to_response(response_data: dict, user_id: str) -> dict:

@@ -265,6 +265,24 @@ export const PageEditor = ({
   // Load existing reasoning chains on page load
   useEffect(() => {
     const loadExistingReasoningChains = async () => {
+      // Only load reasoning chains if we have a valid page ID that's not a placeholder/default
+      if (!page?.id || page.id === 'default' || page.id === 'temp' || page.id === 'undefined') {
+        console.log(`🧠 Skipping reasoning chain load - invalid page ID: ${page?.id}`);
+        return;
+      }
+
+      // Check if storageManager is ready
+      if (!storageManager) {
+        console.log(`🧠 Skipping reasoning chain load - storageManager not ready`);
+        return;
+      }
+
+      // Check if page is properly initialized
+      if (!Array.isArray(page.blocks)) {
+        console.log(`🧠 Skipping reasoning chain load - page blocks not initialized`);
+        return;
+      }
+
       console.log(`🧠 Loading existing reasoning chains for page ${page.id}`);
       
       try {
@@ -301,7 +319,7 @@ export const PageEditor = ({
       } catch (error) {
         console.error(`❌ Failed to load reasoning chains for page ${page.id}:`, error);
         
-        // Fallback to legacy loading from block properties
+        // Fallback to legacy loading from block properties only
         page.blocks.forEach(block => {
           if (block.properties?.reasoningChain) {
             const reasoningData = block.properties.reasoningChain as ReasoningChainData;
@@ -317,7 +335,23 @@ export const PageEditor = ({
       }
     };
     
-    loadExistingReasoningChains();
+    // Only run if we have a valid page ID and storageManager
+    // Also ensure the page is properly initialized (has blocks array)
+    if (page?.id && 
+        page.id !== 'default' && 
+        page.id !== 'temp' && 
+        page.id !== 'undefined' && 
+        Array.isArray(page.blocks) && 
+        storageManager) {
+      loadExistingReasoningChains();
+    } else {
+      console.log(`🧠 Skipping reasoning chain load - page not ready:`, {
+        hasPageId: !!page?.id,
+        pageId: page?.id,
+        hasBlocks: Array.isArray(page?.blocks),
+        hasStorageManager: !!storageManager
+      });
+    }
   }, [page.id, storageManager]);
 
   // Add logging wrapper for onUpdatePage
@@ -990,46 +1024,102 @@ export const PageEditor = ({
         },
         
         onComplete: async (results, sessionId) => {
-          console.log(`✅ PageEditor: Streaming completed!`);
-          console.log(`📊 PageEditor: Final results:`, results);
-          console.log(`🔍 PageEditor: Results structure analysis:`, {
-            resultsType: typeof results,
-            resultsKeys: results ? Object.keys(results) : [],
-            hasRows: !!results?.rows,
-            rowsType: typeof results?.rows,
-            rowsLength: results?.rows?.length || 0,
-            rowsIsArray: Array.isArray(results?.rows),
-            hasAnalysis: !!results?.analysis,
-            analysisType: typeof results?.analysis,
-            hasSql: !!results?.sql,
-            sqlType: typeof results?.sql,
-            firstRowSample: results?.rows?.[0],
-            accumulatedDataBefore: {
-              hasRows: !!accumulatedData.rows,
-              rowsLength: accumulatedData.rows?.length || 0,
-              hasAnalysis: !!accumulatedData.analysis,
-              hasSql: !!accumulatedData.sqlQuery
+          console.log(`🎯 PageEditor: Query completed with sessionId: ${sessionId}`);
+          console.log(`🎯 PageEditor: Results:`, results);
+          
+          // Update reasoning chain as complete
+          if (sessionId && activeReasoningChains.has(sessionId)) {
+            const reasoningChain = activeReasoningChains.get(sessionId);
+            if (reasoningChain) {
+              reasoningChain.isComplete = true;
+              reasoningChain.status = 'completed';
+              reasoningChain.progress = 1.0;
+              reasoningChain.lastUpdated = new Date().toISOString();
+              
+              // Save completed reasoning chain
+              try {
+                await storageManager.saveReasoningChain(reasoningChain);
+                await storageManager.completeReasoningChain(sessionId, true, newBlockId);
+                console.log(`✅ PageEditor: Reasoning chain marked as complete: ${sessionId}`);
+              } catch (error) {
+                console.error(`❌ PageEditor: Failed to complete reasoning chain: ${error}`);
+              }
             }
+            
+            // Clean up active reasoning chain
+            activeReasoningChains.delete(sessionId);
+          }
+          
+          // Extract canvas data from results using existing function
+          const extractedCanvasData = createCanvasPreviewFromResponse(results, query);
+          
+          console.log(`🎯 PageEditor: Extracted canvas data:`, {
+            hasAnalysis: !!extractedCanvasData.fullAnalysis,
+            hasData: !!extractedCanvasData.fullData,
+            hasSqlQuery: !!extractedCanvasData.sqlQuery,
+            hasPreview: !!extractedCanvasData.preview
           });
           
-          setStreamingState(prev => ({
-            ...prev,
-            status: 'Processing complete!',
-            progress: 1.0,
-            history: [...prev.history, {
-              type: 'complete',
-              message: 'Processing complete!',
-              timestamp: new Date().toISOString(),
-              metadata: { sessionId, resultsCount: results?.rows?.length || 0 }
-            }]
-          }));
+          // Create comprehensive canvas data object
+          const fullCanvasData: any = {
+            threadId: sessionId || `thread_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+            threadName: generateThreadName(query),
+            isExpanded: false,
+            workspaceId: workspace.id,
+            pageId: page.id,  // This is the original page where query was made
+            blockId: newBlockId,
+            fullAnalysis: extractedCanvasData.fullAnalysis,
+            fullData: extractedCanvasData.fullData,
+            sqlQuery: extractedCanvasData.sqlQuery,
+            preview: extractedCanvasData.preview,
+            blocks: [],
+            // Store the complete reasoning chain with proper page references
+            reasoningChain: {
+              ...activeReasoningChains.get(sessionId),
+              originalPageId: page.id,  // Original page where query was made
+              // pageId will be set to Canvas page when it's created
+            },
+            originalQuery: query,
+            originalPageId: page.id  // Store original page reference
+          };
           
-          addReasoningChainEvent(sessionId, {
-            type: 'complete',
-            message: 'Processing complete!',
-            timestamp: new Date().toISOString(),
-            metadata: { sessionId, resultsCount: results?.rows?.length || 0 }
-          });
+          // Create analysis commit for Canvas system integration
+          if (sessionId && extractedCanvasData.fullAnalysis) {
+            try {
+              const analysisCommit = {
+                id: `commit_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+                threadId: sessionId,
+                commitMessage: `Analysis: ${query.substring(0, 50)}...`,
+                queryText: query,
+                resultData: {
+                  fullData: extractedCanvasData.fullData,
+                  sqlQuery: extractedCanvasData.sqlQuery,
+                  workspaceId: workspace.id,
+                  pageId: page.id,
+                  blockId: newBlockId
+                },
+                analysisSummary: extractedCanvasData.fullAnalysis,
+                previewData: extractedCanvasData.preview,
+                performanceMetrics: {
+                  queryTime: results.executionTime || 0,
+                  rowCount: extractedCanvasData.fullData?.rows?.length || 0,
+                  completedAt: new Date().toISOString()
+                },
+                isHead: true,
+                createdAt: new Date()
+              };
+              
+              console.log(`🎯 PageEditor: Creating analysis commit for Canvas system:`, analysisCommit);
+              
+              // Save analysis commit via storage manager
+              // Note: This will require adding an endpoint for analysis commits
+              // For now, we'll store it in the canvas data
+              fullCanvasData.analysisCommit = analysisCommit;
+              
+            } catch (error) {
+              console.warn(`⚠️ PageEditor: Failed to create analysis commit: ${error}`);
+            }
+          }
           
           // Process final results
           if (results) {
@@ -1146,48 +1236,6 @@ export const PageEditor = ({
               tablePreviewStructure: canvasData.preview.tablePreview ? {
                 headers: canvasData.preview.tablePreview.headers?.length,
                 rows: canvasData.preview.tablePreview.rows?.length
-              } : null
-            } : null
-          });
-          
-          // Create comprehensive canvas data object
-          const fullCanvasData = {
-            threadId: sessionId || `thread_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
-            threadName: generateThreadName(query),
-            isExpanded: false,
-            workspaceId: workspace.id,
-            pageId: page.id,
-            blockId: newBlockId,
-            fullAnalysis: canvasData.fullAnalysis,
-            fullData: canvasData.fullData,
-            sqlQuery: canvasData.sqlQuery,
-            preview: canvasData.preview,
-            blocks: [],
-            // Store the complete reasoning chain
-            reasoningChain: activeReasoningChains.get(sessionId),
-            originalQuery: query
-          };
-          
-          console.log(`🎯 PageEditor: Full canvas data object created:`, {
-            threadId: fullCanvasData.threadId,
-            threadName: fullCanvasData.threadName,
-            blockId: fullCanvasData.blockId,
-            hasFullAnalysis: !!fullCanvasData.fullAnalysis,
-            hasFullData: !!fullCanvasData.fullData,
-            fullDataSample: fullCanvasData.fullData ? {
-              headers: fullCanvasData.fullData.headers?.slice(0, 3),
-              firstRow: fullCanvasData.fullData.rows?.[0]?.slice(0, 3),
-              totalRows: fullCanvasData.fullData.rows?.length
-            } : null,
-            hasPreview: !!fullCanvasData.preview,
-            previewSample: fullCanvasData.preview ? {
-              summaryLength: fullCanvasData.preview.summary?.length,
-              statsCount: fullCanvasData.preview.stats?.length,
-              hasTablePreview: !!fullCanvasData.preview.tablePreview,
-              tablePreviewSample: fullCanvasData.preview.tablePreview ? {
-                headers: fullCanvasData.preview.tablePreview.headers?.slice(0, 3),
-                firstRow: fullCanvasData.preview.tablePreview.rows?.[0]?.slice(0, 3),
-                totalRows: fullCanvasData.preview.tablePreview.totalRows
               } : null
             } : null
           });

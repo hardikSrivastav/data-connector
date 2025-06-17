@@ -4,7 +4,7 @@ from typing import List, Optional, Dict, Any
 from datetime import datetime
 import json
 import os
-from sqlalchemy import create_engine, Column, String, DateTime, Text, Integer, JSON, Index, ForeignKey, Boolean, LargeBinary, Float
+from sqlalchemy import create_engine, Column, String, DateTime, Text, Integer, JSON, Index, ForeignKey, Boolean, LargeBinary, Float, or_
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker, Session, relationship
@@ -25,25 +25,25 @@ security = HTTPBearer(auto_error=False)
 # Authentication dependency
 async def get_current_user_from_request(request: Request) -> str:
     """
-    Extract current user from session cookie or return development user
+    Extract current user from request using STRICT enterprise authentication
     
-    In production, this would validate the session cookie.
-    For now, we'll use the session cookie value directly as user ID.
+    NO FALLBACKS - Must have valid Okta session (same as agent server)
     """
     try:
-        # Try to get session cookie
-        session_cookie = request.cookies.get('ceneca_session')
+        # Import the enterprise auth system
+        from agent.auth.request_auth import get_current_user_strict
         
-        if session_cookie:
-            # Use session cookie value directly as user ID for consistency with database
-            return session_cookie
-        else:
-            # Development fallback
-            return "dev_user_12345"
-            
+        # Use the strict authentication
+        session_data = await get_current_user_strict(request)
+        user_id = session_data.user_id
+        
+        logger.info(f"🔐 Storage: Authenticated user: {user_id} ({session_data.email})")
+        return user_id
+        
     except Exception as e:
-        # Fallback to development user
-        return "dev_user_12345"
+        logger.error(f"🔐 Storage: Authentication failed: {str(e)}")
+        # Re-raise the exception to ensure no fallback
+        raise
 
 # Helper function to create user-specific workspace ID
 def get_user_workspace_id(user_id: str, workspace_id: str = "main") -> str:
@@ -204,7 +204,8 @@ class ReasoningChainDB(Base):
     
     id = Column(String, primary_key=True)  # This will be the session_id from streaming
     workspace_id = Column(String, nullable=False)
-    page_id = Column(String, nullable=False)
+    page_id = Column(String, nullable=False)  # Canvas page ID (where results are displayed)
+    original_page_id = Column(String, nullable=True)  # Original page ID (where query was made)
     block_id = Column(String, nullable=True)  # Optional link to block - can be null during creation
     user_id = Column(String, nullable=False)  # User isolation
     original_query = Column(Text, nullable=False)
@@ -218,14 +219,13 @@ class ReasoningChainDB(Base):
     
     # Indexes for performance and querying
     __table_args__ = (
-        Index('idx_reasoning_chains_session_id', 'id'),  # Primary lookup by session_id
         Index('idx_reasoning_chains_workspace_id', 'workspace_id'),
         Index('idx_reasoning_chains_page_id', 'page_id'),
+        Index('idx_reasoning_chains_original_page_id', 'original_page_id'),
         Index('idx_reasoning_chains_block_id', 'block_id'),
         Index('idx_reasoning_chains_user_id', 'user_id'),
         Index('idx_reasoning_chains_status', 'status'),
         Index('idx_reasoning_chains_created_at', 'created_at'),
-        Index('idx_reasoning_chains_user_page', 'user_id', 'page_id'),  # Common query pattern
     )
 
 class AnalysisCommitDB(Base):
@@ -431,7 +431,8 @@ class ReasoningChainEvent(BaseModel):
 class ReasoningChain(BaseModel):
     id: str  # session_id
     workspaceId: str
-    pageId: str
+    pageId: str  # Canvas page ID (where results are displayed)
+    originalPageId: Optional[str] = None  # Original page ID (where query was made)
     blockId: Optional[str] = None
     userId: str
     originalQuery: str
@@ -1347,6 +1348,7 @@ async def create_reasoning_chain(
             id=reasoning_chain.id,
             workspace_id=reasoning_chain.workspaceId,
             page_id=reasoning_chain.pageId,
+            original_page_id=reasoning_chain.originalPageId,
             block_id=reasoning_chain.blockId,
             user_id=current_user,
             original_query=reasoning_chain.originalQuery,
@@ -1366,6 +1368,7 @@ async def create_reasoning_chain(
             id=db_reasoning_chain.id,
             workspaceId=db_reasoning_chain.workspace_id,
             pageId=db_reasoning_chain.page_id,
+            originalPageId=db_reasoning_chain.original_page_id,
             blockId=db_reasoning_chain.block_id,
             userId=db_reasoning_chain.user_id,
             originalQuery=db_reasoning_chain.original_query,
@@ -1406,6 +1409,7 @@ async def get_reasoning_chain(
         id=db_reasoning_chain.id,
         workspaceId=db_reasoning_chain.workspace_id,
         pageId=db_reasoning_chain.page_id,
+        originalPageId=db_reasoning_chain.original_page_id,
         blockId=db_reasoning_chain.block_id,
         userId=db_reasoning_chain.user_id,
         originalQuery=db_reasoning_chain.original_query,
@@ -1425,7 +1429,7 @@ async def get_reasoning_chains_for_page(
     db: Session = Depends(get_db),
     limit: int = 50
 ):
-    """Get all reasoning chains for a page"""
+    """Get all reasoning chains for a page - supports both Canvas pages and original pages"""
     current_user = await get_current_user_from_request(request)
     logger.info(f"🧠 get_reasoning_chains_for_page: user={current_user}, page_id={page_id}")
     
@@ -1445,16 +1449,25 @@ async def get_reasoning_chains_for_page(
     elif db_page.owner_id != current_user:
         raise HTTPException(status_code=404, detail="Page access denied")
     
+    # Option 1 Logic: Find reasoning chains where EITHER:
+    # - page_id matches (Canvas page where results are displayed)
+    # - original_page_id matches (original page where query was made)
     db_reasoning_chains = db.query(ReasoningChainDB).filter(
-        ReasoningChainDB.page_id == page_id,
+        or_(
+            ReasoningChainDB.page_id == page_id,           # Canvas page
+            ReasoningChainDB.original_page_id == page_id   # Original page
+        ),
         ReasoningChainDB.user_id == current_user
     ).order_by(ReasoningChainDB.created_at.desc()).limit(limit).all()
+    
+    logger.info(f"🧠 Found {len(db_reasoning_chains)} reasoning chains for page {page_id}")
     
     return [
         ReasoningChain(
             id=chain.id,
             workspaceId=chain.workspace_id,
             pageId=chain.page_id,
+            originalPageId=chain.original_page_id,
             blockId=chain.block_id,
             userId=chain.user_id,
             originalQuery=chain.original_query,

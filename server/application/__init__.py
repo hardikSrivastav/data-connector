@@ -35,26 +35,30 @@ def create_app():
     # Initialize authentication system on startup
     @app.on_event("startup")
     async def initialize_auth():
-        """Initialize authentication system"""
+        """Initialize authentication system in ENTERPRISE MODE"""
         try:
             from agent.auth import auth_manager
             
-            logger.info("🚀 Initializing authentication system...")
+            logger.info("🚀 Initializing authentication system (Enterprise Mode)...")
+            
+            # Enterprise mode requires successful initialization
             auth_enabled = await auth_manager.initialize()
             
-            if auth_enabled:
-                logger.info("🔐 SSO authentication enabled")
-                app.state.auth_enabled = True
-                app.state.auth_config = auth_manager.auth_config
-                logger.info("🔐 Authentication system fully initialized")
-            else:
-                logger.info("🔓 Running without authentication (development mode)")
-                app.state.auth_enabled = False
+            logger.info("🔐 SSO authentication enabled")
+            app.state.auth_enabled = True
+            app.state.auth_config = auth_manager.auth_config
+            
+            # Create and include auth router
+            auth_router = auth_manager.create_auth_router()
+            app.include_router(auth_router, prefix="/api/agent")
+            
+            logger.info("🔐 Authentication system fully initialized (Enterprise Mode)")
                 
         except Exception as e:
-            logger.error(f"❌ Failed to initialize authentication: {e}")
-            logger.info("🔓 Continuing without authentication")
-            app.state.auth_enabled = False
+            logger.error(f"❌ ENTERPRISE MODE VIOLATION: Failed to initialize authentication: {e}")
+            logger.error("🚨 Enterprise deployment requires working SSO authentication")
+            # Don't continue without auth in enterprise mode
+            raise RuntimeError(f"Enterprise mode requires authentication: {e}")
             
         # Initialize database availability monitoring
         try:
