@@ -296,6 +296,69 @@ export const PageEditor = ({
             if (chain.sessionId) {
               newMap.set(chain.sessionId, chain);
               console.log(`🧠 Loaded reasoning chain session ${chain.sessionId}, events: ${chain.events?.length || 0}, complete: ${chain.isComplete}`);
+              console.log(`🧠 Chain details:`, {
+                sessionId: chain.sessionId,
+                blockId: chain.blockId,
+                originalQuery: chain.originalQuery,
+                status: chain.status
+              });
+              
+              // Try to find and update the corresponding canvas block
+              let targetBlock = null;
+              
+              // Log available canvas blocks for debugging
+              const canvasBlocks = page.blocks.filter(b => b.type === 'canvas');
+              console.log(`🧠 Looking for canvas block match. Available canvas blocks:`, canvasBlocks.map(b => ({
+                id: b.id,
+                threadId: b.properties?.canvasData?.threadId,
+                originalQuery: b.properties?.canvasData?.originalQuery
+              })));
+              
+              // First try: direct blockId match
+              if (chain.blockId) {
+                targetBlock = page.blocks.find(b => b.id === chain.blockId && b.type === 'canvas');
+                console.log(`🧠 BlockId match attempt for ${chain.blockId}:`, !!targetBlock);
+              }
+              
+              // Second try: match by sessionId/threadId in canvasData
+              if (!targetBlock && chain.sessionId) {
+                targetBlock = page.blocks.find(b => 
+                  b.type === 'canvas' && 
+                  b.properties?.canvasData?.threadId === chain.sessionId
+                );
+                console.log(`🧠 ThreadId match attempt for ${chain.sessionId}:`, !!targetBlock);
+              }
+              
+              // Third try: match by originalQuery
+              if (!targetBlock && chain.originalQuery) {
+                targetBlock = page.blocks.find(b => 
+                  b.type === 'canvas' && 
+                  b.properties?.canvasData?.originalQuery === chain.originalQuery
+                );
+                console.log(`🧠 OriginalQuery match attempt for "${chain.originalQuery}":`, !!targetBlock);
+              }
+              
+              if (targetBlock && targetBlock.properties?.canvasData) {
+                console.log(`🧠 Updating canvas block ${targetBlock.id} with loaded reasoning chain (matched by ${chain.blockId ? 'blockId' : chain.sessionId ? 'sessionId' : 'query'})`);
+                
+                // Update the block's canvasData with the reasoning chain
+                const updatedCanvasData = {
+                  ...targetBlock.properties.canvasData,
+                  reasoningChain: chain
+                };
+                
+                // Update the block properties
+                setTimeout(() => {
+                  onUpdateBlock(targetBlock.id, {
+                    properties: {
+                      ...targetBlock.properties,
+                      canvasData: updatedCanvasData
+                    }
+                  });
+                }, 100);
+              } else {
+                console.log(`🧠 No matching canvas block found for reasoning chain ${chain.sessionId}`);
+              }
             }
           });
           return newMap;
@@ -352,7 +415,7 @@ export const PageEditor = ({
         hasStorageManager: !!storageManager
       });
     }
-  }, [page.id, storageManager]);
+  }, [page?.id, page?.blocks, storageManager]);
 
   // Add logging wrapper for onUpdatePage
   const loggedOnUpdatePage = useCallback((updates: Partial<Page>) => {

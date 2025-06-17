@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { Block, Page, Workspace } from '@/types';
-import { BarChart3, ChevronRight, Maximize2, Eye, Database, TrendingUp, Activity } from 'lucide-react';
+import { BarChart3, ChevronRight, Maximize2, Eye, Database, TrendingUp, Activity, AlertTriangle } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 import ReactMarkdown from 'react-markdown';
@@ -407,26 +407,49 @@ export const CanvasBlock = ({
                 
                 // Handle new object format with events array
                 if (reasoningChain && typeof reasoningChain === 'object' && !Array.isArray(reasoningChain) && reasoningChain.events) {
+                  const isIncomplete = !reasoningChain.isComplete;
+                  const isFailed = reasoningChain.status === 'failed';
+                  
                   return (
-                    <ReasoningChain
-                      reasoningData={{
-                        events: Array.isArray(reasoningChain.events) 
-                          ? reasoningChain.events.map((event: any) => ({
-                              type: event.type as any,
-                              message: event.message,
-                              timestamp: event.timestamp,
-                              metadata: event.metadata
-                            }))
-                          : [],
-                        originalQuery: block.properties.canvasData.originalQuery || 'Analysis Query',
-                        isComplete: reasoningChain.isComplete ?? true,
-                        lastUpdated: reasoningChain.lastUpdated || new Date().toISOString(),
-                        status: reasoningChain.status || 'completed',
-                        progress: reasoningChain.progress ?? 1.0
-                      }}
-                      title="How AI Solved This"
-                      collapsed={true}
-                    />
+                    <div>
+                      {/* Show status indicator for incomplete/failed chains */}
+                      {(isIncomplete || isFailed) && (
+                        <div className="mb-3 p-3 bg-orange-50 dark:bg-orange-900/30 border border-orange-200 dark:border-orange-600 rounded-lg">
+                          <div className="flex items-center gap-2 text-orange-700 dark:text-orange-300">
+                            <AlertTriangle className="h-4 w-4" />
+                            <span className="font-medium">
+                              {isFailed ? 'Query Failed' : 'Query Incomplete'}
+                            </span>
+                          </div>
+                          <p className="text-sm text-orange-600 dark:text-orange-400 mt-1">
+                            {isFailed 
+                              ? 'This analysis encountered an error. Check the reasoning chain below for details.'
+                              : 'This analysis was interrupted. You can retry or resume from the Canvas workspace.'
+                            }
+                          </p>
+                        </div>
+                      )}
+                      
+                      <ReasoningChain
+                        reasoningData={{
+                          events: Array.isArray(reasoningChain.events) 
+                            ? reasoningChain.events.map((event: any) => ({
+                                type: event.type as any,
+                                message: event.message,
+                                timestamp: event.timestamp,
+                                metadata: event.metadata
+                              }))
+                            : [],
+                          originalQuery: block.properties.canvasData.originalQuery || 'Analysis Query',
+                          isComplete: reasoningChain.isComplete ?? true,
+                          lastUpdated: reasoningChain.lastUpdated || new Date().toISOString(),
+                          status: reasoningChain.status || 'completed',
+                          progress: reasoningChain.progress ?? 1.0
+                        }}
+                        title={isIncomplete || isFailed ? "AI Processing Log" : "How AI Solved This"}
+                        collapsed={!isIncomplete && !isFailed} // Show expanded for failed/incomplete
+                      />
+                    </div>
                   );
                 }
                 
