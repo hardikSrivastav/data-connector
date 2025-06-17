@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { Page, Block, Workspace } from '@/types';
+import { Page, Block, Workspace, ReasoningChainData, ReasoningChainEvent } from '@/types';
 import { EnterpriseStorageConfig, SyncState, Change } from '@/types/storage';
 import { SyncStrategy, EnterpriseSyncStrategy, ZeroSyncStrategy } from './sync-strategies';
 
@@ -369,6 +369,164 @@ export class StorageManager {
       
       if (this.syncState.isOnline) {
         this.syncPendingChanges();
+      }
+    }
+  }
+
+  // ========== REASONING CHAIN METHODS ==========
+
+  async saveReasoningChain(reasoningChain: ReasoningChainData): Promise<ReasoningChainData> {
+    // Cache the reasoning chain
+    this.setCache(`reasoning:${reasoningChain.sessionId}`, reasoningChain);
+    
+    // Save to IndexedDB (if we add reasoning chains to IndexedDB schema)
+    // For now, we'll rely on server storage
+    
+    // Different behavior per edition
+    if (this.config.edition === 'enterprise') {
+      // Send to server immediately for reasoning chains (they're time-sensitive)
+      try {
+        const response = await this.syncToServer('reasoning-chains', {
+          id: reasoningChain.sessionId,
+          workspaceId: 'main', // TODO: Get from context
+          pageId: reasoningChain.pageId || 'unknown',
+          blockId: reasoningChain.blockId,
+          userId: 'dev_user_12345', // TODO: Get from auth context
+          originalQuery: reasoningChain.originalQuery,
+          status: reasoningChain.status,
+          progress: reasoningChain.progress,
+          events: reasoningChain.events,
+          metadata: {
+            lastUpdated: reasoningChain.lastUpdated,
+            currentStep: reasoningChain.currentStep
+          },
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString()
+        });
+        
+        return reasoningChain;
+      } catch (error) {
+        console.error('Failed to save reasoning chain to server:', error);
+        // Continue with local storage as fallback
+      }
+    }
+    
+    return reasoningChain;
+  }
+
+  async getReasoningChain(sessionId: string): Promise<ReasoningChainData | null> {
+    // Check memory cache first
+    const cached = this.getCached<ReasoningChainData>(`reasoning:${sessionId}`);
+    if (cached) {
+      return cached;
+    }
+
+    // Fetch from server if online and not zero-sync
+    if (this.syncState.isOnline && this.config.edition !== 'zero-sync') {
+      try {
+        const response = await this.fetchFromServer<any>(`reasoning-chains/${sessionId}`);
+        
+        // Convert server format to ReasoningChainData
+        const reasoningChain: ReasoningChainData = {
+          events: response.events || [],
+          originalQuery: response.originalQuery,
+          sessionId: response.id,
+          isComplete: response.status === 'completed',
+          lastUpdated: response.updatedAt,
+          status: response.status,
+          progress: response.progress,
+          currentStep: response.metadata?.currentStep,
+          pageId: response.pageId,
+          blockId: response.blockId
+        };
+        
+        this.setCache(`reasoning:${sessionId}`, reasoningChain);
+        return reasoningChain;
+      } catch (error) {
+        console.error('Failed to fetch reasoning chain from server:', error);
+      }
+    }
+
+    return null;
+  }
+
+  async getReasoningChainsForPage(pageId: string): Promise<ReasoningChainData[]> {
+    // Fetch from server if online and not zero-sync
+    if (this.syncState.isOnline && this.config.edition !== 'zero-sync') {
+      try {
+        const response = await this.fetchFromServer<any[]>(`pages/${pageId}/reasoning-chains`);
+        
+        // Convert server format to ReasoningChainData array
+        const reasoningChains: ReasoningChainData[] = response.map(item => ({
+          events: item.events || [],
+          originalQuery: item.originalQuery,
+          sessionId: item.id,
+          isComplete: item.status === 'completed',
+          lastUpdated: item.updatedAt,
+          status: item.status,
+          progress: item.progress,
+          currentStep: item.metadata?.currentStep,
+          pageId: item.pageId,
+          blockId: item.blockId
+        }));
+        
+        // Cache each reasoning chain
+        reasoningChains.forEach(chain => {
+          this.setCache(`reasoning:${chain.sessionId}`, chain);
+        });
+        
+        return reasoningChains;
+      } catch (error) {
+        console.error('Failed to fetch reasoning chains for page from server:', error);
+      }
+    }
+
+    return [];
+  }
+
+  async updateReasoningChainEvents(sessionId: string, events: ReasoningChainEvent[]): Promise<void> {
+    // Update cache
+    const cached = this.getCached<ReasoningChainData>(`reasoning:${sessionId}`);
+    if (cached) {
+      cached.events = [...cached.events, ...events];
+      cached.lastUpdated = new Date().toISOString();
+      this.setCache(`reasoning:${sessionId}`, cached);
+    }
+
+    // Send to server if online and not zero-sync
+    if (this.syncState.isOnline && this.config.edition !== 'zero-sync') {
+      try {
+        await this.syncToServer(`reasoning-chains/${sessionId}/events`, events);
+      } catch (error) {
+        console.error('Failed to update reasoning chain events on server:', error);
+      }
+    }
+  }
+
+  async completeReasoningChain(sessionId: string, success: boolean, blockId?: string): Promise<void> {
+    // Update cache
+    const cached = this.getCached<ReasoningChainData>(`reasoning:${sessionId}`);
+    if (cached) {
+      cached.isComplete = true;
+      cached.status = success ? 'completed' : 'failed';
+      cached.progress = 1.0;
+      cached.lastUpdated = new Date().toISOString();
+      if (blockId) {
+        cached.blockId = blockId;
+      }
+      this.setCache(`reasoning:${sessionId}`, cached);
+    }
+
+    // Send to server if online and not zero-sync
+    if (this.syncState.isOnline && this.config.edition !== 'zero-sync') {
+      try {
+        await this.syncToServer(`reasoning-chains/${sessionId}/complete`, {
+          success,
+          final_progress: 1.0,
+          block_id: blockId
+        });
+      } catch (error) {
+        console.error('Failed to complete reasoning chain on server:', error);
       }
     }
   }

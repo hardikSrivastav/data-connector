@@ -177,13 +177,35 @@ export interface ReasoningEvent {
   metadata?: any;
 }
 
+// Reasoning Chain Types - Enhanced for independent storage
+export interface ReasoningChainEvent {
+  type: 'status' | 'progress' | 'error' | 'complete' | 'partial_sql' | 'analysis_chunk' | 'classifying' | 'database_selected' | 'schema_loading' | 'query_generating' | 'query_executing' | 'partial_results' | 'planning' | 'aggregating';
+  message: string;
+  timestamp: string;
+  metadata?: any;
+}
+
 export interface ReasoningChainData {
-  events: ReasoningEvent[];
+  events: ReasoningChainEvent[];
   originalQuery: string;
-  sessionId?: string;
+  sessionId: string;
   isComplete: boolean;
   lastUpdated: string;
   status: 'streaming' | 'completed' | 'failed' | 'cancelled';
   progress: number;
   currentStep?: string;
+  pageId?: string;
+  blockId?: string;
+}
+
+export interface CanvasData {
+  fullData?: {
+    headers: string[];
+    rows: any[][];
+  };
+  fullAnalysis?: string;
+  sqlQuery?: string;
+  originalQuery?: string;
+  threadId?: string;
+  reasoningChain?: ReasoningChainEvent[];
 }

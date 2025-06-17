@@ -4,7 +4,8 @@ from typing import List, Optional, Dict, Any
 from datetime import datetime
 import json
 import os
-from sqlalchemy import create_engine, Column, String, DateTime, Text, Integer, JSON, Index, ForeignKey, Boolean, LargeBinary
+from sqlalchemy import create_engine, Column, String, DateTime, Text, Integer, JSON, Index, ForeignKey, Boolean, LargeBinary, Float
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker, Session, relationship
 from sqlalchemy.dialects.postgresql import UUID, JSONB
@@ -13,7 +14,7 @@ from fastapi.security import HTTPBearer
 from fastapi import Request
 import logging
 
-router = APIRouter(prefix="/api", tags=["storage"])
+router = APIRouter(prefix="/api/storage", tags=["storage"])
 
 # Set up logging
 logger = logging.getLogger(__name__)
@@ -27,16 +28,15 @@ async def get_current_user_from_request(request: Request) -> str:
     Extract current user from session cookie or return development user
     
     In production, this would validate the session cookie.
-    For now, we'll extract from cookie or default to dev user.
+    For now, we'll use the session cookie value directly as user ID.
     """
     try:
         # Try to get session cookie
         session_cookie = request.cookies.get('ceneca_session')
         
         if session_cookie:
-            # For immediate security, we'll use the session ID as user ID
-            user_id = f"user_{hash(session_cookie) % 10000}"
-            return user_id
+            # Use session cookie value directly as user ID for consistency with database
+            return session_cookie
         else:
             # Development fallback
             return "dev_user_12345"
@@ -196,6 +196,36 @@ class CanvasThreadDB(Base):
         Index('idx_canvas_threads_block_id', 'block_id'),
         Index('idx_canvas_threads_status', 'status'),
         Index('idx_canvas_threads_updated_at', 'updated_at'),
+    )
+
+# NEW: Independent Reasoning Chain Storage
+class ReasoningChainDB(Base):
+    __tablename__ = "reasoning_chains"
+    
+    id = Column(String, primary_key=True)  # This will be the session_id from streaming
+    workspace_id = Column(String, nullable=False)
+    page_id = Column(String, nullable=False)
+    block_id = Column(String, nullable=True)  # Optional link to block - can be null during creation
+    user_id = Column(String, nullable=False)  # User isolation
+    original_query = Column(Text, nullable=False)
+    status = Column(String, default='streaming')  # 'streaming', 'completed', 'failed', 'cancelled'
+    progress = Column(Float, default=0.0)  # 0.0 to 1.0
+    events = Column(JSONB, default=list)  # Array of reasoning events
+    chain_metadata = Column(JSONB, default=dict)  # Session info, timing, classification, etc.
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    completed_at = Column(DateTime, nullable=True)
+    
+    # Indexes for performance and querying
+    __table_args__ = (
+        Index('idx_reasoning_chains_session_id', 'id'),  # Primary lookup by session_id
+        Index('idx_reasoning_chains_workspace_id', 'workspace_id'),
+        Index('idx_reasoning_chains_page_id', 'page_id'),
+        Index('idx_reasoning_chains_block_id', 'block_id'),
+        Index('idx_reasoning_chains_user_id', 'user_id'),
+        Index('idx_reasoning_chains_status', 'status'),
+        Index('idx_reasoning_chains_created_at', 'created_at'),
+        Index('idx_reasoning_chains_user_page', 'user_id', 'page_id'),  # Common query pattern
     )
 
 class AnalysisCommitDB(Base):
@@ -391,6 +421,28 @@ class CanvasBlockProperties(BaseModel):
     scrollPosition: Optional[int] = None
     viewState: Optional[Dict[str, Any]] = None
 
+# NEW: Reasoning Chain Pydantic Models
+class ReasoningChainEvent(BaseModel):
+    type: str  # 'status', 'progress', 'error', 'complete', etc.
+    message: str
+    timestamp: str
+    metadata: Optional[Dict[str, Any]] = None
+
+class ReasoningChain(BaseModel):
+    id: str  # session_id
+    workspaceId: str
+    pageId: str
+    blockId: Optional[str] = None
+    userId: str
+    originalQuery: str
+    status: str = 'streaming'
+    progress: float = 0.0
+    events: List[ReasoningChainEvent] = []
+    metadata: Dict[str, Any] = {}
+    createdAt: datetime
+    updatedAt: datetime
+    completedAt: Optional[datetime] = None
+
 # API request/response models
 class CreateCanvasRequest(BaseModel):
     blockId: str
@@ -550,6 +602,7 @@ async def save_workspace(
         db_page = PageDB(
             id=page_data.id,
             workspace_id=user_workspace_id,  # Use user-specific workspace ID
+            owner_id=current_user,  # Set ownership properly
             title=page_data.title,
             icon=page_data.icon,
             created_at=page_data.createdAt,
@@ -562,6 +615,7 @@ async def save_workspace(
             db_block = BlockDB(
                 id=block_data.id,
                 page_id=page_data.id,
+                owner_id=current_user,  # Set ownership properly
                 type=block_data.type,
                 content=block_data.content,
                 order=block_data.order,
@@ -631,23 +685,35 @@ async def get_page(page_id: str, request: Request, db: Session = Depends(get_db)
     )
 
 @router.post("/pages", response_model=Page)
-async def save_page(page: Page, db: Session = Depends(get_db)):
-    """Save page"""
+async def save_page(page: Page, request: Request, db: Session = Depends(get_db)):
+    """Save page - with user authentication"""
+    # Get current user
+    current_user = await get_current_user_from_request(request)
+    logger.info(f"🔐 save_page: user={current_user}, page={page.id}")
+    
     # Get or create page
     db_page = db.query(PageDB).filter(PageDB.id == page.id).first()
     if not db_page:
-        # Need to find workspace for this page (assuming main workspace for now)
-        workspace_id = "main"  # You might want to pass this in the request
+        # Create new page for this user
+        user_workspace_id = get_user_workspace_id(current_user, "main")
         db_page = PageDB(
             id=page.id,
-            workspace_id=workspace_id,
+            workspace_id=user_workspace_id,  # Use user-specific workspace ID
+            owner_id=current_user,  # Set ownership properly
             title=page.title,
             icon=page.icon,
             created_at=page.createdAt,
-            updated_at=page.updatedAt
+            updated_at=datetime.utcnow()
         )
         db.add(db_page)
     else:
+        # Verify ownership for existing page
+        if db_page.owner_id and db_page.owner_id != current_user:
+            raise HTTPException(status_code=404, detail="Page not found")
+        # Migrate legacy pages
+        if not db_page.owner_id:
+            db_page.owner_id = current_user
+            
         db_page.title = page.title
         db_page.icon = page.icon
         db_page.updated_at = page.updatedAt
@@ -662,6 +728,7 @@ async def save_page(page: Page, db: Session = Depends(get_db)):
         db_block = BlockDB(
             id=block_data.id,
             page_id=page.id,
+            owner_id=current_user,  # Set ownership properly
             type=block_data.type,
             content=block_data.content,
             order=block_data.order,
@@ -674,17 +741,22 @@ async def save_page(page: Page, db: Session = Depends(get_db)):
     db.refresh(db_page)
     
     # Return the saved page
-    return await get_page(page.id, db)
+    return await get_page(page.id, request, db)
 
 @router.post("/blocks", response_model=Block)
-async def save_block(block: Block, db: Session = Depends(get_db)):
-    """Save block"""
+async def save_block(block: Block, request: Request, db: Session = Depends(get_db)):
+    """Save block - with user authentication"""
+    # Get current user
+    current_user = await get_current_user_from_request(request)
+    logger.info(f"🔐 save_block: user={current_user}, block={block.id}")
+    
     db_block = db.query(BlockDB).filter(BlockDB.id == block.id).first()
     
     if not db_block:
         db_block = BlockDB(
             id=block.id,
             page_id=block.pageId,
+            owner_id=current_user,  # Set ownership properly
             type=block.type,
             content=block.content,
             order=block.order,
@@ -693,6 +765,13 @@ async def save_block(block: Block, db: Session = Depends(get_db)):
         )
         db.add(db_block)
     else:
+        # Verify ownership for existing block
+        if db_block.owner_id and db_block.owner_id != current_user:
+            raise HTTPException(status_code=404, detail="Block not found")
+        # Migrate legacy blocks
+        if not db_block.owner_id:
+            db_block.owner_id = current_user
+            
         db_block.type = block.type
         db_block.content = block.content
         db_block.order = block.order
@@ -753,9 +832,10 @@ async def sync_changes(sync_request: SyncRequest, request: Request, db: Session 
                         db_page.updated_at = datetime.utcnow()
                     else:
                         # Create new page for this user
+                        user_workspace_id = get_user_workspace_id(current_user, "main")
                         db_page = PageDB(
                             id=change.entityId,
-                            workspace_id="main",  # Use clean workspace ID
+                            workspace_id=user_workspace_id,  # Use user-specific workspace ID
                             owner_id=current_user,  # Set ownership properly
                             title=change.data.get('title', 'Untitled'),
                             icon=change.data.get('icon'),
@@ -1199,3 +1279,277 @@ async def update_user_preference(
         "message": f"Updated {preference_key} preference",
         "updated_preference": {preference_key: preference_value}
     } 
+
+# ========== REASONING CHAIN ENDPOINTS ==========
+
+@router.post("/reasoning-chains", response_model=ReasoningChain)
+async def create_reasoning_chain(
+    reasoning_chain: ReasoningChain,
+    request: Request,
+    db: Session = Depends(get_db)
+):
+    """Create a new reasoning chain - called when query starts streaming"""
+    current_user = await get_current_user_from_request(request)
+    logger.info(f"🧠 create_reasoning_chain: user={current_user}, session_id={reasoning_chain.id}")
+    
+    try:
+        # Ensure user owns the workspace/page
+        db_page = db.query(PageDB).filter(
+            PageDB.id == reasoning_chain.pageId
+        ).first()
+        
+        if not db_page:
+            raise HTTPException(status_code=404, detail="Page not found")
+            
+        # Handle pages with null owner_id (assign to current user for backward compatibility)
+        if db_page.owner_id is None:
+            logger.info(f"🔧 Assigning page {reasoning_chain.pageId} to user {current_user}")
+            db_page.owner_id = current_user
+            db.commit()
+        elif db_page.owner_id != current_user:
+            raise HTTPException(status_code=404, detail="Page access denied")
+        
+        # Check if reasoning chain already exists (idempotent)
+        existing_chain = db.query(ReasoningChainDB).filter(ReasoningChainDB.id == reasoning_chain.id).first()
+        if existing_chain:
+            logger.info(f"🧠 Reasoning chain {reasoning_chain.id} already exists, updating...")
+            # Update existing chain
+            existing_chain.original_query = reasoning_chain.originalQuery
+            existing_chain.status = reasoning_chain.status
+            existing_chain.progress = reasoning_chain.progress
+            existing_chain.events = [event.dict() for event in reasoning_chain.events]
+            existing_chain.chain_metadata = reasoning_chain.metadata
+            existing_chain.updated_at = datetime.utcnow()
+            if reasoning_chain.blockId:
+                existing_chain.block_id = reasoning_chain.blockId
+            
+            db.commit()
+            db.refresh(existing_chain)
+            
+            return ReasoningChain(
+                id=existing_chain.id,
+                workspaceId=existing_chain.workspace_id,
+                pageId=existing_chain.page_id,
+                blockId=existing_chain.block_id,
+                userId=existing_chain.user_id,
+                originalQuery=existing_chain.original_query,
+                status=existing_chain.status,
+                progress=existing_chain.progress,
+                events=[ReasoningChainEvent(**event) for event in existing_chain.events],
+                metadata=existing_chain.chain_metadata,
+                createdAt=existing_chain.created_at,
+                updatedAt=existing_chain.updated_at,
+                completedAt=existing_chain.completed_at
+            )
+        
+        # Create new reasoning chain
+        db_reasoning_chain = ReasoningChainDB(
+            id=reasoning_chain.id,
+            workspace_id=reasoning_chain.workspaceId,
+            page_id=reasoning_chain.pageId,
+            block_id=reasoning_chain.blockId,
+            user_id=current_user,
+            original_query=reasoning_chain.originalQuery,
+            status=reasoning_chain.status,
+            progress=reasoning_chain.progress,
+            events=[event.dict() for event in reasoning_chain.events],
+            chain_metadata=reasoning_chain.metadata
+        )
+        
+        db.add(db_reasoning_chain)
+        db.commit()
+        db.refresh(db_reasoning_chain)
+        
+        logger.info(f"🧠 Created reasoning chain: {reasoning_chain.id}")
+        
+        return ReasoningChain(
+            id=db_reasoning_chain.id,
+            workspaceId=db_reasoning_chain.workspace_id,
+            pageId=db_reasoning_chain.page_id,
+            blockId=db_reasoning_chain.block_id,
+            userId=db_reasoning_chain.user_id,
+            originalQuery=db_reasoning_chain.original_query,
+            status=db_reasoning_chain.status,
+            progress=db_reasoning_chain.progress,
+            events=[ReasoningChainEvent(**event) for event in db_reasoning_chain.events],
+            metadata=db_reasoning_chain.chain_metadata,
+            createdAt=db_reasoning_chain.created_at,
+            updatedAt=db_reasoning_chain.updated_at,
+            completedAt=db_reasoning_chain.completed_at
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"🧠 Error creating reasoning chain: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to create reasoning chain: {str(e)}")
+
+@router.get("/reasoning-chains/{session_id}", response_model=ReasoningChain)
+async def get_reasoning_chain(
+    session_id: str,
+    request: Request,
+    db: Session = Depends(get_db)
+):
+    """Get reasoning chain by session ID"""
+    current_user = await get_current_user_from_request(request)
+    logger.info(f"🧠 get_reasoning_chain: user={current_user}, session_id={session_id}")
+    
+    db_reasoning_chain = db.query(ReasoningChainDB).filter(
+        ReasoningChainDB.id == session_id,
+        ReasoningChainDB.user_id == current_user
+    ).first()
+    
+    if not db_reasoning_chain:
+        raise HTTPException(status_code=404, detail="Reasoning chain not found")
+    
+    return ReasoningChain(
+        id=db_reasoning_chain.id,
+        workspaceId=db_reasoning_chain.workspace_id,
+        pageId=db_reasoning_chain.page_id,
+        blockId=db_reasoning_chain.block_id,
+        userId=db_reasoning_chain.user_id,
+        originalQuery=db_reasoning_chain.original_query,
+        status=db_reasoning_chain.status,
+        progress=db_reasoning_chain.progress,
+        events=[ReasoningChainEvent(**event) for event in db_reasoning_chain.events],
+        metadata=db_reasoning_chain.chain_metadata,
+        createdAt=db_reasoning_chain.created_at,
+        updatedAt=db_reasoning_chain.updated_at,
+        completedAt=db_reasoning_chain.completed_at
+    )
+
+@router.get("/pages/{page_id}/reasoning-chains", response_model=List[ReasoningChain])
+async def get_reasoning_chains_for_page(
+    page_id: str,
+    request: Request,
+    db: Session = Depends(get_db),
+    limit: int = 50
+):
+    """Get all reasoning chains for a page"""
+    current_user = await get_current_user_from_request(request)
+    logger.info(f"🧠 get_reasoning_chains_for_page: user={current_user}, page_id={page_id}")
+    
+    # Verify user owns the page
+    db_page = db.query(PageDB).filter(
+        PageDB.id == page_id
+    ).first()
+    
+    if not db_page:
+        raise HTTPException(status_code=404, detail="Page not found")
+        
+    # Handle pages with null owner_id (assign to current user for backward compatibility)
+    if db_page.owner_id is None:
+        logger.info(f"🔧 Assigning page {page_id} to user {current_user}")
+        db_page.owner_id = current_user
+        db.commit()
+    elif db_page.owner_id != current_user:
+        raise HTTPException(status_code=404, detail="Page access denied")
+    
+    db_reasoning_chains = db.query(ReasoningChainDB).filter(
+        ReasoningChainDB.page_id == page_id,
+        ReasoningChainDB.user_id == current_user
+    ).order_by(ReasoningChainDB.created_at.desc()).limit(limit).all()
+    
+    return [
+        ReasoningChain(
+            id=chain.id,
+            workspaceId=chain.workspace_id,
+            pageId=chain.page_id,
+            blockId=chain.block_id,
+            userId=chain.user_id,
+            originalQuery=chain.original_query,
+            status=chain.status,
+            progress=chain.progress,
+            events=[ReasoningChainEvent(**event) for event in chain.events],
+            metadata=chain.chain_metadata,
+            createdAt=chain.created_at,
+            updatedAt=chain.updated_at,
+            completedAt=chain.completed_at
+        )
+        for chain in db_reasoning_chains
+    ]
+
+@router.patch("/reasoning-chains/{session_id}/events")
+async def add_reasoning_chain_events(
+    session_id: str,
+    events: List[ReasoningChainEvent],
+    request: Request,
+    db: Session = Depends(get_db)
+):
+    """Add events to an existing reasoning chain"""
+    current_user = await get_current_user_from_request(request)
+    logger.info(f"🧠 add_reasoning_chain_events: user={current_user}, session_id={session_id}, events={len(events)}")
+    
+    db_reasoning_chain = db.query(ReasoningChainDB).filter(
+        ReasoningChainDB.id == session_id,
+        ReasoningChainDB.user_id == current_user
+    ).first()
+    
+    if not db_reasoning_chain:
+        raise HTTPException(status_code=404, detail="Reasoning chain not found")
+    
+    # Append new events to existing events
+    current_events = db_reasoning_chain.events or []
+    new_events = [event.dict() for event in events]
+    db_reasoning_chain.events = current_events + new_events
+    db_reasoning_chain.updated_at = datetime.utcnow()
+    
+    db.commit()
+    
+    return {"success": True, "events_added": len(events), "total_events": len(db_reasoning_chain.events)}
+
+@router.patch("/reasoning-chains/{session_id}/complete")
+async def complete_reasoning_chain(
+    session_id: str,
+    request: Request,
+    success: bool,
+    final_progress: float = 1.0,
+    block_id: Optional[str] = None,
+    db: Session = Depends(get_db)
+):
+    """Mark reasoning chain as complete"""
+    current_user = await get_current_user_from_request(request)
+    logger.info(f"🧠 complete_reasoning_chain: user={current_user}, session_id={session_id}, success={success}")
+    
+    db_reasoning_chain = db.query(ReasoningChainDB).filter(
+        ReasoningChainDB.id == session_id,
+        ReasoningChainDB.user_id == current_user
+    ).first()
+    
+    if not db_reasoning_chain:
+        raise HTTPException(status_code=404, detail="Reasoning chain not found")
+    
+    db_reasoning_chain.status = 'completed' if success else 'failed'
+    db_reasoning_chain.progress = final_progress
+    db_reasoning_chain.completed_at = datetime.utcnow()
+    db_reasoning_chain.updated_at = datetime.utcnow()
+    
+    if block_id:
+        db_reasoning_chain.block_id = block_id
+    
+    db.commit()
+    
+    return {"success": True, "status": db_reasoning_chain.status, "completed_at": db_reasoning_chain.completed_at}
+
+@router.delete("/reasoning-chains/{session_id}")
+async def delete_reasoning_chain(
+    session_id: str,
+    request: Request,
+    db: Session = Depends(get_db)
+):
+    """Delete a reasoning chain"""
+    current_user = await get_current_user_from_request(request)
+    logger.info(f"🧠 delete_reasoning_chain: user={current_user}, session_id={session_id}")
+    
+    db_reasoning_chain = db.query(ReasoningChainDB).filter(
+        ReasoningChainDB.id == session_id,
+        ReasoningChainDB.user_id == current_user
+    ).first()
+    
+    if not db_reasoning_chain:
+        raise HTTPException(status_code=404, detail="Reasoning chain not found")
+    
+    db.delete(db_reasoning_chain)
+    db.commit()
+    
+    return {"success": True, "message": f"Reasoning chain {session_id} deleted"} 

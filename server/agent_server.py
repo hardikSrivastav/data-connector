@@ -44,7 +44,7 @@ def create_app() -> FastAPI:
 
     # Include routers
     app.include_router(agent_router, prefix="/api/agent", tags=["agent"])
-    app.include_router(storage_router, prefix="/api", tags=["storage"])
+    app.include_router(storage_router, tags=["storage"])  # storage_router already has /api prefix
 
     @app.get("/health")
     async def health_check():

@@ -111,7 +111,7 @@ export const ReasoningChain = ({
           <Button
             variant="ghost"
             size="sm"
-            onClick={() => setIsCollapsed(!isCollapsed)}
+        onClick={() => setIsCollapsed(!isCollapsed)}
             className="h-8 w-8 p-0"
           >
             {isCollapsed ? <ChevronRight className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
@@ -207,35 +207,35 @@ export const ReasoningChain = ({
                 {displayEvents.map((event, index) => (
                   <div key={index} className="flex items-start gap-3 p-3 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700/50 transition-colors">
                     <div className="flex-shrink-0 mt-0.5">
-                      {getEventIcon(event.type)}
-                    </div>
-                    <div className="flex-1 min-w-0">
+                    {getEventIcon(event.type)}
+                  </div>
+                <div className="flex-1 min-w-0">
                       <div className="flex items-center justify-between mb-1">
                         <span className="text-sm font-medium text-gray-900 dark:text-gray-100">
                           {getEventTypeLabel(event.type)}
-                        </span>
+                    </span>
                         <span className="text-xs text-gray-500 dark:text-gray-400">
-                          {formatTimestamp(event.timestamp)}
-                        </span>
-                      </div>
+                      {formatTimestamp(event.timestamp)}
+                    </span>
+                  </div>
                       <p className="text-sm text-gray-600 dark:text-gray-300 break-words">
-                        {event.message}
+                    {event.message}
                       </p>
-                      {/* Show metadata if available */}
-                      {event.metadata && Object.keys(event.metadata).length > 0 && (
+                  {/* Show metadata if available */}
+                  {event.metadata && Object.keys(event.metadata).length > 0 && (
                         <details className="mt-2">
                           <summary className="text-xs text-gray-500 dark:text-gray-400 cursor-pointer hover:text-gray-700 dark:hover:text-gray-200">
                             View details
-                          </summary>
+                        </summary>
                           <pre className="text-xs text-gray-500 dark:text-gray-400 mt-1 p-2 bg-gray-100 dark:bg-gray-700 rounded overflow-auto max-h-32">
-                            {JSON.stringify(event.metadata, null, 2)}
-                          </pre>
-                        </details>
-                      )}
-                    </div>
-                  </div>
-                ))}
+                          {JSON.stringify(event.metadata, null, 2)}
+                        </pre>
+                      </details>
+                  )}
+                </div>
               </div>
+            ))}
+          </div>
 
               {/* Show all events toggle */}
               {hiddenEventsCount > 0 && showAllEvents && (
@@ -272,15 +272,15 @@ export const ReasoningChain = ({
                   <span className="text-gray-500 dark:text-gray-400">Status:</span>
                   <span className="ml-2 font-medium text-gray-900 dark:text-gray-100 capitalize">
                     {data.status}
-                  </span>
+              </span>
                 </div>
                 <div>
                   <span className="text-gray-500 dark:text-gray-400">Last Updated:</span>
                   <span className="ml-2 font-medium text-gray-900 dark:text-gray-100">
                     {formatTimestamp(data.lastUpdated)}
-                  </span>
-                </div>
-              </div>
+              </span>
+            </div>
+          </div>
             </div>
           )}
         </div>

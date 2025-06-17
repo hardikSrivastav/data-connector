@@ -12,7 +12,7 @@ export class EnterpriseSyncStrategy implements SyncStrategy {
   
   async syncToServer<T>(endpoint: string, data: T): Promise<T> {
     // Sync to enterprise on-premise API
-    const url = `${this.config.apiBaseUrl}/api/${endpoint}`;
+    const url = `${this.config.apiBaseUrl}/api/storage/${endpoint}`;
     console.log('🔄 Syncing to server:', url);
     console.log('📤 Sync data:', data);
     
@@ -39,7 +39,7 @@ export class EnterpriseSyncStrategy implements SyncStrategy {
   }
   
   async fetchFromServer<T>(endpoint: string): Promise<T> {
-    const response = await fetch(`${this.config.apiBaseUrl}/api/${endpoint}`, {
+    const response = await fetch(`${this.config.apiBaseUrl}/api/storage/${endpoint}`, {
       headers: {
         'Authorization': `Bearer ${this.getAuthToken()}`
       }

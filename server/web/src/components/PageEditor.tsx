@@ -39,6 +39,7 @@ interface ReasoningChainData {
   events: ReasoningChainEvent[];
   originalQuery: string;
   sessionId?: string;
+  blockId?: string;
   isComplete: boolean;
   lastUpdated: string;
   status: 'streaming' | 'completed' | 'failed' | 'cancelled';
@@ -129,73 +130,48 @@ export const PageEditor = ({
   } = useBlockSelection(page.blocks);
 
   // Enhanced reasoning chain persistence functions
-  const saveReasoningChainDebounced = useCallback((blockId: string, reasoningData: ReasoningChainData) => {
-    console.log(`🧠 Debounced save reasoning chain for block ${blockId}`);
+  const saveReasoningChainDebounced = useCallback((sessionId: string, reasoningData: ReasoningChainData) => {
+    console.log(`🧠 Debounced save reasoning chain for session ${sessionId}`);
     
-    // Clear existing timeout for this block
-    const existingTimeout = saveReasoningChainTimeoutRef.current.get(blockId);
+    // Clear existing timeout for this session
+    const existingTimeout = saveReasoningChainTimeoutRef.current.get(sessionId);
     if (existingTimeout) {
       clearTimeout(existingTimeout);
     }
     
     // Set new timeout
     const timeout = setTimeout(async () => {
-      console.log(`💾 Executing save reasoning chain for block ${blockId}`);
+      console.log(`💾 Executing save reasoning chain for session ${sessionId}`);
       try {
-        // Get current block - check both current page state and freshly fetch
-        const currentBlock = page.blocks.find(b => b.id === blockId);
-        if (!currentBlock) {
-          console.warn(`❌ Block ${blockId} not found in current page blocks, skipping reasoning chain save`);
-          console.log(`📋 Available blocks:`, page.blocks.map(b => ({ id: b.id, type: b.type })));
-          
-          // Don't throw error, just skip save - block might not be created yet
-          return;
-        }
-        
-        // Update block properties with reasoning chain
-        const updatedProperties = {
-          ...currentBlock.properties,
-          reasoningChain: reasoningData
+        // Save directly to reasoning chain storage (not block properties)
+        const enhancedReasoningData = {
+          ...reasoningData,
+          pageId: page.id,
+          sessionId
         };
         
-        // Save to local storage via storage manager
-        const updatedBlock = {
-          ...currentBlock,
-          properties: updatedProperties,
-          updatedAt: new Date()
-        };
-        
-        await storageManager.saveBlock(updatedBlock, page.id);
-        console.log(`✅ Reasoning chain saved for block ${blockId}`);
-        
-        // Also update the block in the UI
-        onUpdateBlock(blockId, { properties: updatedProperties });
+        await storageManager.saveReasoningChain(enhancedReasoningData);
+        console.log(`✅ Reasoning chain saved for session ${sessionId}`);
         
       } catch (error) {
-        console.error(`❌ Failed to save reasoning chain for block ${blockId}:`, error);
+        console.error(`❌ Failed to save reasoning chain for session ${sessionId}:`, error);
       }
       
       // Remove timeout reference
-      saveReasoningChainTimeoutRef.current.delete(blockId);
+      saveReasoningChainTimeoutRef.current.delete(sessionId);
     }, 2000); // 2 second debounce
     
-    saveReasoningChainTimeoutRef.current.set(blockId, timeout);
-  }, [page.blocks, page.id, storageManager, onUpdateBlock]);
+    saveReasoningChainTimeoutRef.current.set(sessionId, timeout);
+  }, [page.id, storageManager]);
 
-  const addReasoningChainEvent = useCallback((blockId: string, event: ReasoningChainEvent) => {
-    console.log(`🧠 Adding reasoning chain event for block ${blockId}:`, event.type, event.message);
-    
-    // Check if block exists before adding event
-    const blockExists = page.blocks.some(b => b.id === blockId);
-    if (!blockExists) {
-      console.warn(`🧠 Block ${blockId} not found when adding reasoning event, event will be cached`);
-      console.log(`📋 Available blocks:`, page.blocks.map(b => ({ id: b.id, type: b.type })));
-    }
+  const addReasoningChainEvent = useCallback((sessionId: string, event: ReasoningChainEvent) => {
+    console.log(`🧠 Adding reasoning chain event for session ${sessionId}:`, event.type, event.message);
     
     setActiveReasoningChains(prev => {
-      const current = prev.get(blockId) || {
+      const current = prev.get(sessionId) || {
         events: [],
         originalQuery: '',
+        sessionId,
         isComplete: false,
         lastUpdated: new Date().toISOString(),
         status: 'streaming',
@@ -207,35 +183,33 @@ export const PageEditor = ({
         events: [...current.events, event],
         lastUpdated: new Date().toISOString(),
         progress: event.type === 'complete' ? 1.0 : Math.min(current.progress + 0.1, 0.9),
-        currentStep: event.message
+        currentStep: event.message,
+        sessionId
       };
       
       const newMap = new Map(prev);
-      newMap.set(blockId, updated);
+      newMap.set(sessionId, updated);
       
-      // Only trigger save if block exists
-      if (blockExists) {
-        saveReasoningChainDebounced(blockId, updated);
-      } else {
-        console.log(`🧠 Deferring reasoning chain save for block ${blockId} until block is created`);
-      }
+      // Always trigger save for reasoning chains (independent of blocks)
+      saveReasoningChainDebounced(sessionId, updated);
       
       return newMap;
     });
-  }, [saveReasoningChainDebounced, page.blocks]);
+  }, [saveReasoningChainDebounced]);
 
-  const initializeReasoningChain = useCallback((blockId: string, query: string, sessionId?: string) => {
-    console.log(`🧠 Initializing reasoning chain for block ${blockId} with query: ${query}`);
+  const initializeReasoningChain = useCallback((sessionId: string, query: string, blockId?: string) => {
+    console.log(`🧠 Initializing reasoning chain for session ${sessionId} with query: ${query}`);
     
     const initialData: ReasoningChainData = {
       events: [{
         type: 'status',
         message: 'Starting AI query processing...',
         timestamp: new Date().toISOString(),
-        metadata: { sessionId }
+        metadata: { sessionId, blockId }
       }],
       originalQuery: query,
       sessionId,
+      blockId, // Optional link to block
       isComplete: false,
       lastUpdated: new Date().toISOString(),
       status: 'streaming',
@@ -245,26 +219,26 @@ export const PageEditor = ({
     
     setActiveReasoningChains(prev => {
       const newMap = new Map(prev);
-      newMap.set(blockId, initialData);
+      newMap.set(sessionId, initialData);
       return newMap;
     });
     
     // Immediate save for initialization
-    saveReasoningChainDebounced(blockId, initialData);
+    saveReasoningChainDebounced(sessionId, initialData);
   }, [saveReasoningChainDebounced]);
 
-  const completeReasoningChain = useCallback((blockId: string, success: boolean = true, finalMessage?: string) => {
-    console.log(`🧠 Completing reasoning chain for block ${blockId}, success: ${success}`);
+  const completeReasoningChain = useCallback((sessionId: string, success: boolean = true, finalMessage?: string, blockId?: string) => {
+    console.log(`🧠 Completing reasoning chain for session ${sessionId}, success: ${success}`);
     
     setActiveReasoningChains(prev => {
-      const current = prev.get(blockId);
+      const current = prev.get(sessionId);
       if (!current) return prev;
       
       const finalEvent: ReasoningChainEvent = {
         type: success ? 'complete' : 'error',
         message: finalMessage || (success ? 'Processing completed successfully' : 'Processing failed'),
         timestamp: new Date().toISOString(),
-        metadata: { success, completedAt: new Date().toISOString() }
+        metadata: { success, completedAt: new Date().toISOString(), blockId }
       };
       
       const completed: ReasoningChainData = {
@@ -274,14 +248,15 @@ export const PageEditor = ({
         lastUpdated: new Date().toISOString(),
         status: success ? 'completed' : 'failed',
         progress: 1.0,
-        currentStep: finalEvent.message
+        currentStep: finalEvent.message,
+        blockId: blockId || current.blockId // Update block ID if provided
       };
       
       const newMap = new Map(prev);
-      newMap.set(blockId, completed);
+      newMap.set(sessionId, completed);
       
       // Force immediate save for completion
-      setTimeout(() => saveReasoningChainDebounced(blockId, completed), 100);
+      setTimeout(() => saveReasoningChainDebounced(sessionId, completed), 100);
       
       return newMap;
     });
@@ -289,25 +264,61 @@ export const PageEditor = ({
 
   // Load existing reasoning chains on page load
   useEffect(() => {
-    const loadExistingReasoningChains = () => {
+    const loadExistingReasoningChains = async () => {
       console.log(`🧠 Loading existing reasoning chains for page ${page.id}`);
       
-      page.blocks.forEach(block => {
-        if (block.properties?.reasoningChain) {
-          const reasoningData = block.properties.reasoningChain as ReasoningChainData;
-          console.log(`🧠 Found existing reasoning chain for block ${block.id}, events: ${reasoningData.events?.length || 0}, complete: ${reasoningData.isComplete}`);
-          
-          setActiveReasoningChains(prev => {
-            const newMap = new Map(prev);
-            newMap.set(block.id, reasoningData);
-            return newMap;
+      try {
+        // Load reasoning chains from dedicated storage
+        const reasoningChains = await storageManager.getReasoningChainsForPage(page.id);
+        console.log(`🧠 Found ${reasoningChains.length} reasoning chains for page ${page.id}`);
+        
+        setActiveReasoningChains(prev => {
+          const newMap = new Map(prev);
+          reasoningChains.forEach(chain => {
+            if (chain.sessionId) {
+              newMap.set(chain.sessionId, chain);
+              console.log(`🧠 Loaded reasoning chain session ${chain.sessionId}, events: ${chain.events?.length || 0}, complete: ${chain.isComplete}`);
+            }
           });
-        }
-      });
+          return newMap;
+        });
+        
+        // Also check for legacy reasoning chains in block properties (for migration)
+        page.blocks.forEach(block => {
+          if (block.properties?.reasoningChain) {
+            const reasoningData = block.properties.reasoningChain as ReasoningChainData;
+            console.log(`🧠 Found legacy reasoning chain in block ${block.id}, events: ${reasoningData.events?.length || 0}, complete: ${reasoningData.isComplete}`);
+            
+            // Use block ID as session ID for legacy chains
+            setActiveReasoningChains(prev => {
+              const newMap = new Map(prev);
+              newMap.set(block.id, reasoningData);
+              return newMap;
+            });
+          }
+        });
+        
+      } catch (error) {
+        console.error(`❌ Failed to load reasoning chains for page ${page.id}:`, error);
+        
+        // Fallback to legacy loading from block properties
+        page.blocks.forEach(block => {
+          if (block.properties?.reasoningChain) {
+            const reasoningData = block.properties.reasoningChain as ReasoningChainData;
+            console.log(`🧠 Fallback: Found reasoning chain in block ${block.id}, events: ${reasoningData.events?.length || 0}, complete: ${reasoningData.isComplete}`);
+            
+            setActiveReasoningChains(prev => {
+              const newMap = new Map(prev);
+              newMap.set(block.id, reasoningData);
+              return newMap;
+            });
+          }
+        });
+      }
     };
     
     loadExistingReasoningChains();
-  }, [page.id, page.blocks]);
+  }, [page.id, storageManager]);
 
   // Add logging wrapper for onUpdatePage
   const loggedOnUpdatePage = useCallback((updates: Partial<Page>) => {
@@ -500,13 +511,16 @@ export const PageEditor = ({
     const newBlockId = onAddBlock(blockId);
     console.log(`➕ PageEditor: New block created for trivial operation: ${newBlockId}`);
 
+    // Generate session ID for reasoning chain
+    const sessionId = `trivial_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+    
     // Initialize reasoning chain for trivial operations too
-    initializeReasoningChain(newBlockId, query);
-    addReasoningChainEvent(newBlockId, {
+    initializeReasoningChain(sessionId, query, newBlockId);
+    addReasoningChainEvent(sessionId, {
       type: 'status',
       message: `Fast AI processing (${classification.tier}): ${classification.operationType}`,
       timestamp: new Date().toISOString(),
-      metadata: { classification, provider: 'trivial' }
+      metadata: { classification, provider: 'trivial', blockId: newBlockId }
     });
 
     // Set temporary status
@@ -531,7 +545,7 @@ export const PageEditor = ({
       const trivialOperation = operationMap[classification.operationType] || 'improve_clarity';
       console.log(`⚡ PageEditor: Mapped ${classification.operationType} -> ${trivialOperation}`);
       
-      addReasoningChainEvent(newBlockId, {
+      addReasoningChainEvent(sessionId, {
         type: 'status',
         message: `Mapped operation: ${classification.operationType} → ${trivialOperation}`,
         timestamp: new Date().toISOString(),
@@ -564,7 +578,7 @@ export const PageEditor = ({
               progress: 0.1
             }));
             
-            addReasoningChainEvent(newBlockId, {
+            addReasoningChainEvent(sessionId, {
               type: 'status',
               message: `Connected to ${chunk.provider} (${chunk.model})`,
               timestamp: new Date().toISOString(),
@@ -578,7 +592,7 @@ export const PageEditor = ({
               progress: Math.min(prev.progress + 0.1, 0.9)
             }));
             
-            addReasoningChainEvent(newBlockId, {
+            addReasoningChainEvent(sessionId, {
               type: 'progress',
               message: `Generating content chunk (${chunk.partial_result?.length || 0} chars)`,
               timestamp: new Date().toISOString(),
@@ -599,7 +613,7 @@ export const PageEditor = ({
             
             console.log(`✅ PageEditor: Trivial operation complete in ${duration.toFixed(2)}s ${cached ? '(cached)' : ''}`);
             
-            addReasoningChainEvent(newBlockId, {
+            addReasoningChainEvent(sessionId, {
               type: 'complete',
               message: `Completed in ${duration.toFixed(2)}s ${cached ? '(cached)' : ''}`,
               timestamp: new Date().toISOString(),
@@ -612,7 +626,7 @@ export const PageEditor = ({
             
             if (hasMultilineMarkdown) {
               console.log(`📝 PageEditor: Trivial result contains multiline markdown, triggering markdown parsing`);
-              addReasoningChainEvent(newBlockId, {
+              addReasoningChainEvent(sessionId, {
                 type: 'status',
                 message: 'Processing multiline markdown result',
                 timestamp: new Date().toISOString(),
@@ -627,7 +641,7 @@ export const PageEditor = ({
               });
             }
 
-            completeReasoningChain(newBlockId, true, `Fast AI processing completed successfully in ${duration.toFixed(2)}s`);
+            completeReasoningChain(sessionId, true, `Fast AI processing completed successfully in ${duration.toFixed(2)}s`, newBlockId);
 
             setStreamingState({
               isStreaming: false,
@@ -638,7 +652,7 @@ export const PageEditor = ({
           } else if (chunk.type === 'error') {
             console.error(`❌ PageEditor: Trivial streaming error:`, chunk.message);
             
-            addReasoningChainEvent(newBlockId, {
+            addReasoningChainEvent(sessionId, {
               type: 'error',
               message: `Trivial client error: ${chunk.message}`,
               timestamp: new Date().toISOString(),
@@ -651,7 +665,7 @@ export const PageEditor = ({
         (error) => {
           console.error(`❌ PageEditor: Trivial streaming failed:`, error);
           
-          addReasoningChainEvent(newBlockId, {
+          addReasoningChainEvent(sessionId, {
             type: 'error',
             message: `Streaming failed: ${error}`,
             timestamp: new Date().toISOString(),
@@ -671,14 +685,14 @@ export const PageEditor = ({
         content: `❌ **Trivial Client Error**\n\n${error.message}\n\n🔄 Falling back to main LLM...`
       });
       
-      addReasoningChainEvent(newBlockId, {
+      addReasoningChainEvent(sessionId, {
         type: 'error',
         message: `Trivial client failed: ${error.message}. Falling back to main LLM.`,
         timestamp: new Date().toISOString(),
         metadata: { error: error.message, fallback: true }
       });
       
-      completeReasoningChain(newBlockId, false, `Trivial client failed: ${error.message}`);
+      completeReasoningChain(sessionId, false, `Trivial client failed: ${error.message}`, newBlockId);
       
       // Wait a moment then fallback
       setTimeout(async () => {
@@ -707,9 +721,9 @@ export const PageEditor = ({
 
     // Initialize reasoning chain
     const sessionId = `session_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-    initializeReasoningChain(newBlockId, query, sessionId);
+    initializeReasoningChain(sessionId, query, newBlockId);
     
-    addReasoningChainEvent(newBlockId, {
+    addReasoningChainEvent(sessionId, {
       type: 'status',
       message: `Starting overpowered LLM processing (${classification.tier})`,
       timestamp: new Date().toISOString(),
@@ -753,7 +767,7 @@ export const PageEditor = ({
             }]
           }));
           
-          addReasoningChainEvent(newBlockId, {
+          addReasoningChainEvent(sessionId, {
             type: 'status',
             message,
             timestamp: new Date().toISOString()
@@ -774,7 +788,7 @@ export const PageEditor = ({
             }]
           }));
           
-          addReasoningChainEvent(newBlockId, {
+          addReasoningChainEvent(sessionId, {
             type: 'classifying',
             message: statusMessage,
             timestamp: new Date().toISOString(),
@@ -800,7 +814,7 @@ export const PageEditor = ({
             }]
           }));
           
-          addReasoningChainEvent(newBlockId, {
+          addReasoningChainEvent(sessionId, {
             type: 'database_selected',
             message: statusMessage,
             timestamp: new Date().toISOString(),
@@ -823,7 +837,7 @@ export const PageEditor = ({
             }]
           }));
           
-          addReasoningChainEvent(newBlockId, {
+          addReasoningChainEvent(sessionId, {
             type: 'schema_loading',
             message: statusMessage,
             timestamp: new Date().toISOString(),
@@ -846,7 +860,7 @@ export const PageEditor = ({
             }]
           }));
           
-          addReasoningChainEvent(newBlockId, {
+          addReasoningChainEvent(sessionId, {
             type: 'query_generating',
             message: statusMessage,
             timestamp: new Date().toISOString(),
@@ -871,7 +885,7 @@ export const PageEditor = ({
             }]
           }));
           
-          addReasoningChainEvent(newBlockId, {
+          addReasoningChainEvent(sessionId, {
             type: 'query_executing',
             message: statusMessage,
             timestamp: new Date().toISOString(),
@@ -894,7 +908,7 @@ export const PageEditor = ({
             }]
           }));
           
-          addReasoningChainEvent(newBlockId, {
+          addReasoningChainEvent(sessionId, {
             type: 'partial_results',
             message: statusMessage,
             timestamp: new Date().toISOString(),
@@ -921,7 +935,7 @@ export const PageEditor = ({
             }]
           }));
           
-          addReasoningChainEvent(newBlockId, {
+          addReasoningChainEvent(sessionId, {
             type: 'analysis_chunk',
             message,
             timestamp: new Date().toISOString()
@@ -943,7 +957,7 @@ export const PageEditor = ({
             }]
           }));
           
-          addReasoningChainEvent(newBlockId, {
+          addReasoningChainEvent(sessionId, {
             type: 'planning',
             message: statusMessage,
             timestamp: new Date().toISOString(),
@@ -967,7 +981,7 @@ export const PageEditor = ({
             }]
           }));
           
-          addReasoningChainEvent(newBlockId, {
+          addReasoningChainEvent(sessionId, {
             type: 'aggregating',
             message: statusMessage,
             timestamp: new Date().toISOString(),
@@ -1010,7 +1024,7 @@ export const PageEditor = ({
             }]
           }));
           
-          addReasoningChainEvent(newBlockId, {
+          addReasoningChainEvent(sessionId, {
             type: 'complete',
             message: 'Processing complete!',
             timestamp: new Date().toISOString(),
@@ -1150,7 +1164,7 @@ export const PageEditor = ({
             preview: canvasData.preview,
             blocks: [],
             // Store the complete reasoning chain
-            reasoningChain: activeReasoningChains.get(newBlockId),
+            reasoningChain: activeReasoningChains.get(sessionId),
             originalQuery: query
           };
           
@@ -1186,7 +1200,7 @@ export const PageEditor = ({
           });
           
           // Complete reasoning chain
-          completeReasoningChain(newBlockId, true, 'Overpowered LLM processing completed successfully');
+          completeReasoningChain(sessionId, true, 'Overpowered LLM processing completed successfully', newBlockId);
           
           // Clear streaming state
           setTimeout(() => {
@@ -1213,7 +1227,7 @@ export const PageEditor = ({
             }]
           }));
           
-          addReasoningChainEvent(newBlockId, {
+          addReasoningChainEvent(sessionId, {
             type: 'error',
             message: `Error: ${error}`,
             timestamp: new Date().toISOString(),
@@ -1225,7 +1239,7 @@ export const PageEditor = ({
           setPendingAIUpdate({ blockId: newBlockId, content: errorMessage });
           
           // Complete reasoning chain with error
-          completeReasoningChain(newBlockId, false, `Processing failed: ${error}`);
+          completeReasoningChain(sessionId, false, `Processing failed: ${error}`, newBlockId);
           
           // Clear streaming state
           setTimeout(() => {
@@ -1242,7 +1256,7 @@ export const PageEditor = ({
     } catch (error) {
       console.error('❌ PageEditor: Streaming setup failed:', error);
       
-      addReasoningChainEvent(newBlockId, {
+      addReasoningChainEvent(sessionId, {
         type: 'error',
         message: `Streaming setup failed: ${error.message}`,
         timestamp: new Date().toISOString(),
@@ -1253,7 +1267,7 @@ export const PageEditor = ({
       const errorMessage = `❌ **Error:** ${error.message || 'Failed to start streaming query. Please check that the agent server is running.'}`;
       setPendingAIUpdate({ blockId: newBlockId, content: errorMessage });
       
-      completeReasoningChain(newBlockId, false, `Setup failed: ${error.message}`);
+      completeReasoningChain(sessionId, false, `Setup failed: ${error.message}`);
       
       setStreamingState({
         isStreaming: false,
