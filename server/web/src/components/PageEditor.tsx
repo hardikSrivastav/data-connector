@@ -111,7 +111,9 @@ export const PageEditor = ({
   // New state for reasoning chain persistence
   const [activeReasoningChains, setActiveReasoningChains] = useState<Map<string, ReasoningChainData>>(new Map());
   const saveReasoningChainTimeoutRef = useRef<Map<string, NodeJS.Timeout>>(new Map());
-
+  const [reasoningChainsLoaded, setReasoningChainsLoaded] = useState<Set<string>>(new Set());
+  const [isLoadingReasoningChains, setIsLoadingReasoningChains] = useState(false);
+  
   const {
     selectedBlocks,
     isDragging,
@@ -177,6 +179,16 @@ export const PageEditor = ({
         status: 'streaming',
         progress: 0
       };
+      
+      // Don't add duplicate events to prevent infinite loops
+      const lastEvent = current.events[current.events.length - 1];
+      if (lastEvent && 
+          lastEvent.type === event.type && 
+          lastEvent.message === event.message && 
+          lastEvent.timestamp === event.timestamp) {
+        console.log(`🧠 Skipping duplicate event for session ${sessionId}`);
+        return prev; // Return unchanged map
+      }
       
       const updated: ReasoningChainData = {
         ...current,
@@ -262,7 +274,7 @@ export const PageEditor = ({
     });
   }, [saveReasoningChainDebounced]);
 
-  // Load existing reasoning chains on page load
+  // Load existing reasoning chains on page load (with debouncing and caching)
   useEffect(() => {
     const loadExistingReasoningChains = async () => {
       // Only load reasoning chains if we have a valid page ID that's not a placeholder/default
@@ -283,6 +295,19 @@ export const PageEditor = ({
         return;
       }
 
+      // Check if already loaded for this page
+      if (reasoningChainsLoaded.has(page.id)) {
+        console.log(`🧠 Skipping reasoning chain load - already loaded for page ${page.id}`);
+        return;
+      }
+
+      // Check if already loading
+      if (isLoadingReasoningChains) {
+        console.log(`🧠 Skipping reasoning chain load - already in progress`);
+        return;
+      }
+
+      setIsLoadingReasoningChains(true);
       console.log(`🧠 Loading existing reasoning chains for page ${page.id}`);
       
       try {
@@ -379,6 +404,13 @@ export const PageEditor = ({
           }
         });
         
+        // Mark this page as loaded
+        setReasoningChainsLoaded(prev => {
+          const newSet = new Set(prev);
+          newSet.add(page.id);
+          return newSet;
+        });
+        
       } catch (error) {
         console.error(`❌ Failed to load reasoning chains for page ${page.id}:`, error);
         
@@ -395,18 +427,34 @@ export const PageEditor = ({
             });
           }
         });
+        
+        // Still mark as loaded to prevent infinite retries
+        setReasoningChainsLoaded(prev => {
+          const newSet = new Set(prev);
+          newSet.add(page.id);
+          return newSet;
+        });
+      } finally {
+        setIsLoadingReasoningChains(false);
       }
     };
     
     // Only run if we have a valid page ID and storageManager
     // Also ensure the page is properly initialized (has blocks array)
+    // REMOVED page.blocks dependency to prevent streaming interference
     if (page?.id && 
         page.id !== 'default' && 
         page.id !== 'temp' && 
         page.id !== 'undefined' && 
         Array.isArray(page.blocks) && 
         storageManager) {
-      loadExistingReasoningChains();
+      
+      // Debounce the loading to prevent rapid successive calls
+      const debounceTimeout = setTimeout(() => {
+        loadExistingReasoningChains();
+      }, 500); // 500ms debounce
+      
+      return () => clearTimeout(debounceTimeout);
     } else {
       console.log(`🧠 Skipping reasoning chain load - page not ready:`, {
         hasPageId: !!page?.id,
@@ -415,7 +463,7 @@ export const PageEditor = ({
         hasStorageManager: !!storageManager
       });
     }
-  }, [page?.id, page?.blocks, storageManager]);
+  }, [page?.id, storageManager, reasoningChainsLoaded, isLoadingReasoningChains]); // Removed page.blocks dependency
 
   // Add logging wrapper for onUpdatePage
   const loggedOnUpdatePage = useCallback((updates: Partial<Page>) => {
