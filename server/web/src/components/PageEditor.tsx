@@ -167,6 +167,12 @@ export const PageEditor = ({
   }, [page.id, storageManager]);
 
   const addReasoningChainEvent = useCallback((sessionId: string, event: ReasoningChainEvent) => {
+    // Skip reasoning chain events for trivial operations
+    if (sessionId.startsWith('trivial_')) {
+      console.log(`🧠 Skipping reasoning chain event for trivial session ${sessionId}:`, event.type, event.message);
+      return;
+    }
+    
     console.log(`🧠 Adding reasoning chain event for session ${sessionId}:`, event.type, event.message);
     
     setActiveReasoningChains(prev => {
@@ -210,6 +216,12 @@ export const PageEditor = ({
   }, [saveReasoningChainDebounced]);
 
   const initializeReasoningChain = useCallback((sessionId: string, query: string, blockId?: string) => {
+    // Skip reasoning chain creation for trivial operations
+    if (sessionId.startsWith('trivial_')) {
+      console.log(`🧠 Skipping reasoning chain initialization for trivial session ${sessionId}`);
+      return;
+    }
+    
     console.log(`🧠 Initializing reasoning chain for session ${sessionId} with query: ${query}`);
     
     const initialData: ReasoningChainData = {
@@ -240,6 +252,12 @@ export const PageEditor = ({
   }, [saveReasoningChainDebounced]);
 
   const completeReasoningChain = useCallback((sessionId: string, success: boolean = true, finalMessage?: string, blockId?: string) => {
+    // Skip reasoning chain completion for trivial operations
+    if (sessionId.startsWith('trivial_')) {
+      console.log(`🧠 Skipping reasoning chain completion for trivial session ${sessionId}, success: ${success}`);
+      return;
+    }
+    
     console.log(`🧠 Completing reasoning chain for session ${sessionId}, success: ${success}`);
     
     setActiveReasoningChains(prev => {

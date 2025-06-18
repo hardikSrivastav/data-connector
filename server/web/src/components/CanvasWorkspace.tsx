@@ -38,6 +38,62 @@ interface CanvasWorkspaceProps {
   onDeleteBlock?: (blockId: string) => void;
 }
 
+// Helper function to determine if a reasoning chain belongs to a specific canvas
+const isChainRelevantToCanvas = (
+  chain: ReasoningChainData, 
+  canvasBlock: Block | undefined, 
+  canvasPageId: string
+): boolean => {
+  if (!canvasBlock) return false;
+  
+  // Get canvas data for comparison
+  const canvasData = canvasBlock.properties?.canvasData;
+  
+  // Method 1: Direct blockId match to canvas block
+  if (chain.blockId === canvasBlock.id) {
+    console.log(`🎯 Reasoning chain matched by blockId: ${chain.blockId} === ${canvasBlock.id}`);
+    return true;
+  }
+  
+  // Method 2: SessionId/threadId match
+  if (chain.sessionId && canvasData?.threadId && chain.sessionId === canvasData.threadId) {
+    console.log(`🎯 Reasoning chain matched by sessionId: ${chain.sessionId} === ${canvasData.threadId}`);
+    return true;
+  }
+  
+  // Method 3: Original query match (exact match)
+  if (chain.originalQuery && canvasData?.originalQuery && chain.originalQuery === canvasData.originalQuery) {
+    console.log(`🎯 Reasoning chain matched by originalQuery: "${chain.originalQuery}" === "${canvasData.originalQuery}"`);
+    return true;
+  }
+  
+  // Method 4: Check if chain's pageId matches this canvas workspace page
+  if ((chain as any).pageId === canvasPageId) {
+    console.log(`🎯 Reasoning chain matched by pageId: ${(chain as any).pageId} === ${canvasPageId}`);
+    return true;
+  }
+  
+  // Method 5: Check if chain's originalPageId matches canvas workspace page
+  if ((chain as any).originalPageId === canvasPageId) {
+    console.log(`🎯 Reasoning chain matched by originalPageId: ${(chain as any).originalPageId} === ${canvasPageId}`);
+    return true;
+  }
+  
+  console.log(`🎯 Reasoning chain NOT relevant:`, {
+    chainBlockId: chain.blockId,
+    canvasBlockId: canvasBlock.id,
+    chainSessionId: chain.sessionId,
+    canvasThreadId: canvasData?.threadId,
+    chainQuery: chain.originalQuery?.substring(0, 50),
+    canvasQuery: canvasData?.originalQuery?.substring(0, 50),
+    chainPageId: (chain as any).pageId,
+    chainOriginalPageId: (chain as any).originalPageId,
+    canvasPageId
+  });
+  
+  return false;
+};
+
 export const CanvasWorkspace = ({ 
   page, 
   workspace, 
@@ -195,7 +251,9 @@ export const CanvasWorkspace = ({
       console.log(`🧠 CanvasWorkspace: Found original canvas block:`, {
         blockId: originalCanvasBlock?.id,
         originalPageId,
-        currentPageId: page.id
+        currentPageId: page.id,
+        threadId: originalCanvasBlock?.properties?.canvasData?.threadId,
+        originalQuery: originalCanvasBlock?.properties?.canvasData?.originalQuery
       });
       
       // Load reasoning chains from both current page and original page
@@ -216,12 +274,19 @@ export const CanvasWorkspace = ({
               
               // Only add if not already loaded (avoid duplicates)
               if (!chains.has(chainKey)) {
-                chains.set(chainKey, chain);
-                console.log(`🧠 CanvasWorkspace: Loaded server reasoning chain ${chain.sessionId} from page ${pageId}, events: ${chain.events?.length || 0}, complete: ${chain.isComplete}`);
+                // Filter reasoning chains to only include ones related to this specific canvas
+                const isRelevantChain = isChainRelevantToCanvas(chain, originalCanvasBlock, page.id);
                 
-                // Check if this is an incomplete chain
-                if (!chain.isComplete && chain.status === 'streaming') {
-                  incomplete.push({ blockId: chainKey, data: chain });
+                if (isRelevantChain) {
+                  chains.set(chainKey, chain);
+                  console.log(`🧠 CanvasWorkspace: Loaded relevant reasoning chain ${chain.sessionId} from page ${pageId}, events: ${chain.events?.length || 0}, complete: ${chain.isComplete}`);
+                  
+                  // Check if this is an incomplete chain
+                  if (!chain.isComplete && chain.status === 'streaming') {
+                    incomplete.push({ blockId: chainKey, data: chain });
+                  }
+                } else {
+                  console.log(`🧠 CanvasWorkspace: Skipping irrelevant reasoning chain ${chain.sessionId} for this canvas`);
                 }
               }
             }
@@ -239,13 +304,16 @@ export const CanvasWorkspace = ({
           const reasoningData = block.properties.reasoningChain as ReasoningChainData;
           console.log(`🧠 CanvasWorkspace: Found legacy reasoning chain in current page block ${block.id}, events: ${reasoningData.events?.length || 0}, complete: ${reasoningData.isComplete}`);
           
-          // Only add if not already loaded from server
+          // Only add if not already loaded from server and is relevant to this canvas
           if (!chains.has(block.id)) {
-            chains.set(block.id, reasoningData);
-            
-            // Check if this is an incomplete chain
-            if (!reasoningData.isComplete && reasoningData.status === 'streaming') {
-              incomplete.push({ blockId: block.id, data: reasoningData });
+            const isRelevant = isChainRelevantToCanvas(reasoningData, originalCanvasBlock, page.id);
+            if (isRelevant) {
+              chains.set(block.id, reasoningData);
+              
+              // Check if this is an incomplete chain
+              if (!reasoningData.isComplete && reasoningData.status === 'streaming') {
+                incomplete.push({ blockId: block.id, data: reasoningData });
+              }
             }
           }
         }
@@ -255,7 +323,7 @@ export const CanvasWorkspace = ({
           const legacyReasoningData = block.properties.canvasData.reasoningChain;
           console.log(`🧠 CanvasWorkspace: Found legacy canvas reasoning chain for current page block ${block.id}`);
           
-          // Only add if not already loaded from server
+          // Only add if not already loaded from server and is relevant to this canvas
           if (!chains.has(block.id)) {
             // Convert legacy format to new format
             const convertedData: ReasoningChainData = {
@@ -268,7 +336,10 @@ export const CanvasWorkspace = ({
               progress: 1.0
             };
             
-            chains.set(block.id, convertedData);
+            const isRelevant = isChainRelevantToCanvas(convertedData, originalCanvasBlock, page.id);
+            if (isRelevant) {
+              chains.set(block.id, convertedData);
+            }
           }
         }
       });
@@ -301,11 +372,16 @@ export const CanvasWorkspace = ({
             return; // Skip invalid format
           }
           
-          chains.set(originalCanvasBlock.id, convertedData);
-          
-          // Check if this is an incomplete chain
-          if (!convertedData.isComplete && convertedData.status === 'streaming') {
-            incomplete.push({ blockId: originalCanvasBlock.id, data: convertedData });
+          // This should always be relevant since it's from the original canvas block itself
+          // But let's still check for consistency
+          const isRelevant = isChainRelevantToCanvas(convertedData, originalCanvasBlock, page.id);
+          if (isRelevant) {
+            chains.set(originalCanvasBlock.id, convertedData);
+            
+            // Check if this is an incomplete chain
+            if (!convertedData.isComplete && convertedData.status === 'streaming') {
+              incomplete.push({ blockId: originalCanvasBlock.id, data: convertedData });
+            }
           }
         }
       }
