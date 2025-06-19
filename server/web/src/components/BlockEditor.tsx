@@ -28,6 +28,9 @@ interface BlockEditorProps {
   isFocused: boolean;
   onMoveUp: () => void;
   onMoveDown: () => void;
+  // Block navigation props
+  onFocusNextBlock?: () => void;
+  onFocusPreviousBlock?: () => void;
   // Selection props
   isSelected?: boolean;
   onSelect?: (e?: React.MouseEvent) => void;
@@ -144,6 +147,8 @@ export const BlockEditor = ({
   isFocused,
   onMoveUp,
   onMoveDown,
+  onFocusNextBlock,
+  onFocusPreviousBlock,
   isSelected = false,
   onSelect,
   onDragStart,
@@ -174,6 +179,8 @@ export const BlockEditor = ({
   const [originalTextForDiff, setOriginalTextForDiff] = useState('');
   const [showAddButton, setShowAddButton] = useState(false);
   const [justCreatedFromSlash, setJustCreatedFromSlash] = useState(false);
+  // New state to handle the transition from markdown to editing mode
+  const [isTransitioningToEdit, setIsTransitioningToEdit] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const blockRef = useRef<HTMLDivElement>(null);
 
@@ -220,6 +227,13 @@ export const BlockEditor = ({
   useEffect(() => {
     adjustTextareaHeight();
   }, [block.content, block.type]);
+
+  // Reset transition state when focus changes
+  useEffect(() => {
+    if (isFocused) {
+      setIsTransitioningToEdit(false);
+    }
+  }, [isFocused]);
 
   const handleKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === 'Enter') {
@@ -300,6 +314,14 @@ export const BlockEditor = ({
     } else if (e.key === 'ArrowDown' && e.metaKey) {
       e.preventDefault();
       onMoveDown();
+    } else if (e.key === 'ArrowUp' && !e.metaKey && !e.ctrlKey && !e.altKey && !e.shiftKey) {
+      // Navigate to previous block
+      e.preventDefault();
+      onFocusPreviousBlock?.();
+    } else if (e.key === 'ArrowDown' && !e.metaKey && !e.ctrlKey && !e.altKey && !e.shiftKey) {
+      // Navigate to next block
+      e.preventDefault();
+      onFocusNextBlock?.();
     } else if (e.key === 'Tab' && (block.type === 'bullet' || block.type === 'numbered')) {
       e.preventDefault();
       const currentIndent = block.indentLevel || 0;
@@ -1026,20 +1048,32 @@ export const BlockEditor = ({
     
     return (
       <div 
-        className={className}
+        className={cn(className, "cursor-text hover:bg-muted/20 rounded-sm px-1 -mx-1 transition-colors")}
         style={style}
         onClick={(e) => {
           e.stopPropagation();
+          console.log('🎯 MarkdownContent clicked - starting edit transition');
+          
+          // Set transition state immediately to ensure textarea becomes visible
+          setIsTransitioningToEdit(true);
+          
+          // Call onFocus to update the parent's focus state
           onFocus();
-          // Focus the hidden textarea
-          setTimeout(() => {
+          
+          // Use requestAnimationFrame to ensure the DOM updates before focusing
+          requestAnimationFrame(() => {
             if (textareaRef.current) {
+              console.log('🎯 Focusing textarea after transition');
               textareaRef.current.focus();
-              // Position cursor at end of content
+              
+              // Position cursor at the end of content by default
               const length = textareaRef.current.value.length;
               textareaRef.current.setSelectionRange(length, length);
+              
+              // Adjust height after focusing
+              adjustTextareaHeight();
             }
-          }, 0);
+          });
         }}
       >
         <ReactMarkdown
@@ -1356,46 +1390,171 @@ export const BlockEditor = ({
         {/* Rendered markdown content (shown when not focused and content has markdown) */}
         {shouldRenderMarkdown(block.type) && 
          !isFocused && 
+         !isTransitioningToEdit &&
          !showAIQuery && 
          !diffMode && 
          !(streamingState?.isStreaming && streamingState?.blockId === block.id) &&
          block.content && 
          block.content.trim() && 
          hasMarkdownFormatting(block.content) ? (
-          <MarkdownContent 
-            content={block.content}
-            className={getMarkdownClassName()}
-          />
+          // Special handling for bullet and numbered lists to include bullet marker in click area
+          ((block.type as Block['type']) === 'bullet' || (block.type as Block['type']) === 'numbered') ? (
+            <div 
+              className="relative cursor-text hover:bg-muted/20 rounded-sm transition-colors"
+              style={{
+                // Extend click area to the left to cover bullet marker
+                marginLeft: `${-((block.indentLevel || 0) * 24 + 24)}px`,
+                paddingLeft: `${(block.indentLevel || 0) * 24 + 24}px`,
+                minHeight: '24px'
+              }}
+              onClick={(e) => {
+                e.stopPropagation();
+                console.log('🎯 Bullet MarkdownContent clicked - starting edit transition');
+                
+                // Set transition state immediately to ensure textarea becomes visible
+                setIsTransitioningToEdit(true);
+                
+                // Call onFocus to update the parent's focus state
+                onFocus();
+                
+                // Use requestAnimationFrame to ensure the DOM updates before focusing
+                requestAnimationFrame(() => {
+                  if (textareaRef.current) {
+                    console.log('🎯 Focusing textarea after bullet transition');
+                    textareaRef.current.focus();
+                    
+                    // Position cursor at the end of content by default
+                    const length = textareaRef.current.value.length;
+                    textareaRef.current.setSelectionRange(length, length);
+                    
+                    // Adjust height after focusing
+                    adjustTextareaHeight();
+                  }
+                });
+              }}
+            >
+              <div 
+                className={getMarkdownClassName()}
+                style={getIndentStyle()}
+              >
+                <ReactMarkdown
+                  components={{
+                    // Disable paragraph wrapper for inline content
+                    p: ({ children }) => <span>{children}</span>,
+                    // Style inline elements
+                    strong: ({ children }) => <strong className="font-bold">{children}</strong>,
+                    em: ({ children }) => <em className="italic">{children}</em>,
+                    code: ({ children }) => (
+                      <code className="bg-muted/80 text-muted-foreground px-1 py-0.5 rounded text-sm font-mono">
+                        {children}
+                      </code>
+                    ),
+                    del: ({ children }) => <del className="line-through text-muted-foreground">{children}</del>,
+                    a: ({ href, children }) => (
+                      <a 
+                        href={href} 
+                        className="text-blue-600 hover:text-blue-800 underline"
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        onClick={(e) => e.stopPropagation()}
+                      >
+                        {children}
+                      </a>
+                    ),
+                  }}
+                >
+                  {block.content}
+                </ReactMarkdown>
+              </div>
+            </div>
+          ) : (
+            <MarkdownContent 
+              content={block.content}
+              className={getMarkdownClassName()}
+            />
+          )
         ) : null}
 
         {/* Show plain text when not focused, no markdown formatting */}
         {shouldRenderMarkdown(block.type) && 
          !isFocused && 
+         !isTransitioningToEdit &&
          !showAIQuery && 
          !diffMode && 
          !(streamingState?.isStreaming && streamingState?.blockId === block.id) &&
          block.content && 
          block.content.trim() && 
          !hasMarkdownFormatting(block.content) ? (
-          <div 
-            className={getMarkdownClassName()}
-            style={block.type === 'bullet' || block.type === 'numbered' ? getIndentStyle() : {}}
-            onClick={(e) => {
-              e.stopPropagation();
-              onFocus();
-              // Focus the hidden textarea
-              setTimeout(() => {
-                if (textareaRef.current) {
-                  textareaRef.current.focus();
-                  // Position cursor at end of content
-                  const length = textareaRef.current.value.length;
-                  textareaRef.current.setSelectionRange(length, length);
-                }
-              }, 0);
-            }}
-          >
-            {block.content}
-          </div>
+          // Special handling for bullet and numbered lists to include bullet marker in click area
+          ((block.type as Block['type']) === 'bullet' || (block.type as Block['type']) === 'numbered') ? (
+            <div 
+              className="relative cursor-text hover:bg-muted/20 rounded-sm transition-colors"
+              style={{
+                // Extend click area to the left to cover bullet marker
+                marginLeft: `${-((block.indentLevel || 0) * 24 + 24)}px`,
+                paddingLeft: `${(block.indentLevel || 0) * 24 + 24}px`,
+                minHeight: '24px'
+              }}
+              onClick={(e) => {
+                e.stopPropagation();
+                console.log('🎯 Bullet plain text clicked - starting edit transition');
+                
+                // Set transition state immediately
+                setIsTransitioningToEdit(true);
+                
+                // Call onFocus to update the parent's focus state
+                onFocus();
+                
+                // Use requestAnimationFrame to ensure the DOM updates before focusing
+                requestAnimationFrame(() => {
+                  if (textareaRef.current) {
+                    console.log('🎯 Focusing textarea after bullet plain text transition');
+                    textareaRef.current.focus();
+                    // Position cursor at end of content
+                    const length = textareaRef.current.value.length;
+                    textareaRef.current.setSelectionRange(length, length);
+                    adjustTextareaHeight();
+                  }
+                });
+              }}
+            >
+              <div 
+                className={getMarkdownClassName()}
+                style={getIndentStyle()}
+              >
+                {block.content}
+              </div>
+            </div>
+          ) : (
+            <div 
+              className={cn(getMarkdownClassName(), "cursor-text hover:bg-muted/20 rounded-sm px-1 -mx-1 transition-colors")}
+              style={(block.type as Block['type']) === 'bullet' || (block.type as Block['type']) === 'numbered' ? getIndentStyle() : {}}
+              onClick={(e) => {
+                e.stopPropagation();
+                console.log('🎯 Plain text clicked - starting edit transition');
+                
+                // Set transition state immediately
+                setIsTransitioningToEdit(true);
+                
+                // Call onFocus to update the parent's focus state
+                onFocus();
+                
+                // Use requestAnimationFrame to ensure the DOM updates before focusing
+                requestAnimationFrame(() => {
+                  if (textareaRef.current) {
+                    console.log('🎯 Focusing textarea after plain text transition');
+                    textareaRef.current.focus();
+                    // Position cursor at end of content
+                    const length = textareaRef.current.value.length;
+                    textareaRef.current.setSelectionRange(length, length);
+                    adjustTextareaHeight();
+                  }
+                });
+              }}
+            >
+              {block.content}
+            </div>
+          )
         ) : null}
 
         <textarea
@@ -1403,7 +1562,17 @@ export const BlockEditor = ({
           value={block.content}
           onChange={(e) => handleContentChange(e.target.value)}
           onKeyDown={handleKeyDown}
-          onFocus={onFocus}
+          onFocus={(e) => {
+            console.log('🎯 Textarea focused');
+            onFocus();
+            // Reset transition state when properly focused
+            setIsTransitioningToEdit(false);
+          }}
+          onBlur={(e) => {
+            console.log('🎯 Textarea blurred');
+            // Reset transition state when focus is lost
+            setIsTransitioningToEdit(false);
+          }}
           onInput={adjustTextareaHeight}
           onPaste={handlePaste}
           onClick={(e) => {
@@ -1435,9 +1604,9 @@ export const BlockEditor = ({
                     diffMode ||
                     ['table', 'toggle', 'subpage', 'canvas', 'stats', 'graphing'].includes(block.type) || 
                     (streamingState?.isStreaming && streamingState?.blockId === block.id) ||
-                    // Hide textarea when showing markdown content (not focused)
-                    (shouldRenderMarkdown(block.type) && !isFocused && block.content && block.content.trim())
-                    ? 'none' : 'block' // Hide textarea when AI query is active, in diff mode, for custom components, when streaming, or when showing markdown
+                    // Hide textarea when showing markdown content (not focused and not transitioning)
+                    (shouldRenderMarkdown(block.type) && !isFocused && !isTransitioningToEdit && block.content && block.content.trim())
+                    ? 'none' : 'block' // Show textarea when focused, transitioning to edit, or when content doesn't have markdown
           }}
         />
         

@@ -808,14 +808,14 @@ export const PageEditor = ({
               if (hasNewlines && lineCount > 1) {
                 // Show multiline preview during streaming
                 setPendingAIUpdate({ 
-                  blockId: newBlockId, 
-                  content: `⚡ **Fast AI Streaming** (${lineCount} lines detected)\n\n${chunk.partial_result}\n\n`
+                  blockId: newBlockId
+                  //content: `⚡ **Fast AI Streaming** (${lineCount} lines detected)\n\n${chunk.partial_result}\n\n`
                 });
               } else {
                 // Regular streaming preview
                 setPendingAIUpdate({ 
-                  blockId: newBlockId, 
-                  content: `⚡ **Fast AI Streaming...**\n\n${chunk.partial_result}\n\n`
+                  blockId: newBlockId 
+                  //content: `⚡ **Fast AI Streaming...**\n\n${chunk.partial_result}\n\n`
                 });
               }
             }
@@ -2045,6 +2045,54 @@ export const PageEditor = ({
     };
   };
 
+  // Navigation functions for up/down arrow keys
+  const handleFocusNextBlock = useCallback(() => {
+    if (!focusedBlockId) return;
+    
+    const currentIndex = page.blocks.findIndex(b => b.id === focusedBlockId);
+    if (currentIndex === -1 || currentIndex >= page.blocks.length - 1) return;
+    
+    const nextBlock = page.blocks[currentIndex + 1];
+    if (nextBlock) {
+      setFocusedBlockId(nextBlock.id);
+      clearSelection(); // Clear any selection when navigating
+      
+      // Focus the textarea in the next block after a brief delay
+      setTimeout(() => {
+        const nextBlockElement = document.querySelector(`[data-block-id="${nextBlock.id}"] textarea`);
+        if (nextBlockElement) {
+          (nextBlockElement as HTMLTextAreaElement).focus();
+          // Position cursor at the beginning of the content
+          (nextBlockElement as HTMLTextAreaElement).setSelectionRange(0, 0);
+        }
+      }, 10);
+    }
+  }, [focusedBlockId, page.blocks, clearSelection]);
+
+  const handleFocusPreviousBlock = useCallback(() => {
+    if (!focusedBlockId) return;
+    
+    const currentIndex = page.blocks.findIndex(b => b.id === focusedBlockId);
+    if (currentIndex <= 0) return;
+    
+    const previousBlock = page.blocks[currentIndex - 1];
+    if (previousBlock) {
+      setFocusedBlockId(previousBlock.id);
+      clearSelection(); // Clear any selection when navigating
+      
+      // Focus the textarea in the previous block after a brief delay
+      setTimeout(() => {
+        const prevBlockElement = document.querySelector(`[data-block-id="${previousBlock.id}"] textarea`);
+        if (prevBlockElement) {
+          (prevBlockElement as HTMLTextAreaElement).focus();
+          // Position cursor at the end of the content
+          const content = (prevBlockElement as HTMLTextAreaElement).value;
+          (prevBlockElement as HTMLTextAreaElement).setSelectionRange(content.length, content.length);
+        }
+      }, 10);
+    }
+  }, [focusedBlockId, page.blocks, clearSelection]);
+
   const handleBlockMouseDown = (blockId: string) => {
     return (e: React.MouseEvent) => {
       handleMouseDown(blockId, e);
@@ -3102,6 +3150,8 @@ export const PageEditor = ({
                     isFocused={focusedBlockId === block.id}
                     onMoveUp={() => handleMoveBlock(block.id, 'up')}
                     onMoveDown={() => handleMoveBlock(block.id, 'down')}
+                    onFocusNextBlock={handleFocusNextBlock}
+                    onFocusPreviousBlock={handleFocusPreviousBlock}
                     onSelect={handleBlockSelect(block.id)}
                     onMouseDown={handleBlockMouseDown(block.id)}
                     onMouseEnter={handleBlockMouseEnterDuringGlobalDrag(block.id)}
