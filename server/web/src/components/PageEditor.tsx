@@ -11,6 +11,15 @@ import { orchestrationAgent } from '@/lib/orchestration/agent';
 import { StreamingStatusBlock } from './StreamingStatusBlock';
 import { useStorageManager } from '@/hooks/useStorageManager';
 
+// Enhanced markdown detection patterns for streaming
+const STREAMING_MARKDOWN_PATTERNS = {
+  heading: /^#{1,3}\s/m,
+  list: /^[-*+]\s|^\d+\.\s/m,
+  quote: /^>\s/m,
+  code: /^```/m,
+  divider: /^---+/m
+};
+
 interface PageEditorProps {
   page: Page;
   onUpdateBlock: (blockId: string, updates: any) => void;
@@ -659,6 +668,18 @@ export const PageEditor = ({
   // Handle trivial operations using fast Bedrock client
   const handleTrivialQuery = async (query: string, blockId: string, classification: any) => {
     console.log(`⚡ PageEditor: Processing trivial query with fast client`);
+    console.log(`⚡ PageEditor: Query='${query}', Current BlockId='${blockId}'`);
+    console.log(`⚡ PageEditor: Current page state:`, {
+      pageId: page.id,
+      totalBlocks: page.blocks.length,
+      blockIds: page.blocks.map(b => b.id),
+      currentBlockExists: page.blocks.some(b => b.id === blockId),
+      currentBlockDetails: page.blocks.find(b => b.id === blockId) ? {
+        id: blockId,
+        type: page.blocks.find(b => b.id === blockId)?.type,
+        content: page.blocks.find(b => b.id === blockId)?.content?.substring(0, 50) + '...'
+      } : 'NOT FOUND'
+    });
     
     // Initialize streaming state for trivial operation
     setStreamingState({
@@ -670,9 +691,20 @@ export const PageEditor = ({
       history: []
     });
 
-    // Create new block immediately
+    // Create new block immediately after the current block
+    console.log(`⚡ PageEditor: About to call onAddBlock with afterBlockId='${blockId}'...`);
     const newBlockId = onAddBlock(blockId);
-    console.log(`➕ PageEditor: New block created for trivial operation: ${newBlockId}`);
+    console.log(`➕ PageEditor: New block created for trivial operation: ${newBlockId} (after block: ${blockId})`);
+    console.log(`➕ PageEditor: Page state after onAddBlock:`, {
+      totalBlocks: page.blocks.length,
+      blockIds: page.blocks.map(b => b.id),
+      newBlockExists: page.blocks.some(b => b.id === newBlockId),
+      newBlockDetails: page.blocks.find(b => b.id === newBlockId) ? {
+        id: newBlockId,
+        type: page.blocks.find(b => b.id === newBlockId)?.type,
+        content: page.blocks.find(b => b.id === newBlockId)?.content?.substring(0, 50) + '...'
+      } : 'NOT FOUND YET'
+    });
 
     // Generate session ID for reasoning chain
     const sessionId = `trivial_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
@@ -755,20 +787,39 @@ export const PageEditor = ({
               progress: Math.min(prev.progress + 0.1, 0.9)
             }));
             
+            // Enhanced progress tracking with multiline detection
+            const chunkLines = chunk.partial_result ? chunk.partial_result.split('\n').length : 0;
             addReasoningChainEvent(sessionId, {
               type: 'progress',
-              message: `Generating content chunk (${chunk.partial_result?.length || 0} chars)`,
+              message: `Generating content chunk (${chunk.partial_result?.length || 0} chars, ${chunkLines} lines)`,
               timestamp: new Date().toISOString(),
-              metadata: { chunkSize: chunk.partial_result?.length }
+              metadata: { 
+                chunkSize: chunk.partial_result?.length, 
+                linesDetected: chunkLines,
+                isMultiline: chunkLines > 1
+              }
             });
             
-            // Show streaming text in real-time using partial_result
+            // Enhanced streaming preview with multiline detection
             if (chunk.partial_result) {
-              setPendingAIUpdate({ 
-                blockId: newBlockId, 
-                content: `⚡ **Fast AI Streaming...**\n\n${chunk.partial_result}\n\n`
-              });
+              const hasNewlines = chunk.partial_result.includes('\n');
+              const lineCount = chunk.partial_result.split('\n').length;
+              
+              if (hasNewlines && lineCount > 1) {
+                // Show multiline preview during streaming
+                setPendingAIUpdate({ 
+                  blockId: newBlockId, 
+                  content: `⚡ **Fast AI Streaming** (${lineCount} lines detected)\n\n${chunk.partial_result}\n\n`
+                });
+              } else {
+                // Regular streaming preview
+                setPendingAIUpdate({ 
+                  blockId: newBlockId, 
+                  content: `⚡ **Fast AI Streaming...**\n\n${chunk.partial_result}\n\n`
+                });
+              }
             }
+            
           } else if (chunk.type === 'complete') {
             const result = chunk.result || query;
             const duration = chunk.duration || 0;
@@ -783,21 +834,46 @@ export const PageEditor = ({
               metadata: { duration, cached, resultLength: result.length }
             });
             
-            // Update block with clean final result
-            const hasMultilineMarkdown = result.includes('\n') && 
-              (result.includes('## ') || result.includes('### ') || result.includes('- ') || result.includes('> '));
+            // Check for multiline content that should be split into separate blocks
+            const lines = result.split('\n');
+            const nonEmptyLines = lines.filter(line => line.trim()).length;
+            const hasMultipleLines = lines.length > 1;
             
-            if (hasMultilineMarkdown) {
-              console.log(`📝 PageEditor: Trivial result contains multiline markdown, triggering markdown parsing`);
+            console.log(`📝 PageEditor: COMPLETION ANALYSIS:`, {
+              resultLength: result.length,
+              totalLines: lines.length,
+              nonEmptyLines: nonEmptyLines,
+              hasMultipleLines: hasMultipleLines,
+              shouldTriggerMultiline: hasMultipleLines && nonEmptyLines > 1,
+              resultPreview: result.substring(0, 100) + (result.length > 100 ? '...' : ''),
+              linesPreview: lines.slice(0, 3)
+            });
+            
+            if (hasMultipleLines && nonEmptyLines > 1) {
+              console.log(`📝 PageEditor: ✅ TRIGGERING MULTILINE - ${lines.length} lines (${nonEmptyLines} non-empty)`);
+              console.log(`📝 PageEditor: Lines to process:`, lines.map((line, i) => `${i}: "${line}"`));
+              
               addReasoningChainEvent(sessionId, {
                 type: 'status',
-                message: 'Processing multiline markdown result',
+                message: `Processing multiline result into ${lines.length} separate blocks`,
                 timestamp: new Date().toISOString(),
-                metadata: { markdownDetected: true }
+                metadata: { 
+                  totalLines: lines.length,
+                  nonEmptyLines: nonEmptyLines,
+                  multilineDetected: true
+                }
               });
-              handleMarkdownPaste(result, newBlockId);
+              
+              // Clear any pending update to avoid conflicts
+              setPendingAIUpdate(null);
+              
+              // Use the new multiline handler for line-by-line block creation
+              console.log(`📝 PageEditor: About to call handleTrivialMultilineResult with blockId: ${newBlockId}`);
+              handleTrivialMultilineResult(result, newBlockId);
+              
             } else {
-              console.log(`📝 PageEditor: Trivial result is simple text, updating block directly`);
+              console.log(`📝 PageEditor: ❌ NOT MULTILINE - Using direct block update`);
+              console.log(`📝 PageEditor: Reason: hasMultipleLines=${hasMultipleLines}, nonEmptyLines=${nonEmptyLines}`);
               setPendingAIUpdate({ 
                 blockId: newBlockId, 
                 content: result
@@ -2477,7 +2553,7 @@ export const PageEditor = ({
   };
 
   // Handle markdown paste from BlockEditor  
-  const handleMarkdownPaste = (markdownText: string, targetBlockId: string) => {
+  const handleMarkdownPaste = useCallback((markdownText: string, targetBlockId: string) => {
     console.log('🎯 PageEditor: Handling markdown paste for block:', targetBlockId);
     console.log('🎯 PageEditor: Markdown text:', markdownText);
     
@@ -2489,90 +2565,372 @@ export const PageEditor = ({
       return;
     }
     
-    // Verify the target block exists
-    const targetBlockExists = page.blocks.some(block => block.id === targetBlockId);
-    if (!targetBlockExists) {
-      console.error('🎯 PageEditor: Target block does not exist:', targetBlockId);
-      return;
-    }
-    
-    const targetBlockIndex = page.blocks.findIndex(block => block.id === targetBlockId);
-    if (targetBlockIndex === -1) {
-      console.error('🎯 PageEditor: Could not find target block index');
-      return;
-    }
+    // Helper function to attempt block processing with retries
+    const attemptBlockProcessing = (retryCount = 0) => {
+      const maxRetries = 5; // Shorter retry for paste operations
+      
+      // Verify the target block exists
+      const targetBlockExists = page.blocks.some(block => block.id === targetBlockId);
+      
+      if (!targetBlockExists) {
+        if (retryCount < maxRetries) {
+          console.log(`🎯 PageEditor: Target block ${targetBlockId} not found for paste, retrying in 50ms (attempt ${retryCount + 1}/${maxRetries})`);
+          setTimeout(() => attemptBlockProcessing(retryCount + 1), 50);
+          return;
+        } else {
+          console.error('🎯 PageEditor: Target block does not exist for paste after max retries:', targetBlockId);
+          return;
+        }
+      }
+      
+      console.log(`🎯 PageEditor: Target block ${targetBlockId} found after ${retryCount} retries, proceeding with paste processing`);
+      
+      const targetBlockIndex = page.blocks.findIndex(block => block.id === targetBlockId);
+      if (targetBlockIndex === -1) {
+        console.error('🎯 PageEditor: Could not find target block index for paste after retries');
+        return;
+      }
 
-    // Update the target block with the first parsed block
-    const firstBlock = parsedBlocks[0];
-    console.log('🎯 PageEditor: Updating target block with:', firstBlock);
-    
-    // Start with current page blocks
-    let updatedBlocks = [...page.blocks];
-    
-    // Update the target block with the first parsed block
-    const updatedTargetBlock = {
-      ...updatedBlocks[targetBlockIndex],
-      type: firstBlock.type,
-      content: firstBlock.content,
-      indentLevel: firstBlock.indentLevel || 0
-    };
-    updatedBlocks[targetBlockIndex] = updatedTargetBlock;
-    
-    // For multiple blocks, create additional blocks
-    if (parsedBlocks.length > 1) {
-      // Create new blocks for the remaining parsed content
-      const newBlocks = parsedBlocks.slice(1).map((blockData, index) => ({
-        id: `block_${Date.now()}_${Math.random().toString(36).substr(2, 9)}_${index}`,
-        type: blockData.type,
-        content: blockData.content,
-        order: targetBlockIndex + 1 + index,
-        indentLevel: blockData.indentLevel || 0
+      // Update the target block with the first parsed block
+      const firstBlock = parsedBlocks[0];
+      console.log('🎯 PageEditor: Updating target block with:', firstBlock);
+      
+      // Start with current page blocks
+      let updatedBlocks = [...page.blocks];
+      
+      // Update the target block with the first parsed block
+      const updatedTargetBlock = {
+        ...updatedBlocks[targetBlockIndex],
+        type: firstBlock.type,
+        content: firstBlock.content,
+        indentLevel: firstBlock.indentLevel || 0
+      };
+      updatedBlocks[targetBlockIndex] = updatedTargetBlock;
+      
+      // For multiple blocks, create additional blocks
+      if (parsedBlocks.length > 1) {
+        // Create new blocks for the remaining parsed content
+        const newBlocks = parsedBlocks.slice(1).map((blockData, index) => ({
+          id: `block_${Date.now()}_${Math.random().toString(36).substr(2, 9)}_${index}`,
+          type: blockData.type,
+          content: blockData.content,
+          order: targetBlockIndex + 1 + index,
+          indentLevel: blockData.indentLevel || 0
+        }));
+        
+        console.log('🎯 PageEditor: Creating new blocks:', newBlocks);
+        
+        // Insert the new blocks after the target block
+        updatedBlocks.splice(targetBlockIndex + 1, 0, ...newBlocks);
+        
+        // Save each new block to storage individually
+        newBlocks.forEach((block, index) => {
+          setTimeout(async () => {
+            console.log(`🎯 PageEditor: Saving block ${block.id} to storage`);
+            try {
+              await storageManager.saveBlock(block, page.id);
+              console.log(`✅ PageEditor: Block ${block.id} saved to storage successfully`);
+            } catch (error) {
+              console.warn(`⚠️ PageEditor: Could not save block ${block.id} to storage:`, error);
+            }
+          }, 100 * (index + 1));
+        });
+      }
+      
+      // Reorder all blocks to have clean sequential orders
+      const reorderedBlocks = updatedBlocks.map((block, index) => ({
+        ...block,
+        order: index
       }));
       
-      console.log('🎯 PageEditor: Creating new blocks:', newBlocks);
+      console.log('🎯 PageEditor: Updating page with all blocks (including updated target)');
+      loggedOnUpdatePage({ blocks: reorderedBlocks });
       
-      // Insert the new blocks after the target block
-      updatedBlocks.splice(targetBlockIndex + 1, 0, ...newBlocks);
-      
-      // Save each new block to storage individually
-      newBlocks.forEach((block, index) => {
-        setTimeout(async () => {
-          console.log(`🎯 PageEditor: Saving block ${block.id} to storage`);
-          try {
-            await storageManager.saveBlock(block, page.id);
-            console.log(`✅ PageEditor: Block ${block.id} saved to storage successfully`);
-          } catch (error) {
-            console.warn(`⚠️ PageEditor: Could not save block ${block.id} to storage:`, error);
+      // Save the updated target block to storage
+      setTimeout(async () => {
+        console.log(`🎯 PageEditor: Saving updated target block ${targetBlockId} to storage`);
+        try {
+          const finalTargetBlock = reorderedBlocks.find(b => b.id === targetBlockId);
+          if (finalTargetBlock) {
+            await storageManager.saveBlock(finalTargetBlock, page.id);
+            console.log(`✅ PageEditor: Updated target block ${targetBlockId} saved to storage successfully`);
+          } else {
+            console.warn(`⚠️ PageEditor: Could not find target block ${targetBlockId} in reordered blocks`);
           }
-        }, 100 * (index + 1));
+        } catch (error) {
+          console.warn(`⚠️ PageEditor: Could not save updated target block ${targetBlockId} to storage:`, error);
+        }
+      }, 50); // Save target block first, before the new blocks
+    };
+    
+    // Start the block processing attempt
+    attemptBlockProcessing();
+  }, [page.blocks, page.id, storageManager, loggedOnUpdatePage]);
+
+  // Handle multiline results from trivial AI client (line-by-line block creation)
+  const handleTrivialMultilineResult = useCallback((resultText: string, targetBlockId: string) => {
+    console.log('🔥 === MULTILINE HANDLER CALLED ===');
+    console.log('⚡ PageEditor: Handling trivial multiline result for block:', targetBlockId);
+    console.log('⚡ PageEditor: Result text length:', resultText.length);
+    console.log('⚡ PageEditor: Result text preview:', resultText.substring(0, 200) + '...');
+    console.log('⚡ PageEditor: Current page.blocks count at handler start:', page.blocks.length);
+    console.log('⚡ PageEditor: Current page.blocks IDs:', page.blocks.map(b => b.id));
+    
+    // Split by newlines to create individual blocks
+    const lines = resultText.split('\n');
+    console.log('⚡ PageEditor: Split into', lines.length, 'lines');
+    console.log('⚡ PageEditor: Lines preview:', lines.slice(0, 5).map((line, i) => `${i}: "${line}"`));
+    
+    if (lines.length === 0) {
+      console.log('⚡ PageEditor: No lines found, falling back to simple content');
+      setPendingAIUpdate({ 
+        blockId: targetBlockId, 
+        content: resultText
       });
+      return;
     }
     
+    // OPTIMISTIC APPROACH: Create all blocks at once without waiting for target block
+    console.log('⚡ PageEditor: Using optimistic multiline block creation');
+    
+    // We know the target block should be created at the end of current blocks
+    // So we'll work with current page state and add the target block + new blocks
+    const currentBlocks = [...page.blocks];
+    const targetBlockIndex = currentBlocks.length; // Target block will be at the end
+    
+    console.log('⚡ PageEditor: Current blocks count:', currentBlocks.length);
+    console.log('⚡ PageEditor: Target block will be at index:', targetBlockIndex);
+    
+    // Generate standard block IDs using the same format as normal blocks
+    const generateStandardBlockId = (): string => {
+      // Generate a random 9-character alphanumeric string (same format as normal blocks)
+      const chars = 'abcdefghijklmnopqrstuvwxyz0123456789';
+      let result = '';
+      for (let i = 0; i < 9; i++) {
+        result += chars.charAt(Math.floor(Math.random() * chars.length));
+      }
+      return result;
+    };
+
+    // Create blocks directly in page state with standard IDs
+    const allBlocks = [...currentBlocks]; // Start with existing blocks
+    const createdBlockIds: string[] = []; // Track created block IDs
+    
+    lines.forEach((line, index) => {
+      const trimmedLine = line.trim();
+      
+      // Determine block type based on content
+      let blockType: Block['type'] = 'text';
+      let blockContent = line; // Keep original spacing for text blocks
+      
+      // Check for markdown patterns
+      if (trimmedLine.startsWith('## ')) {
+        blockType = 'heading2';
+        blockContent = trimmedLine.replace(/^##\s/, '');
+      } else if (trimmedLine.startsWith('### ')) {
+        blockType = 'heading3';
+        blockContent = trimmedLine.replace(/^###\s/, '');
+      } else if (trimmedLine.startsWith('# ')) {
+        blockType = 'heading1';
+        blockContent = trimmedLine.replace(/^#\s/, '');
+      } else if (trimmedLine.startsWith('- ') || trimmedLine.startsWith('* ') || trimmedLine.startsWith('+ ')) {
+        blockType = 'bullet';
+        blockContent = trimmedLine.replace(/^[-*+]\s/, '');
+      } else if (/^\d+\.\s/.test(trimmedLine)) {
+        blockType = 'numbered';
+        blockContent = trimmedLine.replace(/^\d+\.\s/, '');
+      } else if (trimmedLine.startsWith('> ')) {
+        blockType = 'quote';
+        blockContent = trimmedLine.replace(/^>\s/, '');
+      } else if (trimmedLine === '---' || trimmedLine === '---') {
+        blockType = 'divider';
+        blockContent = '';
+      } else {
+        // Regular text block - preserve original spacing
+        blockType = 'text';
+        blockContent = line; // Keep original line with spacing
+      }
+      
+      // For the first line, use the target block ID (already created by onAddBlock)
+      // For subsequent lines, generate standard block IDs
+      let blockId: string;
+      if (index === 0) {
+        blockId = targetBlockId;
+      } else {
+        // Generate a standard block ID (same format as normal blocks)
+        blockId = generateStandardBlockId();
+      }
+      
+      createdBlockIds.push(blockId);
+      
+      // Create the block object
+      const block = {
+        id: blockId,
+        type: blockType,
+        content: blockContent,
+        order: targetBlockIndex + index,
+        indentLevel: 0,
+        properties: {},
+        pageId: page.id
+      };
+      
+      allBlocks.push(block);
+      
+      console.log(`⚡ PageEditor: Created block ${index + 1}/${lines.length}:`, {
+        id: blockId,
+        type: blockType,
+        content: blockContent.substring(0, 30) + (blockContent.length > 30 ? '...' : ''),
+        isTarget: index === 0,
+        usedStandardId: index > 0
+      });
+    });
+    
     // Reorder all blocks to have clean sequential orders
-    const reorderedBlocks = updatedBlocks.map((block, index) => ({
+    const reorderedBlocks = allBlocks.map((block, index) => ({
       ...block,
       order: index
     }));
     
-    console.log('🎯 PageEditor: Updating page with all blocks (including updated target)');
-    loggedOnUpdatePage({ blocks: reorderedBlocks });
+    console.log('⚡ PageEditor: Optimistically updating page with all multiline blocks');
+    console.log('⚡ PageEditor: Total blocks:', reorderedBlocks.length);
+    console.log('⚡ PageEditor: New blocks added:', lines.length);
     
-    // Save the updated target block to storage
-    setTimeout(async () => {
-      console.log(`🎯 PageEditor: Saving updated target block ${targetBlockId} to storage`);
-      try {
-        const finalTargetBlock = reorderedBlocks.find(b => b.id === targetBlockId);
-        if (finalTargetBlock) {
-          await storageManager.saveBlock(finalTargetBlock, page.id);
-          console.log(`✅ PageEditor: Updated target block ${targetBlockId} saved to storage successfully`);
-        } else {
-          console.warn(`⚠️ PageEditor: Could not find target block ${targetBlockId} in reordered blocks`);
+    // Update page state with all blocks at once
+    console.log('🔥 === ABOUT TO UPDATE PAGE STATE ===');
+    console.log('⚡ PageEditor: Calling loggedOnUpdatePage with', reorderedBlocks.length, 'blocks');
+    loggedOnUpdatePage({ blocks: reorderedBlocks });
+    console.log('🔥 === PAGE STATE UPDATE COMPLETED ===');
+    
+    // Save all new blocks to storage directly (excluding the target block which was already created)
+    const blocksToSave = reorderedBlocks.slice(targetBlockIndex + 1); // Skip the target block
+    console.log('⚡ PageEditor: Saving', blocksToSave.length, 'new multiline blocks to storage');
+    
+    blocksToSave.forEach((block, index) => {
+      setTimeout(async () => {
+        console.log(`⚡ PageEditor: Saving multiline block ${block.id} to storage (${index + 1}/${blocksToSave.length})`);
+        try {
+          await storageManager.saveBlock(block, page.id);
+          console.log(`✅ PageEditor: Multiline block ${block.id} saved to storage successfully`);
+        } catch (error) {
+          console.warn(`⚠️ PageEditor: Could not save multiline block ${block.id} to storage:`, error);
         }
-      } catch (error) {
-        console.warn(`⚠️ PageEditor: Could not save updated target block ${targetBlockId} to storage:`, error);
+      }, 100 * (index + 1)); // Staggered saves with delays
+    });
+    
+  }, [page.blocks, page.id, storageManager, loggedOnUpdatePage, setPendingAIUpdate]);
+
+  // Handle markdown results from trivial AI client
+  const handleTrivialMarkdownResult = useCallback((markdownText: string, targetBlockId: string) => {
+    console.log('⚡ PageEditor: Handling trivial markdown result for block:', targetBlockId);
+    console.log('⚡ PageEditor: Trivial markdown text:', markdownText);
+    
+    // Use the same parsing logic as regular markdown paste
+    const parsedBlocks = parseMarkdownContent(markdownText);
+    console.log('⚡ PageEditor: Parsed trivial blocks:', parsedBlocks);
+    
+    if (parsedBlocks.length === 0) {
+      console.log('⚡ PageEditor: No trivial blocks parsed, falling back to simple content');
+      setPendingAIUpdate({ 
+        blockId: targetBlockId, 
+        content: markdownText
+      });
+      return;
+    }
+    
+    // Helper function to attempt block processing with retries
+    const attemptBlockProcessing = (retryCount = 0) => {
+      const maxRetries = 10; // Maximum 10 retries (1 second total)
+      
+      // Verify the target block exists
+      const targetBlockExists = page.blocks.some(block => block.id === targetBlockId);
+      
+      if (!targetBlockExists) {
+        if (retryCount < maxRetries) {
+          console.log(`⚡ PageEditor: Target block ${targetBlockId} not found, retrying in 100ms (attempt ${retryCount + 1}/${maxRetries})`);
+          setTimeout(() => attemptBlockProcessing(retryCount + 1), 100);
+          return;
+        } else {
+          console.error('⚡ PageEditor: Target block does not exist after max retries, falling back to pendingAIUpdate:', targetBlockId);
+          // Fallback: use the pending update mechanism instead
+          setPendingAIUpdate({ 
+            blockId: targetBlockId, 
+            content: markdownText
+          });
+          return;
+        }
       }
-    }, 50); // Save target block first, before the new blocks
-  };
+      
+      console.log(`⚡ PageEditor: Target block ${targetBlockId} found after ${retryCount} retries, proceeding with markdown processing`);
+      
+      const targetBlockIndex = page.blocks.findIndex(block => block.id === targetBlockId);
+      if (targetBlockIndex === -1) {
+        console.error('⚡ PageEditor: Could not find target block index for trivial result after retries');
+        setPendingAIUpdate({ 
+          blockId: targetBlockId, 
+          content: markdownText
+        });
+        return;
+      }
+
+      // Update the target block with the first parsed block
+      const firstBlock = parsedBlocks[0];
+      console.log('⚡ PageEditor: Updating target block with trivial result:', firstBlock);
+      
+      // Start with current page blocks
+      let updatedBlocks = [...page.blocks];
+      
+      // Update the target block with the first parsed block
+      const updatedTargetBlock = {
+        ...updatedBlocks[targetBlockIndex],
+        type: firstBlock.type,
+        content: firstBlock.content,
+        indentLevel: firstBlock.indentLevel || 0
+      };
+      updatedBlocks[targetBlockIndex] = updatedTargetBlock;
+      
+      // For multiple blocks, create additional blocks using onAddBlock
+      if (parsedBlocks.length > 1) {
+        // Create new blocks using onAddBlock for proper ID generation
+        const newBlockIds: string[] = [];
+        let lastBlockId = targetBlockId;
+        
+        parsedBlocks.slice(1).forEach((blockData, index) => {
+          const newBlockId = onAddBlock(lastBlockId, blockData.type);
+          newBlockIds.push(newBlockId);
+          lastBlockId = newBlockId; // Update for next iteration
+          
+          console.log(`⚡ PageEditor: Created trivial block ${index + 1}/${parsedBlocks.length - 1} with ID: ${newBlockId}`);
+        });
+        
+        console.log('⚡ PageEditor: Created trivial block IDs:', newBlockIds);
+        
+        // Update content for all created blocks (they already exist from onAddBlock calls)
+        newBlockIds.forEach((blockId, index) => {
+          const blockData = parsedBlocks[index + 1]; // Skip first block (already handled)
+          setTimeout(() => {
+            console.log(`⚡ PageEditor: Updating trivial block ${blockId} content (${index + 1}/${newBlockIds.length})`);
+            onUpdateBlock(blockId, {
+              type: blockData.type,
+              content: blockData.content,
+              indentLevel: blockData.indentLevel || 0
+            });
+            console.log(`✅ PageEditor: Trivial block ${blockId} content updated successfully`);
+          }, 50 * (index + 1)); // Staggered updates
+        });
+      }
+      
+      // Update the target block with the first parsed block content
+      console.log('⚡ PageEditor: Updating target block content');
+      onUpdateBlock(targetBlockId, {
+        type: firstBlock.type,
+        content: firstBlock.content,
+        indentLevel: firstBlock.indentLevel || 0
+      });
+    };
+    
+    // Start the block processing attempt
+    attemptBlockProcessing();
+  }, [page.blocks, page.id, storageManager, loggedOnUpdatePage, setPendingAIUpdate, onAddBlock, onUpdateBlock]);
 
   // Generate breadcrumbs from workspace and page data
   const breadcrumbs = [

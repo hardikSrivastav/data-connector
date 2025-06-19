@@ -251,27 +251,51 @@ export const useWorkspace = () => {
     // Debug canvas-specific data
     if (updates.blocks) {
       console.log(`📄 useWorkspace: ${updates.blocks.length} blocks being updated`);
+      console.log(`📄 useWorkspace: Block IDs in update:`, updates.blocks.map(b => b.id));
     }
     
-    setWorkspace(prev => {
-      const updatedWorkspace = {
-        ...prev,
-        pages: prev.pages.map(page => 
-          page.id === pageId 
-            ? { ...page, ...updates, updatedAt: new Date() }
-            : page
-        )
-      };
-      
-      const updatedPage = updatedWorkspace.pages.find(p => p.id === pageId);
-      console.log(`📄 useWorkspace: Page after update:`, {
-        pageId: updatedPage?.id,
-        blocksCount: updatedPage?.blocks?.length,
-        title: updatedPage?.title
+    console.log(`📄 useWorkspace: Current workspace pages before update:`, workspace.pages.map(p => ({ id: p.id, blocksCount: p.blocks.length })));
+    console.log(`📄 useWorkspace: About to call setWorkspace...`);
+    
+    try {
+      setWorkspace(prev => {
+        console.log(`📄 useWorkspace: Inside setWorkspace callback`);
+        console.log(`📄 useWorkspace: Previous workspace pages:`, prev.pages.map(p => ({ id: p.id, blocksCount: p.blocks.length })));
+        
+        const updatedWorkspace = {
+          ...prev,
+          pages: prev.pages.map(page => 
+            page.id === pageId 
+              ? { ...page, ...updates, updatedAt: new Date() }
+              : page
+          )
+        };
+        
+        const updatedPage = updatedWorkspace.pages.find(p => p.id === pageId);
+        console.log(`📄 useWorkspace: Page after update in callback:`, {
+          pageId: updatedPage?.id,
+          blocksCount: updatedPage?.blocks?.length,
+          title: updatedPage?.title,
+          blockIds: updatedPage?.blocks?.map(b => b.id)
+        });
+        
+        console.log(`📄 useWorkspace: Returning updated workspace from callback`);
+        return updatedWorkspace;
       });
       
-      return updatedWorkspace;
-    });
+      console.log(`✅ useWorkspace: setWorkspace call completed`);
+    } catch (error) {
+      console.error(`❌ useWorkspace: setWorkspace call failed:`, error);
+    }
+    
+    // Log state after a small delay to see if the update actually took effect
+    setTimeout(() => {
+      console.log(`📄 useWorkspace: State check after 100ms:`, {
+        currentPageId,
+        currentPageBlocksCount: currentPage.blocks.length,
+        currentPageBlockIds: currentPage.blocks.map(b => b.id)
+      });
+    }, 100);
     
     console.log(`✅ useWorkspace: updatePage completed for pageId='${pageId}'`);
   };
@@ -393,6 +417,10 @@ export const useWorkspace = () => {
   };
 
   const addBlock = (afterBlockId?: string, type: Block['type'] = 'text') => {
+    console.log(`🆕 useWorkspace: addBlock called`);
+    console.log(`🆕 useWorkspace: afterBlockId='${afterBlockId}', type='${type}'`);
+    console.log(`🆕 useWorkspace: Current page blocks before:`, currentPage.blocks.map(b => ({ id: b.id, order: b.order })));
+    
     const blocks = [...currentPage.blocks];
     let newOrder: number;
     
@@ -400,12 +428,14 @@ export const useWorkspace = () => {
       const index = blocks.findIndex(b => b.id === afterBlockId);
       if (index >= 0) {
         newOrder = blocks[index].order + 0.5; // Insert between existing orders
+        console.log(`🆕 useWorkspace: Found afterBlock at index ${index}, newOrder=${newOrder}`);
       } else {
         console.warn(`addBlock: Block with ID ${afterBlockId} not found, adding at end`);
         newOrder = blocks.length > 0 ? Math.max(...blocks.map(b => b.order)) + 1 : 0;
       }
     } else {
       newOrder = blocks.length > 0 ? Math.max(...blocks.map(b => b.order)) + 1 : 0;
+      console.log(`🆕 useWorkspace: No afterBlockId, newOrder=${newOrder}`);
     }
 
     const newBlock: Block = {
@@ -414,6 +444,8 @@ export const useWorkspace = () => {
       content: type === 'table' ? 'Table' : type === 'toggle' ? 'Toggle' : type === 'subpage' ? 'Sub-page' : '',
       order: newOrder
     };
+
+    console.log(`🆕 useWorkspace: Created new block:`, newBlock);
 
     // If creating a list item after another block, preserve indentation level
     if (afterBlockId && (type === 'bullet' || type === 'numbered')) {
@@ -453,8 +485,10 @@ export const useWorkspace = () => {
     if (afterBlockId) {
       const index = blocks.findIndex(b => b.id === afterBlockId);
       blocks.splice(index + 1, 0, newBlock);
+      console.log(`🆕 useWorkspace: Inserted block after index ${index}`);
     } else {
       blocks.push(newBlock);
+      console.log(`🆕 useWorkspace: Pushed block to end`);
     }
 
     // Reorder all blocks to have clean integer orders
@@ -463,7 +497,18 @@ export const useWorkspace = () => {
       order: index
     }));
 
-    updatePage(currentPageId, { blocks: reorderedBlocks });
+    console.log(`🆕 useWorkspace: Reordered blocks:`, reorderedBlocks.map(b => ({ id: b.id, order: b.order })));
+    console.log(`🆕 useWorkspace: About to call updatePage with ${reorderedBlocks.length} blocks`);
+    console.log(`🆕 useWorkspace: New block ID to return: ${newBlock.id}`);
+
+    try {
+      updatePage(currentPageId, { blocks: reorderedBlocks });
+      console.log(`✅ useWorkspace: updatePage call completed successfully`);
+    } catch (error) {
+      console.error(`❌ useWorkspace: updatePage call failed:`, error);
+    }
+
+    console.log(`🆕 useWorkspace: Returning new block ID: ${newBlock.id}`);
     return newBlock.id;
   };
 

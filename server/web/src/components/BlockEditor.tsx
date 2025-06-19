@@ -13,6 +13,7 @@ import { GraphingBlock } from './GraphingBlock';
 import { cn } from '@/lib/utils';
 import { GripVertical, Plus } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import ReactMarkdown from 'react-markdown';
 import styles from './BlockEditor.module.css';
 
 // Import SubpageBlock with explicit path
@@ -84,6 +85,54 @@ const MARKDOWN_PATTERNS = {
   
   // Divider - three or more dashes
   divider: /^---+\s*$/,
+};
+
+// Helper function to detect if content should be split into multiple blocks
+const shouldTriggerMultiBlockMarkdown = (content: string): boolean => {
+  if (!content || !content.includes('\n')) return false;
+  
+  const lines = content.split('\n').filter(line => line.trim());
+  if (lines.length < 2) return false;
+  
+  // Check for multiple markdown patterns in different lines
+  const patternMatches = lines.map(line => {
+    return Object.values(MARKDOWN_PATTERNS).some(pattern => pattern.test(line.trim()));
+  });
+  
+  // If we have multiple lines with markdown patterns, suggest multi-block
+  const markdownLineCount = patternMatches.filter(Boolean).length;
+  
+  // Also check for mixed content (headers + lists, headers + quotes, etc.)
+  const hasHeadings = lines.some(line => /^#{1,3}\s/.test(line.trim()));
+  const hasLists = lines.some(line => /^[-*+]\s|^\d+\.\s/.test(line.trim()));
+  const hasQuotes = lines.some(line => /^>\s/.test(line.trim()));
+  const hasCode = content.includes('```');
+  
+  const contentTypeCount = [hasHeadings, hasLists, hasQuotes, hasCode].filter(Boolean).length;
+  
+  return markdownLineCount >= 2 || contentTypeCount >= 2;
+};
+
+// Helper function to determine if a block type should render markdown
+const shouldRenderMarkdown = (blockType: Block['type']): boolean => {
+  return ['text', 'heading1', 'heading2', 'heading3', 'bullet', 'numbered', 'quote'].includes(blockType);
+};
+
+// Helper function to check if content has markdown formatting
+const hasMarkdownFormatting = (content: string): boolean => {
+  if (!content) return false;
+  
+  // Check for inline markdown patterns
+  const inlinePatterns = [
+    /\*\*[^*]+\*\*/,      // **bold**
+    /\*[^*]+\*/,          // *italic*
+    /_[^_]+_/,            // _italic_
+    /`[^`]+`/,            // `code`
+    /~~[^~]+~~/,          // ~~strikethrough~~
+    /\[[^\]]+\]\([^)]+\)/, // [link](url)
+  ];
+  
+  return inlinePatterns.some(pattern => pattern.test(content));
 };
 
 export const BlockEditor = ({
@@ -949,6 +998,82 @@ export const BlockEditor = ({
     }
   };
 
+  // Get markdown rendered content classes
+  const getMarkdownClassName = () => {
+    const baseClasses = "w-full cursor-text transition-colors hover:bg-muted/20 rounded-sm px-1 -mx-1";
+    
+    switch (block.type) {
+      case 'heading1':
+        return `${baseClasses} text-3xl font-semibold py-2 leading-tight`;
+      case 'heading2':
+        return `${baseClasses} text-2xl font-semibold py-2 leading-tight`;
+      case 'heading3':
+        return `${baseClasses} text-xl font-semibold py-1 leading-tight`;
+      case 'bullet':
+        return `${baseClasses} py-1 leading-relaxed`;
+      case 'numbered':
+        return `${baseClasses} py-1 leading-relaxed`;
+      case 'quote':
+        return `${baseClasses} pl-4 border-l-3 border-border text-muted-foreground leading-relaxed`;
+      default:
+        return `${baseClasses} py-1 leading-relaxed`;
+    }
+  };
+
+  // Markdown content renderer
+  const MarkdownContent = ({ content, className }: { content: string; className: string }) => {
+    const style = block.type === 'bullet' || block.type === 'numbered' ? getIndentStyle() : {};
+    
+    return (
+      <div 
+        className={className}
+        style={style}
+        onClick={(e) => {
+          e.stopPropagation();
+          onFocus();
+          // Focus the hidden textarea
+          setTimeout(() => {
+            if (textareaRef.current) {
+              textareaRef.current.focus();
+              // Position cursor at end of content
+              const length = textareaRef.current.value.length;
+              textareaRef.current.setSelectionRange(length, length);
+            }
+          }, 0);
+        }}
+      >
+        <ReactMarkdown
+          components={{
+            // Disable paragraph wrapper for inline content
+            p: ({ children }) => <span>{children}</span>,
+            // Style inline elements
+            strong: ({ children }) => <strong className="font-bold">{children}</strong>,
+            em: ({ children }) => <em className="italic">{children}</em>,
+            code: ({ children }) => (
+              <code className="bg-muted/80 text-muted-foreground px-1 py-0.5 rounded text-sm font-mono">
+                {children}
+              </code>
+            ),
+            del: ({ children }) => <del className="line-through text-muted-foreground">{children}</del>,
+            a: ({ href, children }) => (
+              <a 
+                href={href} 
+                className="text-blue-600 hover:text-blue-800 underline"
+                target="_blank"
+                rel="noopener noreferrer"
+                onClick={(e) => e.stopPropagation()}
+              >
+                {children}
+              </a>
+            ),
+          }}
+        >
+          {content}
+        </ReactMarkdown>
+      </div>
+    );
+  };
+
   const getMinHeight = () => {
     switch (block.type) {
       case 'heading1':
@@ -1228,6 +1353,51 @@ export const BlockEditor = ({
           />
         )}
         
+        {/* Rendered markdown content (shown when not focused and content has markdown) */}
+        {shouldRenderMarkdown(block.type) && 
+         !isFocused && 
+         !showAIQuery && 
+         !diffMode && 
+         !(streamingState?.isStreaming && streamingState?.blockId === block.id) &&
+         block.content && 
+         block.content.trim() && 
+         hasMarkdownFormatting(block.content) ? (
+          <MarkdownContent 
+            content={block.content}
+            className={getMarkdownClassName()}
+          />
+        ) : null}
+
+        {/* Show plain text when not focused, no markdown formatting */}
+        {shouldRenderMarkdown(block.type) && 
+         !isFocused && 
+         !showAIQuery && 
+         !diffMode && 
+         !(streamingState?.isStreaming && streamingState?.blockId === block.id) &&
+         block.content && 
+         block.content.trim() && 
+         !hasMarkdownFormatting(block.content) ? (
+          <div 
+            className={getMarkdownClassName()}
+            style={block.type === 'bullet' || block.type === 'numbered' ? getIndentStyle() : {}}
+            onClick={(e) => {
+              e.stopPropagation();
+              onFocus();
+              // Focus the hidden textarea
+              setTimeout(() => {
+                if (textareaRef.current) {
+                  textareaRef.current.focus();
+                  // Position cursor at end of content
+                  const length = textareaRef.current.value.length;
+                  textareaRef.current.setSelectionRange(length, length);
+                }
+              }, 0);
+            }}
+          >
+            {block.content}
+          </div>
+        ) : null}
+
         <textarea
           ref={textareaRef}
           value={block.content}
@@ -1264,8 +1434,10 @@ export const BlockEditor = ({
             display: showAIQuery || 
                     diffMode ||
                     ['table', 'toggle', 'subpage', 'canvas', 'stats', 'graphing'].includes(block.type) || 
-                    (streamingState?.isStreaming && streamingState?.blockId === block.id) 
-                    ? 'none' : 'block' // Hide textarea when AI query is active, in diff mode, for custom components, or when streaming
+                    (streamingState?.isStreaming && streamingState?.blockId === block.id) ||
+                    // Hide textarea when showing markdown content (not focused)
+                    (shouldRenderMarkdown(block.type) && !isFocused && block.content && block.content.trim())
+                    ? 'none' : 'block' // Hide textarea when AI query is active, in diff mode, for custom components, when streaming, or when showing markdown
           }}
         />
         

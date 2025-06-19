@@ -176,6 +176,7 @@ class TrivialHealthResponse(BaseModel):
     model: Optional[str] = None
     message: Optional[str] = None
     supported_operations: List[str] = []
+    supports_natural_language: Optional[bool] = None
 
 class DatabaseStatusResponse(BaseModel):
     name: str
@@ -1577,7 +1578,8 @@ async def trivial_health_check():
             provider=health_data["provider"],
             model=health_data.get("model"),
             message=health_data.get("message"),
-            supported_operations=trivial_client.get_supported_operations() if trivial_client.is_enabled() else []
+            supported_operations=health_data.get("supported_operations", []),
+            supports_natural_language=health_data.get("supports_natural_language", False)
         )
     except Exception as e:
         logger.error(f"Trivial health check failed: {e}")

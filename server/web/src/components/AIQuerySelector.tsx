@@ -351,81 +351,30 @@ export default function AIQuerySelector({
         // Route to trivial client if:
         // 1. Classified as trivial with high confidence
         // 2. AND we have source text to work with (either for editing or content generation)  
-        // 3. AND we can map it to a supported trivial operation
+        // 3. AND natural language requests are supported
         if (classification.tier === 'trivial' && classification.confidence > 0.7 && sourceText.trim()) {
           const operationType = isTextEditingOperation ? 'text editing' : 'content generation';
           console.log(`⚡ Attempting trivial routing for ${operationType}: ${classification.operationType}`);
           
-          // Map common queries to trivial operations
-          const operationMap: Record<string, string> = {
-            'grammar': 'fix_grammar',
-            'spelling': 'fix_spelling',
-            'concise': 'make_concise',
-            'clarity': 'improve_clarity',
-            'tone': 'improve_tone',
-            'expand': 'expand_text',
-            'simplify': 'simplify_language',
-            'examples': 'add_examples',
-            'summarize': isTextEditingOperation ? 'make_concise' : 'summarize_content',
-            'summary': isTextEditingOperation ? 'make_concise' : 'summarize_content',
-            'shorten': 'make_concise',
-            'lengthen': 'expand_text',
-            'professional': 'improve_tone',
-            'title': 'generate_title',
-            'outline': 'create_outline'
-          };
+          // Check if natural language requests are supported
+          const supportsNaturalLanguage = trivialSupported.includes("natural_language_request") || 
+                                          trivialSupported.length === 0;
           
-          // Try to map the operation type to a trivial operation
-          let trivialOp = operationMap[classification.operationType];
-          
-          // If no direct mapping, try fuzzy matching
-          if (!trivialOp) {
-            const queryLower = trimmedQuery.toLowerCase();
-            
-            // Check for summarization keywords
-            if (queryLower.includes('summarise') || queryLower.includes('summarize') || 
-                queryLower.includes('summary') || queryLower.includes('overview')) {
-              trivialOp = isTextEditingOperation ? 'make_concise' : 'summarize_content';
-            }
-            // Check for title generation
-            else if (queryLower.includes('title') || queryLower.includes('heading')) {
-              trivialOp = 'generate_title';
-            }
-            // Check for outline generation  
-            else if (queryLower.includes('outline') || queryLower.includes('structure')) {
-              trivialOp = 'create_outline';
-            }
-            // Fallback to supported operations
-            else {
-              trivialOp = trivialSupported.find(op => 
-                classification.operationType.includes(op.replace('_', '')) ||
-                queryLower.includes(op.replace('_', ' '))
-              ) || 'improve_clarity';
-            }
-          }
-          
-          console.log(`🚀 TRIVIAL CHECK: Checking if operation '${trivialOp}' is supported...`);
+          console.log(`🚀 TRIVIAL CHECK: Checking if natural language is supported...`);
           console.log(`🚀 TRIVIAL CHECK: Available operations:`, trivialSupported);
-          console.log(`🚀 TRIVIAL CHECK: Operation supported:`, trivialSupported.includes(trivialOp));
+          console.log(`🚀 TRIVIAL CHECK: Supports natural language:`, supportsNaturalLanguage);
           
-          if (trivialSupported.includes(trivialOp)) {
-            console.log(`⚡ SUCCESS: Routing to trivial LLM with operation: ${trivialOp}`);
+          if (supportsNaturalLanguage) {
+            console.log(`⚡ SUCCESS: Routing to trivial LLM with natural language request: "${trimmedQuery}"`);
             
-            // For content generation operations, handle differently
-            if (!isTextEditingOperation) {
-              console.log(`📝 Content generation mode: creating new content`);
-              // For content generation, we'll still use the trivial operation but mark it differently
-              await handleTrivialOperation(trivialOp, sourceText);
-            } else {
-              console.log(`✏️ Text editing mode: modifying existing content`);
-              await handleTrivialOperation(trivialOp, sourceText);
-            }
+            // Pass the user's exact request without categorization
+            await handleTrivialOperation(trimmedQuery, sourceText);
             
             setShowDropdown(false);
             console.log('🚀 === TRIVIAL ROUTING COMPLETE ===');
             return;
           } else {
-            console.log(`❌ FAILED: Trivial operation '${trivialOp}' not supported. Available: ${trivialSupported.join(', ')}`);
+            console.log(`❌ FAILED: Natural language requests not supported. Available: ${trivialSupported.join(', ')}`);
           }
         }
         
@@ -473,21 +422,13 @@ export default function AIQuerySelector({
 
     // Check if this is a known trivial operation
     if (enableSmartRouting && originalText && trivialSupported.length > 0) {
-      const trivialOperationNames = {
-        'Fix grammar': 'fix_grammar',
-        'Fix spelling': 'fix_spelling', 
-        'Make it shorter': 'make_concise',
-        'Make it longer': 'expand_text',
-        'Improve clarity': 'improve_clarity',
-        'Improve tone': 'improve_tone',
-        'Simplify language': 'simplify_language',
-        'Add examples': 'add_examples'
-      };
+      // Check if natural language requests are supported
+      const supportsNaturalLanguage = trivialSupported.includes("natural_language_request") || 
+                                      trivialSupported.length === 0;
 
-      const operation = trivialOperationNames[optionQuery as keyof typeof trivialOperationNames];
-      if (operation && trivialSupported.includes(operation)) {
-        console.log(`⚡ Quick trivial operation: ${operation}`);
-        await handleTrivialOperation(operation, originalText);
+      if (supportsNaturalLanguage) {
+        console.log(`⚡ Quick natural language operation: "${optionQuery}"`);
+        await handleTrivialOperation(optionQuery, originalText);
         setShowDropdown(false);
         return;
       }
