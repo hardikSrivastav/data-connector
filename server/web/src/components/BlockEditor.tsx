@@ -11,7 +11,7 @@ import { StatsBlock } from './StatsBlock';
 import { StreamingStatusBlock } from './StreamingStatusBlock';
 import { GraphingBlock } from './GraphingBlock';
 import { cn } from '@/lib/utils';
-import { GripVertical, Plus } from 'lucide-react';
+import { GripVertical, Plus, Bold, Italic, Underline, Strikethrough, Code, Link } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import ReactMarkdown from 'react-markdown';
 import styles from './BlockEditor.module.css';
@@ -132,10 +132,117 @@ const hasMarkdownFormatting = (content: string): boolean => {
     /_[^_]+_/,            // _italic_
     /`[^`]+`/,            // `code`
     /~~[^~]+~~/,          // ~~strikethrough~~
+    /<u>[^<]+<\/u>/,      // <u>underline</u>
     /\[[^\]]+\]\([^)]+\)/, // [link](url)
   ];
   
   return inlinePatterns.some(pattern => pattern.test(content));
+};
+
+// Add formatting toolbar component
+const FormattingToolbar = ({ 
+  position, 
+  onFormat, 
+  onClose 
+}: { 
+  position: { top: number; left: number; width: number };
+  onFormat: (type: string) => void;
+  onClose: () => void;
+}) => {
+  return (
+    <div
+      className="absolute z-50 bg-background border border-border rounded-md shadow-lg p-1 flex items-center gap-1"
+      style={{
+        top: position.top,
+        left: Math.max(0, position.left + (position.width / 2) - 100), // Center the toolbar, but keep it on screen
+        minWidth: '200px'
+      }}
+      onMouseDown={(e) => {
+        // Prevent the toolbar from losing focus when clicking buttons
+        e.preventDefault();
+        e.stopPropagation();
+      }}
+    >
+      <Button
+        variant="ghost"
+        size="sm"
+        className="h-8 w-8 p-0 hover:bg-muted"
+        onMouseDown={(e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          onFormat('bold');
+        }}
+        title="Bold (Ctrl+B)"
+      >
+        <Bold className="h-4 w-4" />
+      </Button>
+      <Button
+        variant="ghost"
+        size="sm"
+        className="h-8 w-8 p-0 hover:bg-muted"
+        onMouseDown={(e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          onFormat('italic');
+        }}
+        title="Italic (Ctrl+I)"
+      >
+        <Italic className="h-4 w-4" />
+      </Button>
+      <Button
+        variant="ghost"
+        size="sm"
+        className="h-8 w-8 p-0 hover:bg-muted"
+        onMouseDown={(e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          onFormat('underline');
+        }}
+        title="Underline (Ctrl+U)"
+      >
+        <Underline className="h-4 w-4" />
+      </Button>
+      <Button
+        variant="ghost"
+        size="sm"
+        className="h-8 w-8 p-0 hover:bg-muted"
+        onMouseDown={(e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          onFormat('strikethrough');
+        }}
+        title="Strikethrough (Ctrl+Shift+S)"
+      >
+        <Strikethrough className="h-4 w-4" />
+      </Button>
+      <Button
+        variant="ghost"
+        size="sm"
+        className="h-8 w-8 p-0 hover:bg-muted"
+        onMouseDown={(e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          onFormat('code');
+        }}
+        title="Code (Ctrl+E)"
+      >
+        <Code className="h-4 w-4" />
+      </Button>
+      <Button
+        variant="ghost"
+        size="sm"
+        className="h-8 w-8 p-0 hover:bg-muted"
+        onMouseDown={(e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          onFormat('link');
+        }}
+        title="Link (Ctrl+K)"
+      >
+        <Link className="h-4 w-4" />
+      </Button>
+    </div>
+  );
 };
 
 export const BlockEditor = ({
@@ -181,6 +288,13 @@ export const BlockEditor = ({
   const [justCreatedFromSlash, setJustCreatedFromSlash] = useState(false);
   // New state to handle the transition from markdown to editing mode
   const [isTransitioningToEdit, setIsTransitioningToEdit] = useState(false);
+  // Formatting toolbar state
+  const [showFormattingToolbar, setShowFormattingToolbar] = useState(false);
+  const [formattingToolbarPosition, setFormattingToolbarPosition] = useState<{ top: number; left: number; width: number } | null>(null);
+  const [selectedText, setSelectedText] = useState('');
+  const [selectionStart, setSelectionStart] = useState(0);
+  const [selectionEnd, setSelectionEnd] = useState(0);
+  
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const blockRef = useRef<HTMLDivElement>(null);
 
@@ -235,7 +349,211 @@ export const BlockEditor = ({
     }
   }, [isFocused]);
 
+  // Add formatting functions
+  const applyFormatting = (formatType: string) => {
+    if (!textareaRef.current) return;
+    
+    const textarea = textareaRef.current;
+    const start = textarea.selectionStart;
+    const end = textarea.selectionEnd;
+    const content = textarea.value;
+    const selectedText = content.substring(start, end);
+    
+    let before = '';
+    let after = '';
+    let newText = selectedText;
+    let cursorOffset = 0;
+    
+    switch (formatType) {
+      case 'bold':
+        // Check if already bold
+        if (selectedText.startsWith('**') && selectedText.endsWith('**') && selectedText.length > 4) {
+          newText = selectedText.slice(2, -2);
+          cursorOffset = 0;
+        } else {
+          before = '**';
+          after = '**';
+          newText = selectedText;
+          cursorOffset = 2;
+        }
+        break;
+        
+      case 'italic':
+        // Check if already italic
+        if (selectedText.startsWith('*') && selectedText.endsWith('*') && selectedText.length > 2 && !selectedText.startsWith('**')) {
+          newText = selectedText.slice(1, -1);
+          cursorOffset = 0;
+        } else {
+          before = '*';
+          after = '*';
+          newText = selectedText;
+          cursorOffset = 1;
+        }
+        break;
+        
+      case 'underline':
+        // Use HTML-style underline since markdown doesn't have native underline
+        if (selectedText.startsWith('<u>') && selectedText.endsWith('</u>') && selectedText.length > 7) {
+          newText = selectedText.slice(3, -4);
+          cursorOffset = 0;
+        } else {
+          before = '<u>';
+          after = '</u>';
+          newText = selectedText;
+          cursorOffset = 3;
+        }
+        break;
+        
+      case 'strikethrough':
+        if (selectedText.startsWith('~~') && selectedText.endsWith('~~') && selectedText.length > 4) {
+          newText = selectedText.slice(2, -2);
+          cursorOffset = 0;
+        } else {
+          before = '~~';
+          after = '~~';
+          newText = selectedText;
+          cursorOffset = 2;
+        }
+        break;
+        
+      case 'code':
+        if (selectedText.startsWith('`') && selectedText.endsWith('`') && selectedText.length > 2) {
+          newText = selectedText.slice(1, -1);
+          cursorOffset = 0;
+        } else {
+          before = '`';
+          after = '`';
+          newText = selectedText;
+          cursorOffset = 1;
+        }
+        break;
+        
+      case 'link':
+        if (selectedText) {
+          before = '[';
+          after = '](https://)';
+          newText = selectedText;
+          cursorOffset = selectedText.length + 3; // Position cursor after https://
+        } else {
+          before = '[';
+          after = '](https://)';
+          newText = 'Link text';
+          cursorOffset = 1; // Position cursor to select "Link text"
+        }
+        break;
+    }
+    
+    const newContent = content.substring(0, start) + before + newText + after + content.substring(end);
+    
+    // Update content
+    onUpdate({ content: newContent });
+    
+    // Set cursor position and maintain focus
+    requestAnimationFrame(() => {
+      if (textareaRef.current) {
+        const newCursorPos = formatType === 'link' && !selectedText 
+          ? start + 1 // Start of "Link text" for replacement
+          : start + before.length + cursorOffset;
+        const newCursorEnd = formatType === 'link' && !selectedText
+          ? start + 1 + 9 // Select "Link text"
+          : newCursorPos;
+        
+        textareaRef.current.focus();
+        textareaRef.current.setSelectionRange(newCursorPos, newCursorEnd);
+        adjustTextareaHeight();
+        
+        // If we still have a selection after link formatting, keep the toolbar open
+        if (formatType === 'link' && !selectedText) {
+          // For link formatting with no initial selection, we now have selected text
+          setTimeout(() => {
+            setShowFormattingToolbar(false);
+          }, 100);
+        } else {
+          setShowFormattingToolbar(false);
+        }
+      }
+    });
+  };
+
+  // Handle text selection for formatting toolbar
+  const handleTextSelection = () => {
+    if (!textareaRef.current || !blockRef.current) return;
+    
+    const textarea = textareaRef.current;
+    const start = textarea.selectionStart;
+    const end = textarea.selectionEnd;
+    
+    if (start !== end && isFocused) {
+      const selectedText = textarea.value.substring(start, end);
+      setSelectedText(selectedText);
+      setSelectionStart(start);
+      setSelectionEnd(end);
+      
+      // Calculate more accurate position based on selection
+      const textareaRect = textarea.getBoundingClientRect();
+      const containerRect = blockRef.current.getBoundingClientRect();
+      
+      // Get text metrics to calculate selection position
+      const textBeforeSelection = textarea.value.substring(0, start);
+      const lines = textBeforeSelection.split('\n');
+      const currentLineIndex = lines.length - 1;
+      
+      // Estimate line height from computed styles
+      const computedStyle = window.getComputedStyle(textarea);
+      const lineHeight = parseFloat(computedStyle.lineHeight) || parseFloat(computedStyle.fontSize) * 1.2;
+      const paddingTop = parseFloat(computedStyle.paddingTop) || 0;
+      
+      // Calculate approximate position of selection start
+      const selectionTop = textareaRect.top + paddingTop + (currentLineIndex * lineHeight);
+      
+      // Position toolbar above the selection
+      const position = {
+        top: selectionTop - containerRect.top - 60, // 60px above selection, relative to block container
+        left: textareaRect.left - containerRect.left, // Left edge of textarea, relative to block container
+        width: textareaRect.width
+      };
+      
+      setFormattingToolbarPosition(position);
+      setShowFormattingToolbar(true);
+    } else {
+      setShowFormattingToolbar(false);
+    }
+  };
+
   const handleKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
+    // Handle formatting shortcuts
+    if ((e.ctrlKey || e.metaKey) && !e.shiftKey) {
+      switch (e.key.toLowerCase()) {
+        case 'b':
+          e.preventDefault();
+          applyFormatting('bold');
+          return;
+        case 'i':
+          e.preventDefault();
+          applyFormatting('italic');
+          return;
+        case 'u':
+          e.preventDefault();
+          applyFormatting('underline');
+          return;
+        case 'e':
+          e.preventDefault();
+          applyFormatting('code');
+          return;
+        case 'k':
+          e.preventDefault();
+          applyFormatting('link');
+          return;
+      }
+    }
+    
+    // Handle Ctrl+Shift+S for strikethrough
+    if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key.toLowerCase() === 's') {
+      e.preventDefault();
+      applyFormatting('strikethrough');
+      return;
+    }
+
     if (e.key === 'Enter') {
       // If we just created this block from a slash command or markdown conversion, don't create a new block yet
       if (justCreatedFromSlash) {
@@ -416,49 +734,49 @@ export const BlockEditor = ({
     return blocks;
   };
 
-     // Handle paste events to convert markdown
-   const handlePaste = (e: React.ClipboardEvent) => {
-     const pastedText = e.clipboardData.getData('text');
-     console.log('🎯 BlockEditor: Paste detected, text:', pastedText);
-     
-     // Only process if it looks like markdown (contains markdown patterns)
-     const hasMarkdown = Object.values(MARKDOWN_PATTERNS).some(pattern => 
-       pastedText.split('\n').some(line => pattern.test(line.trim()))
-     );
-     
-     console.log('🎯 BlockEditor: Has markdown:', hasMarkdown);
-     
-     if (hasMarkdown) {
-       e.preventDefault();
-       console.log('🎯 BlockEditor: Processing as markdown paste');
-       
-       // Pass the markdown parsing up to PageEditor for proper multi-block creation
-       if (onMarkdownPaste) {
-         console.log('🎯 BlockEditor: Calling onMarkdownPaste');
-         onMarkdownPaste(pastedText, block.id);
-         return;
-       }
-       
-       console.log('🎯 BlockEditor: No onMarkdownPaste handler, using fallback');
-       
-       // Fallback: parse and convert just the first line for single block
-       const parsedBlocks = parseMarkdownContent(pastedText);
-       
-       if (parsedBlocks.length > 0) {
-         const firstBlock = parsedBlocks[0];
-         console.log('🎯 BlockEditor: Updating with fallback:', firstBlock);
-         onUpdate({ 
-           type: firstBlock.type, 
-           content: firstBlock.content,
-           indentLevel: firstBlock.indentLevel || 0
-         });
-         return;
-       }
-     }
-     
-     console.log('🎯 BlockEditor: Not markdown, using default paste behavior');
-     // If not markdown or single line, let default paste behavior handle it
-   };
+  // Handle paste events to convert markdown
+  const handlePaste = (e: React.ClipboardEvent) => {
+    const pastedText = e.clipboardData.getData('text');
+    console.log('🎯 BlockEditor: Paste detected, text:', pastedText);
+    
+    // Only process if it looks like markdown (contains markdown patterns)
+    const hasMarkdown = Object.values(MARKDOWN_PATTERNS).some(pattern => 
+      pastedText.split('\n').some(line => pattern.test(line.trim()))
+    );
+    
+    console.log('🎯 BlockEditor: Has markdown:', hasMarkdown);
+    
+    if (hasMarkdown) {
+      e.preventDefault();
+      console.log('🎯 BlockEditor: Processing as markdown paste');
+      
+      // Pass the markdown parsing up to PageEditor for proper multi-block creation
+      if (onMarkdownPaste) {
+        console.log('🎯 BlockEditor: Calling onMarkdownPaste');
+        onMarkdownPaste(pastedText, block.id);
+        return;
+      }
+      
+      console.log('🎯 BlockEditor: No onMarkdownPaste handler, using fallback');
+      
+      // Fallback: parse and convert just the first line for single block
+      const parsedBlocks = parseMarkdownContent(pastedText);
+      
+      if (parsedBlocks.length > 0) {
+        const firstBlock = parsedBlocks[0];
+        console.log('🎯 BlockEditor: Updating with fallback:', firstBlock);
+        onUpdate({ 
+          type: firstBlock.type, 
+          content: firstBlock.content,
+          indentLevel: firstBlock.indentLevel || 0
+        });
+        return;
+      }
+    }
+    
+    console.log('🎯 BlockEditor: Not markdown, using default paste behavior');
+    // If not markdown or single line, let default paste behavior handle it
+  };
 
   const handleContentChange = (content: string) => {
     // Reset the flag when user starts typing
@@ -932,7 +1250,7 @@ export const BlockEditor = ({
       case 'subpage': return "Sub-page link";
       case 'canvas': return "Canvas analysis";
       case 'stats': return "Statistics";
-      default: return "Type '/' for commands, '//' for AI";
+      default: return "Type '/' for commands, '//' for AI • Select text for formatting";
     }
   };
 
@@ -1042,71 +1360,7 @@ export const BlockEditor = ({
     }
   };
 
-  // Markdown content renderer
-  const MarkdownContent = ({ content, className }: { content: string; className: string }) => {
-    const style = block.type === 'bullet' || block.type === 'numbered' ? getIndentStyle() : {};
-    
-    return (
-      <div 
-        className={cn(className, "cursor-text hover:bg-muted/20 rounded-sm px-1 -mx-1 transition-colors")}
-        style={style}
-        onClick={(e) => {
-          e.stopPropagation();
-          console.log('🎯 MarkdownContent clicked - starting edit transition');
-          
-          // Set transition state immediately to ensure textarea becomes visible
-          setIsTransitioningToEdit(true);
-          
-          // Call onFocus to update the parent's focus state
-          onFocus();
-          
-          // Use requestAnimationFrame to ensure the DOM updates before focusing
-          requestAnimationFrame(() => {
-            if (textareaRef.current) {
-              console.log('🎯 Focusing textarea after transition');
-              textareaRef.current.focus();
-              
-              // Position cursor at the end of content by default
-              const length = textareaRef.current.value.length;
-              textareaRef.current.setSelectionRange(length, length);
-              
-              // Adjust height after focusing
-              adjustTextareaHeight();
-            }
-          });
-        }}
-      >
-        <ReactMarkdown
-          components={{
-            // Disable paragraph wrapper for inline content
-            p: ({ children }) => <span>{children}</span>,
-            // Style inline elements
-            strong: ({ children }) => <strong className="font-bold">{children}</strong>,
-            em: ({ children }) => <em className="italic">{children}</em>,
-            code: ({ children }) => (
-              <code className="bg-muted/80 text-muted-foreground px-1 py-0.5 rounded text-sm font-mono">
-                {children}
-              </code>
-            ),
-            del: ({ children }) => <del className="line-through text-muted-foreground">{children}</del>,
-            a: ({ href, children }) => (
-              <a 
-                href={href} 
-                className="text-blue-600 hover:text-blue-800 underline"
-                target="_blank"
-                rel="noopener noreferrer"
-                onClick={(e) => e.stopPropagation()}
-              >
-                {children}
-              </a>
-            ),
-          }}
-        >
-          {content}
-        </ReactMarkdown>
-      </div>
-    );
-  };
+
 
   const getMinHeight = () => {
     switch (block.type) {
@@ -1397,82 +1651,82 @@ export const BlockEditor = ({
          block.content && 
          block.content.trim() && 
          hasMarkdownFormatting(block.content) ? (
-          // Special handling for bullet and numbered lists to include bullet marker in click area
-          ((block.type as Block['type']) === 'bullet' || (block.type as Block['type']) === 'numbered') ? (
-            <div 
-              className="relative cursor-text hover:bg-muted/20 rounded-sm transition-colors"
-              style={{
-                // Extend click area to the left to cover bullet marker
+          // Unified click-to-edit handling for all block types
+          <div 
+            className="relative cursor-text hover:bg-muted/20 rounded-sm transition-colors"
+            style={{
+              // Extend click area for bullet/numbered lists to cover bullet marker
+              ...(block.type === 'bullet' || block.type === 'numbered' ? {
                 marginLeft: `${-((block.indentLevel || 0) * 24 + 24)}px`,
                 paddingLeft: `${(block.indentLevel || 0) * 24 + 24}px`,
-                minHeight: '24px'
-              }}
-              onClick={(e) => {
-                e.stopPropagation();
-                console.log('🎯 Bullet MarkdownContent clicked - starting edit transition');
-                
-                // Set transition state immediately to ensure textarea becomes visible
-                setIsTransitioningToEdit(true);
-                
-                // Call onFocus to update the parent's focus state
-                onFocus();
-                
-                // Use requestAnimationFrame to ensure the DOM updates before focusing
-                requestAnimationFrame(() => {
-                  if (textareaRef.current) {
-                    console.log('🎯 Focusing textarea after bullet transition');
-                    textareaRef.current.focus();
-                    
-                    // Position cursor at the end of content by default
-                    const length = textareaRef.current.value.length;
-                    textareaRef.current.setSelectionRange(length, length);
-                    
-                    // Adjust height after focusing
-                    adjustTextareaHeight();
-                  }
-                });
-              }}
-            >
-              <div 
-                className={getMarkdownClassName()}
-                style={getIndentStyle()}
-              >
-                <ReactMarkdown
-                  components={{
-                    // Disable paragraph wrapper for inline content
-                    p: ({ children }) => <span>{children}</span>,
-                    // Style inline elements
-                    strong: ({ children }) => <strong className="font-bold">{children}</strong>,
-                    em: ({ children }) => <em className="italic">{children}</em>,
-                    code: ({ children }) => (
-                      <code className="bg-muted/80 text-muted-foreground px-1 py-0.5 rounded text-sm font-mono">
-                        {children}
-                      </code>
-                    ),
-                    del: ({ children }) => <del className="line-through text-muted-foreground">{children}</del>,
-                    a: ({ href, children }) => (
-                      <a 
-                        href={href} 
-                        className="text-blue-600 hover:text-blue-800 underline"
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        onClick={(e) => e.stopPropagation()}
-                      >
-                        {children}
-                      </a>
-                    ),
-                  }}
-                >
-                  {block.content}
-                </ReactMarkdown>
-              </div>
-            </div>
-          ) : (
-            <MarkdownContent 
-              content={block.content}
+              } : {}),
+              minHeight: '24px'
+            }}
+            onClick={(e) => {
+              e.stopPropagation();
+              console.log('🎯 Markdown content clicked - starting edit transition');
+              
+              // Set transition state immediately to ensure textarea becomes visible
+              setIsTransitioningToEdit(true);
+              
+              // Call onFocus to update the parent's focus state
+              onFocus();
+              
+              // Use requestAnimationFrame to ensure the DOM updates before focusing
+              requestAnimationFrame(() => {
+                if (textareaRef.current) {
+                  console.log('🎯 Focusing textarea after markdown transition');
+                  textareaRef.current.focus();
+                  
+                  // Position cursor at the end of content by default
+                  const length = textareaRef.current.value.length;
+                  textareaRef.current.setSelectionRange(length, length);
+                  
+                  // Adjust height after focusing
+                  adjustTextareaHeight();
+                }
+              });
+            }}
+          >
+            <div 
               className={getMarkdownClassName()}
-            />
-          )
+              style={block.type === 'bullet' || block.type === 'numbered' ? getIndentStyle() : {}}
+            >
+              <ReactMarkdown
+                components={{
+                  // Disable paragraph wrapper for inline content
+                  p: ({ children }) => <span>{children}</span>,
+                  // Style inline elements
+                  strong: ({ children }) => <strong className="font-bold">{children}</strong>,
+                  em: ({ children }) => <em className="italic">{children}</em>,
+                  code: ({ children }) => (
+                    <code className="bg-muted/80 text-muted-foreground px-1 py-0.5 rounded text-sm font-mono">
+                      {children}
+                    </code>
+                  ),
+                  del: ({ children }) => <del className="line-through text-muted-foreground">{children}</del>,
+                  // Support HTML underline tags
+                  u: ({ children }) => <u className="underline">{children}</u>,
+                  a: ({ href, children }) => (
+                    <a 
+                      href={href} 
+                      className="text-blue-600 hover:text-blue-800 underline"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      {children}
+                    </a>
+                  ),
+                }}
+                // Allow HTML tags like <u> for underline
+                rehypePlugins={[]}
+                skipHtml={false}
+              >
+                {block.content}
+              </ReactMarkdown>
+            </div>
+          </div>
         ) : null}
 
         {/* Show plain text when not focused, no markdown formatting */}
@@ -1485,76 +1739,47 @@ export const BlockEditor = ({
          block.content && 
          block.content.trim() && 
          !hasMarkdownFormatting(block.content) ? (
-          // Special handling for bullet and numbered lists to include bullet marker in click area
-          ((block.type as Block['type']) === 'bullet' || (block.type as Block['type']) === 'numbered') ? (
-            <div 
-              className="relative cursor-text hover:bg-muted/20 rounded-sm transition-colors"
-              style={{
-                // Extend click area to the left to cover bullet marker
+          // Unified click-to-edit handling for all block types (plain text)
+          <div 
+            className="relative cursor-text hover:bg-muted/20 rounded-sm transition-colors"
+            style={{
+              // Extend click area for bullet/numbered lists to cover bullet marker
+              ...(block.type === 'bullet' || block.type === 'numbered' ? {
                 marginLeft: `${-((block.indentLevel || 0) * 24 + 24)}px`,
                 paddingLeft: `${(block.indentLevel || 0) * 24 + 24}px`,
-                minHeight: '24px'
-              }}
-              onClick={(e) => {
-                e.stopPropagation();
-                console.log('🎯 Bullet plain text clicked - starting edit transition');
-                
-                // Set transition state immediately
-                setIsTransitioningToEdit(true);
-                
-                // Call onFocus to update the parent's focus state
-                onFocus();
-                
-                // Use requestAnimationFrame to ensure the DOM updates before focusing
-                requestAnimationFrame(() => {
-                  if (textareaRef.current) {
-                    console.log('🎯 Focusing textarea after bullet plain text transition');
-                    textareaRef.current.focus();
-                    // Position cursor at end of content
-                    const length = textareaRef.current.value.length;
-                    textareaRef.current.setSelectionRange(length, length);
-                    adjustTextareaHeight();
-                  }
-                });
-              }}
-            >
-              <div 
-                className={getMarkdownClassName()}
-                style={getIndentStyle()}
-              >
-                {block.content}
-              </div>
-            </div>
-          ) : (
+              } : {}),
+              minHeight: '24px'
+            }}
+            onClick={(e) => {
+              e.stopPropagation();
+              console.log('🎯 Plain text clicked - starting edit transition');
+              
+              // Set transition state immediately
+              setIsTransitioningToEdit(true);
+              
+              // Call onFocus to update the parent's focus state
+              onFocus();
+              
+              // Use requestAnimationFrame to ensure the DOM updates before focusing
+              requestAnimationFrame(() => {
+                if (textareaRef.current) {
+                  console.log('🎯 Focusing textarea after plain text transition');
+                  textareaRef.current.focus();
+                  // Position cursor at end of content
+                  const length = textareaRef.current.value.length;
+                  textareaRef.current.setSelectionRange(length, length);
+                  adjustTextareaHeight();
+                }
+              });
+            }}
+          >
             <div 
-              className={cn(getMarkdownClassName(), "cursor-text hover:bg-muted/20 rounded-sm px-1 -mx-1 transition-colors")}
-              style={(block.type as Block['type']) === 'bullet' || (block.type as Block['type']) === 'numbered' ? getIndentStyle() : {}}
-              onClick={(e) => {
-                e.stopPropagation();
-                console.log('🎯 Plain text clicked - starting edit transition');
-                
-                // Set transition state immediately
-                setIsTransitioningToEdit(true);
-                
-                // Call onFocus to update the parent's focus state
-                onFocus();
-                
-                // Use requestAnimationFrame to ensure the DOM updates before focusing
-                requestAnimationFrame(() => {
-                  if (textareaRef.current) {
-                    console.log('🎯 Focusing textarea after plain text transition');
-                    textareaRef.current.focus();
-                    // Position cursor at end of content
-                    const length = textareaRef.current.value.length;
-                    textareaRef.current.setSelectionRange(length, length);
-                    adjustTextareaHeight();
-                  }
-                });
-              }}
+              className={cn(getMarkdownClassName(), "px-1 -mx-1")}
+              style={block.type === 'bullet' || block.type === 'numbered' ? getIndentStyle() : {}}
             >
               {block.content}
             </div>
-          )
+          </div>
         ) : null}
 
         <textarea
@@ -1572,9 +1797,14 @@ export const BlockEditor = ({
             console.log('🎯 Textarea blurred');
             // Reset transition state when focus is lost
             setIsTransitioningToEdit(false);
+            // Hide formatting toolbar when focus is lost
+            setShowFormattingToolbar(false);
           }}
           onInput={adjustTextareaHeight}
           onPaste={handlePaste}
+          onMouseUp={handleTextSelection}
+          onKeyUp={handleTextSelection}
+          onSelect={handleTextSelection}
           onClick={(e) => {
             e.stopPropagation();
             // If AI query is showing and user clicks textarea, close it and focus
@@ -1592,6 +1822,9 @@ export const BlockEditor = ({
                 }
               }, 0);
             }
+            
+            // Handle text selection for formatting toolbar
+            setTimeout(handleTextSelection, 10);
           }}
           placeholder={getPlaceholder()}
           className={getClassName()}
@@ -1610,6 +1843,15 @@ export const BlockEditor = ({
           }}
         />
         
+        {/* Formatting Toolbar */}
+        {showFormattingToolbar && formattingToolbarPosition && (
+          <FormattingToolbar
+            position={formattingToolbarPosition}
+            onFormat={applyFormatting}
+            onClose={() => setShowFormattingToolbar(false)}
+          />
+        )}
+
         {/* Trivial LLM Editor - replaces the textarea when in diff mode */}
         {diffMode && (
           <div className="mt-2">
