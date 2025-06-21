@@ -11,11 +11,9 @@ import { StatsBlock } from './StatsBlock';
 import { StreamingStatusBlock } from './StreamingStatusBlock';
 import { GraphingBlock } from './GraphingBlock';
 import { cn } from '@/lib/utils';
-import { GripVertical, Plus, Bold, Italic, Underline, Strikethrough, Code, Link, Palette, Highlighter } from 'lucide-react';
+import { GripVertical, Plus, Bold, Italic, Underline, Strikethrough, Code, Link } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import ReactMarkdown from 'react-markdown';
-import remarkGfm from 'remark-gfm';
-import rehypeRaw from 'rehype-raw';
 import styles from './BlockEditor.module.css';
 
 // Import SubpageBlock with explicit path
@@ -136,224 +134,114 @@ const hasMarkdownFormatting = (content: string): boolean => {
     /~~[^~]+~~/,          // ~~strikethrough~~
     /<u>[^<]+<\/u>/,      // <u>underline</u>
     /\[[^\]]+\]\([^)]+\)/, // [link](url)
-    /<span[^>]*style[^>]*color[^>]*>[^<]+<\/span>/i, // <span style="color: ...">text</span>
-    /<span[^>]*style[^>]*background[^>]*>[^<]+<\/span>/i, // <span style="background: ...">text</span>
-    /<mark[^>]*>[^<]+<\/mark>/i, // <mark>highlight</mark>
   ];
   
   return inlinePatterns.some(pattern => pattern.test(content));
-};
-
-// Color picker component
-const ColorPicker = ({ 
-  position, 
-  onColorSelect, 
-  onClose, 
-  type 
-}: {
-  position: { top: number; left: number; width: number };
-  onColorSelect: (color: string) => void;
-  onClose: () => void;
-  type: 'text' | 'background';
-}) => {
-  const colors = [
-    '#000000', '#374151', '#6B7280', '#9CA3AF', '#D1D5DB', '#F3F4F6',
-    '#DC2626', '#EA580C', '#D97706', '#CA8A04', '#65A30D', '#16A34A',
-    '#0891B2', '#2563EB', '#7C3AED', '#C026D3', '#DC2626', '#BE123C'
-  ];
-
-  return (
-    <div
-      className="absolute z-50 bg-background border border-border rounded-md shadow-lg p-2"
-      style={{
-        top: position.top - 80,
-        left: Math.max(0, position.left + (position.width / 2) - 100),
-        minWidth: '160px'
-      }}
-      onMouseDown={(e) => {
-        e.preventDefault();
-        e.stopPropagation();
-      }}
-    >
-      <div className="grid grid-cols-6 gap-1">
-        {colors.map((color) => (
-          <button
-            key={color}
-            className="w-6 h-6 rounded border border-border hover:scale-110 transition-transform"
-            style={{ backgroundColor: color }}
-            onMouseDown={(e) => {
-              e.preventDefault();
-              e.stopPropagation();
-              onColorSelect(color);
-            }}
-            title={color}
-          />
-        ))}
-      </div>
-    </div>
-  );
 };
 
 // Add formatting toolbar component
 const FormattingToolbar = ({ 
   position, 
   onFormat, 
-  onClose,
-  onColorFormat,
-  showColorPicker,
-  showHighlightPicker,
-  onToggleColorPicker,
-  onToggleHighlightPicker
+  onClose 
 }: { 
   position: { top: number; left: number; width: number };
   onFormat: (type: string) => void;
   onClose: () => void;
-  onColorFormat: (color: string, type: 'text' | 'background') => void;
-  showColorPicker: boolean;
-  showHighlightPicker: boolean;
-  onToggleColorPicker: () => void;
-  onToggleHighlightPicker: () => void;
 }) => {
   return (
-    <>
-      <div
-        className="absolute z-50 bg-background border border-border rounded-md shadow-lg p-1 flex items-center gap-1"
-        style={{
-          top: position.top,
-          left: Math.max(0, position.left + (position.width / 2) - 150), // Center the toolbar, but keep it on screen
-          minWidth: '300px'
-        }}
+    <div
+      className="absolute z-50 bg-background border border-border rounded-md shadow-lg p-1 flex items-center gap-1"
+      style={{
+        top: position.top,
+        left: Math.max(0, position.left + (position.width / 2) - 100), // Center the toolbar, but keep it on screen
+        minWidth: '200px'
+      }}
+      onMouseDown={(e) => {
+        // Prevent the toolbar from losing focus when clicking buttons
+        e.preventDefault();
+        e.stopPropagation();
+      }}
+    >
+      <Button
+        variant="ghost"
+        size="sm"
+        className="h-8 w-8 p-0 hover:bg-muted"
         onMouseDown={(e) => {
-          // Prevent the toolbar from losing focus when clicking buttons
           e.preventDefault();
           e.stopPropagation();
+          onFormat('bold');
         }}
+        title="Bold (Ctrl+B)"
       >
-        <Button
-          variant="ghost"
-          size="sm"
-          className="h-8 w-8 p-0 hover:bg-muted"
-          onMouseDown={(e) => {
-            e.preventDefault();
-            e.stopPropagation();
-            onFormat('bold');
-          }}
-          title="Bold (Ctrl+B)"
-        >
-          <Bold className="h-4 w-4" />
-        </Button>
-        <Button
-          variant="ghost"
-          size="sm"
-          className="h-8 w-8 p-0 hover:bg-muted"
-          onMouseDown={(e) => {
-            e.preventDefault();
-            e.stopPropagation();
-            onFormat('italic');
-          }}
-          title="Italic (Ctrl+I)"
-        >
-          <Italic className="h-4 w-4" />
-        </Button>
-        <Button
-          variant="ghost"
-          size="sm"
-          className="h-8 w-8 p-0 hover:bg-muted"
-          onMouseDown={(e) => {
-            e.preventDefault();
-            e.stopPropagation();
-            onFormat('underline');
-          }}
-          title="Underline (Ctrl+U)"
-        >
-          <Underline className="h-4 w-4" />
-        </Button>
-        <Button
-          variant="ghost"
-          size="sm"
-          className="h-8 w-8 p-0 hover:bg-muted"
-          onMouseDown={(e) => {
-            e.preventDefault();
-            e.stopPropagation();
-            onFormat('strikethrough');
-          }}
-          title="Strikethrough (Ctrl+Shift+S)"
-        >
-          <Strikethrough className="h-4 w-4" />
-        </Button>
-        <Button
-          variant="ghost"
-          size="sm"
-          className="h-8 w-8 p-0 hover:bg-muted"
-          onMouseDown={(e) => {
-            e.preventDefault();
-            e.stopPropagation();
-            onFormat('code');
-          }}
-          title="Code (Ctrl+E)"
-        >
-          <Code className="h-4 w-4" />
-        </Button>
-        <Button
-          variant="ghost"
-          size="sm"
-          className="h-8 w-8 p-0 hover:bg-muted"
-          onMouseDown={(e) => {
-            e.preventDefault();
-            e.stopPropagation();
-            onFormat('link');
-          }}
-          title="Link (Ctrl+K)"
-        >
-          <Link className="h-4 w-4" />
-        </Button>
-        <div className="w-px h-6 bg-border mx-1" />
-        <Button
-          variant="ghost"
-          size="sm"
-          className="h-8 w-8 p-0 hover:bg-muted"
-          onMouseDown={(e) => {
-            e.preventDefault();
-            e.stopPropagation();
-            onToggleColorPicker();
-          }}
-          title="Text Color"
-        >
-          <Palette className="h-4 w-4" />
-        </Button>
-        <Button
-          variant="ghost"
-          size="sm"
-          className="h-8 w-8 p-0 hover:bg-muted"
-          onMouseDown={(e) => {
-            e.preventDefault();
-            e.stopPropagation();
-            onToggleHighlightPicker();
-          }}
-          title="Highlight"
-        >
-          <Highlighter className="h-4 w-4" />
-        </Button>
-      </div>
-      
-      {showColorPicker && (
-        <ColorPicker
-          position={position}
-          onColorSelect={(color) => onColorFormat(color, 'text')}
-          onClose={() => onToggleColorPicker()}
-          type="text"
-        />
-      )}
-      
-      {showHighlightPicker && (
-        <ColorPicker
-          position={position}
-          onColorSelect={(color) => onColorFormat(color, 'background')}
-          onClose={() => onToggleHighlightPicker()}
-          type="background"
-        />
-      )}
-    </>
+        <Bold className="h-4 w-4" />
+      </Button>
+      <Button
+        variant="ghost"
+        size="sm"
+        className="h-8 w-8 p-0 hover:bg-muted"
+        onMouseDown={(e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          onFormat('italic');
+        }}
+        title="Italic (Ctrl+I)"
+      >
+        <Italic className="h-4 w-4" />
+      </Button>
+      <Button
+        variant="ghost"
+        size="sm"
+        className="h-8 w-8 p-0 hover:bg-muted"
+        onMouseDown={(e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          onFormat('underline');
+        }}
+        title="Underline (Ctrl+U)"
+      >
+        <Underline className="h-4 w-4" />
+      </Button>
+      <Button
+        variant="ghost"
+        size="sm"
+        className="h-8 w-8 p-0 hover:bg-muted"
+        onMouseDown={(e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          onFormat('strikethrough');
+        }}
+        title="Strikethrough (Ctrl+Shift+S)"
+      >
+        <Strikethrough className="h-4 w-4" />
+      </Button>
+      <Button
+        variant="ghost"
+        size="sm"
+        className="h-8 w-8 p-0 hover:bg-muted"
+        onMouseDown={(e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          onFormat('code');
+        }}
+        title="Code (Ctrl+E)"
+      >
+        <Code className="h-4 w-4" />
+      </Button>
+      <Button
+        variant="ghost"
+        size="sm"
+        className="h-8 w-8 p-0 hover:bg-muted"
+        onMouseDown={(e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          onFormat('link');
+        }}
+        title="Link (Ctrl+K)"
+      >
+        <Link className="h-4 w-4" />
+      </Button>
+    </div>
   );
 };
 
@@ -406,8 +294,6 @@ export const BlockEditor = ({
   const [selectedText, setSelectedText] = useState('');
   const [selectionStart, setSelectionStart] = useState(0);
   const [selectionEnd, setSelectionEnd] = useState(0);
-  const [showColorPicker, setShowColorPicker] = useState(false);
-  const [showHighlightPicker, setShowHighlightPicker] = useState(false);
   
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const blockRef = useRef<HTMLDivElement>(null);
@@ -544,25 +430,17 @@ export const BlockEditor = ({
         
       case 'link':
         if (selectedText) {
-                  before = '[';
-        after = '](https://)';
-        newText = selectedText;
-        cursorOffset = selectedText.length + 3; // Position cursor after https://
-      } else {
-        before = '[';
-        after = '](https://)';
-        newText = 'Link text';
-        cursorOffset = 1; // Position cursor to select "Link text"
-      }
-      break;
-      
-    case 'textColor':
-      // This will be handled by the color picker
-      return;
-      
-    case 'highlight':
-      // This will be handled by the highlight picker
-      return;
+          before = '[';
+          after = '](https://)';
+          newText = selectedText;
+          cursorOffset = selectedText.length + 3; // Position cursor after https://
+        } else {
+          before = '[';
+          after = '](https://)';
+          newText = 'Link text';
+          cursorOffset = 1; // Position cursor to select "Link text"
+        }
+        break;
     }
     
     const newContent = content.substring(0, start) + before + newText + after + content.substring(end);
@@ -593,48 +471,6 @@ export const BlockEditor = ({
         } else {
           setShowFormattingToolbar(false);
         }
-      }
-    });
-  };
-
-  // Color formatting functions
-  const applyColorFormatting = (color: string, type: 'text' | 'background') => {
-    if (!textareaRef.current) return;
-    
-    const textarea = textareaRef.current;
-    const start = textarea.selectionStart;
-    const end = textarea.selectionEnd;
-    const content = textarea.value;
-    const selectedText = content.substring(start, end);
-    
-    if (!selectedText) return;
-    
-    let before = '';
-    let after = '';
-    
-    if (type === 'text') {
-      before = `<span style="color: ${color}">`;
-      after = '</span>';
-    } else if (type === 'background') {
-      before = `<span style="background-color: ${color}; padding: 2px 4px; border-radius: 3px;">`;
-      after = '</span>';
-    }
-    
-    const newContent = content.substring(0, start) + before + selectedText + after + content.substring(end);
-    
-    // Update content
-    onUpdate({ content: newContent });
-    
-    // Set cursor position and maintain focus
-    requestAnimationFrame(() => {
-      if (textareaRef.current) {
-        const newCursorPos = start + before.length + selectedText.length + after.length;
-        textareaRef.current.focus();
-        textareaRef.current.setSelectionRange(newCursorPos, newCursorPos);
-        adjustTextareaHeight();
-        setShowFormattingToolbar(false);
-        setShowColorPicker(false);
-        setShowHighlightPicker(false);
       }
     });
   };
@@ -1857,8 +1693,6 @@ export const BlockEditor = ({
               style={block.type === 'bullet' || block.type === 'numbered' ? getIndentStyle() : {}}
             >
               <ReactMarkdown
-                remarkPlugins={[remarkGfm]} // Enable GitHub Flavored Markdown (includes strikethrough)
-                rehypePlugins={[rehypeRaw]} // Enable HTML parsing for HTML tags like <u> and <span>
                 components={{
                   // Disable paragraph wrapper for inline content
                   p: ({ children }) => <span>{children}</span>,
@@ -1873,14 +1707,6 @@ export const BlockEditor = ({
                   del: ({ children }) => <del className="line-through text-muted-foreground">{children}</del>,
                   // Support HTML underline tags
                   u: ({ children }) => <u className="underline">{children}</u>,
-                  // Support HTML spans with inline styles for colors
-                  span: ({ children, style, ...props }) => (
-                    <span style={style} {...props}>{children}</span>
-                  ),
-                  // Support HTML mark tags for highlights
-                  mark: ({ children }) => (
-                    <mark className="bg-yellow-200 dark:bg-yellow-800 px-1 rounded">{children}</mark>
-                  ),
                   a: ({ href, children }) => (
                     <a 
                       href={href} 
@@ -1893,6 +1719,9 @@ export const BlockEditor = ({
                     </a>
                   ),
                 }}
+                // Allow HTML tags like <u> for underline
+                rehypePlugins={[]}
+                skipHtml={false}
               >
                 {block.content}
               </ReactMarkdown>
@@ -2020,17 +1849,6 @@ export const BlockEditor = ({
             position={formattingToolbarPosition}
             onFormat={applyFormatting}
             onClose={() => setShowFormattingToolbar(false)}
-            onColorFormat={applyColorFormatting}
-            showColorPicker={showColorPicker}
-            showHighlightPicker={showHighlightPicker}
-            onToggleColorPicker={() => {
-              setShowColorPicker(!showColorPicker);
-              setShowHighlightPicker(false);
-            }}
-            onToggleHighlightPicker={() => {
-              setShowHighlightPicker(!showHighlightPicker);
-              setShowColorPicker(false);
-            }}
           />
         )}
 
