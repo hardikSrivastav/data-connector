@@ -68,6 +68,8 @@ const AI_OPTIONS = [
     section: 'Find, search',
     items: [
       { icon: '?', text: 'Ask a question...', query: 'Ask a question...' },
+      { icon: '🔍', text: 'Query database...', query: 'enhanced:query' },
+      { icon: '🌐', text: 'Cross-database search...', query: 'enhanced:cross-db' },
     ]
   },
   {
@@ -271,6 +273,71 @@ export default function AIQuerySelector({
     }
   };
 
+  const handleEnhancedQuery = async (commandQuery: string) => {
+    console.log('🚀✨ === handleEnhancedQuery START ===');
+    console.log('🚀✨ Command:', commandQuery);
+    
+    try {
+      // Parse the enhanced command
+      if (commandQuery === 'enhanced:query') {
+        // Single database query with tools
+        console.log('🚀✨ Executing single database query with tools');
+        const actualQuery = inputValue.replace('enhanced:query', '').trim() || 'Show me the latest data';
+        
+        const request: CrossDatabaseQueryRequest = {
+          question: actualQuery,
+          analyze: true,
+          cross_database: false,
+          enable_tools: true,
+          user_preferences: {
+            style: 'modern',
+            performance: 'high'
+          }
+        };
+        
+        const result = await enhancedAgentClient.queryWithTools(request);
+        console.log('🚀✨ Enhanced query result:', result);
+        
+        // Handle the result - for now, forward to parent component with special prefix
+        onQuerySubmit(`enhanced_result:${JSON.stringify(result)}`);
+        
+      } else if (commandQuery === 'enhanced:cross-db') {
+        // Cross-database query with tools
+        console.log('🚀✨ Executing cross-database query with tools');
+        const actualQuery = inputValue.replace('enhanced:cross-db', '').trim() || 'Compare data across all databases';
+        
+        const request: CrossDatabaseQueryRequest = {
+          question: actualQuery,
+          analyze: true,
+          cross_database: true,
+          enable_tools: true,
+          preferred_tools: ['chart_block', 'text_block'],
+          user_preferences: {
+            style: 'modern',
+            performance: 'high'
+          }
+        };
+        
+        const result = await enhancedAgentClient.queryWithTools(request);
+        console.log('🚀✨ Enhanced cross-database result:', result);
+        
+        // Handle the result - for now, forward to parent component with special prefix
+        onQuerySubmit(`enhanced_result:${JSON.stringify(result)}`);
+        
+      } else {
+        console.log('🚀✨ Unknown enhanced command, falling back to normal query');
+        onQuerySubmit(commandQuery);
+      }
+      
+    } catch (error) {
+      console.error('🚀✨ Enhanced query failed:', error);
+      // Fallback to normal query
+      onQuerySubmit(inputValue.trim());
+    }
+    
+    console.log('🚀✨ === handleEnhancedQuery END ===');
+  };
+
   const handleSubmit = async () => {
     console.log('🚀 === AIQuerySelector.handleSubmit START ===');
     console.log('🚀 Input query:', `"${inputValue.trim()}"`);
@@ -301,6 +368,14 @@ export default function AIQuerySelector({
       console.log('🚀 ROUTE: Diff mode command detected');
       // Switch to diff mode - this will be handled by parent component
       onQuerySubmit(trimmedQuery);
+      setShowDropdown(false);
+      return;
+    }
+
+    // Check if this is an enhanced query command
+    if (trimmedQuery.startsWith('enhanced:')) {
+      console.log('🚀✨ ROUTE: Enhanced query command detected');
+      await handleEnhancedQuery(trimmedQuery);
       setShowDropdown(false);
       return;
     }
@@ -416,6 +491,14 @@ export default function AIQuerySelector({
         // Switch to diff mode
         onQuerySubmit(optionQuery);
       }
+      setShowDropdown(false);
+      return;
+    }
+
+    // Handle enhanced query options
+    if (optionQuery.startsWith('enhanced:')) {
+      console.log('🚀✨ Enhanced option selected:', optionQuery);
+      await handleEnhancedQuery(optionQuery);
       setShowDropdown(false);
       return;
     }

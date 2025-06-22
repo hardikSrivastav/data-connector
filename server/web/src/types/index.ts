@@ -1,6 +1,6 @@
 export interface Block {
   id: string;
-  type: 'text' | 'heading1' | 'heading2' | 'heading3' | 'bullet' | 'numbered' | 'quote' | 'divider' | 'image' | 'code' | 'subpage' | 'table' | 'toggle' | 'canvas' | 'stats' | 'graphing';
+  type: 'text' | 'heading1' | 'heading2' | 'heading3' | 'bullet' | 'numbered' | 'quote' | 'divider' | 'image' | 'code' | 'subpage' | 'table' | 'toggle' | 'canvas' | 'stats' | 'graphing' | 'chartBlock' | 'canvasAnalysis';
   content: string;
   order: number;
   indentLevel?: number; // For nested lists (0 = no indent, 1 = first level, etc.)
@@ -49,6 +49,38 @@ export interface Block {
     // Simplified canvas properties - just page reference
     canvasPageId?: string;
     threadName?: string;
+    // Chart block properties (MCP-powered)
+    chartData?: {
+      config: any; // Plotly.js configuration
+      metadata: Record<string, any>;
+      generatedAt: string;
+      tool: string;
+    };
+    // Canvas analysis properties (MCP-powered)
+    canvasAnalysisData?: {
+      threadId: string;
+      threadName: string;
+      originalQuery?: string;
+      fullAnalysis?: string;
+      fullData?: {
+        headers: string[];
+        rows: any[][];
+      };
+      sqlQuery?: string;
+      preview?: {
+        summary: string;
+        stats: Array<{ label: string; value: string }>;
+        tablePreview?: {
+          headers: string[];
+          rows: string[][];
+          totalRows: number;
+        };
+        charts?: any[];
+      };
+      reasoningChain?: any;
+      generatedAt: string;
+      tool: string;
+    };
     // Legacy canvas properties (for backward compatibility)
     canvasData?: {
       threadId: string;
@@ -118,6 +150,8 @@ export interface Block {
     // Reasoning chain for query persistence
     reasoningChain?: ReasoningChainData;
   };
+  createdAt: Date;
+  updatedAt: Date;
 }
 
 export interface Page {
