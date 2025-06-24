@@ -3157,7 +3157,6 @@ class BedrockClient(LLMClient):
             aws_config = self.settings.aws_credentials_config
             bedrock_config = self.settings.bedrock_config
             
-            logger.info(f"Initializing Bedrock client with config: {bedrock_config}")
             logger.info(f"AWS credentials config keys: {list(aws_config.keys())}")
             
             # Initialize AWS Bedrock runtime client with explicit credentials

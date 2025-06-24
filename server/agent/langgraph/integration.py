@@ -18,6 +18,11 @@ from .nodes.metadata import MetadataCollectionNode
 from .nodes.planning import PlanningNode
 from .nodes.execution import ExecutionNode
 from .nodes.tool_execution_node import ToolExecutionNode
+# Import new iterative nodes
+from .nodes.classification import DatabaseClassificationNode
+from .nodes.adaptive_metadata import AdaptiveMetadataNode
+from .nodes.iterative_planning import IterativePlanningNode
+from .nodes.execution_monitor import ExecutionMonitorNode
 
 # Import existing components to preserve functionality
 from ..tools.state_manager import StateManager, AnalysisState
@@ -64,6 +69,12 @@ class LangGraphIntegrationOrchestrator:
         
         # Initialize tool execution node for database adapter tools
         self.tool_execution_node = ToolExecutionNode(self.settings)
+        
+        # Initialize new iterative nodes for Phase 1 implementation
+        self.database_classification_node = DatabaseClassificationNode(config)
+        self.adaptive_metadata_node = AdaptiveMetadataNode(config)
+        self.iterative_planning_node = IterativePlanningNode(config)
+        self.execution_monitor_node = ExecutionMonitorNode(config)
         
         # Integration settings
         self.use_langgraph_for_complex = self.config.get("use_langgraph_for_complex", True)
@@ -139,6 +150,16 @@ class LangGraphIntegrationOrchestrator:
                     stream_callback
                 )
                 self.execution_stats["langgraph_executions"] += 1
+                
+            elif routing_decision["method"] == "iterative":
+                result = await self._execute_iterative_workflow(
+                    question,
+                    session_id,
+                    databases_available,
+                    routing_decision,
+                    stream_callback
+                )
+                self.execution_stats["langgraph_executions"] += 1  # Count as LangGraph execution
                 
             else:  # hybrid
                 result = await self._execute_hybrid_workflow(
@@ -234,10 +255,18 @@ class LangGraphIntegrationOrchestrator:
             
             if complexity >= 8 or parallelization == "high":
                 return {
+                    "method": "iterative",
+                    "complexity": complexity,
+                    "reason": "High complexity benefits from iterative approach with dynamic refinement",
+                    "confidence": 0.9
+                }
+            
+            if complexity >= 6:
+                return {
                     "method": "langgraph",
                     "complexity": complexity,
-                    "reason": "High complexity requires advanced orchestration",
-                    "confidence": 0.9
+                    "reason": "Medium-high complexity requires advanced orchestration",
+                    "confidence": 0.8
                 }
             
             # Medium complexity - use hybrid approach
@@ -724,3 +753,70 @@ class LangGraphIntegrationOrchestrator:
                 "error": str(e),
                 "recommendation": "Fix integration issues before considering migration"
             } 
+    
+    async def _execute_iterative_workflow(
+        self,
+        question: str,
+        session_id: str,
+        databases_available: List[str],
+        routing_decision: Dict[str, Any],
+        stream_callback: Optional[AsyncIterator] = None
+    ) -> Dict[str, Any]:
+        """
+        Execute using iterative LangGraph workflow with dynamic refinement.
+        Phase 1 implementation with foundation for future iterations.
+        """
+        logger.info("Executing iterative LangGraph workflow (Phase 1)")
+        
+        try:
+            # Use the graph builder to build an iterative workflow graph
+            graph_result = await self.graph_builder.build_optimal_graph(
+                question,
+                databases_available or [],
+                context={
+                    "routing_decision": routing_decision,
+                    "workflow_type": "iterative",
+                    "iterative_features": True
+                },
+                performance_requirements={"optimization_target": "iterative_refinement"}
+            )
+            
+            if "error" in graph_result:
+                logger.error(f"Iterative graph building failed: {graph_result['error']}")
+                return {"error": graph_result["error"], "workflow": "iterative"}
+            
+            # Execute the iterative graph
+            executable_graph = graph_result["executable_graph"]
+            execution_result = await executable_graph(session_id)
+            
+            # Format the result for iterative workflow
+            final_result = {
+                "workflow": "iterative",
+                "phase": "phase_1_foundation",
+                "graph_specification": graph_result["graph_specification"],
+                "execution_result": execution_result,
+                "final_result": execution_result.get("final_state", {}),
+                "node_results": execution_result.get("node_results", {}),
+                "iterative_capabilities": {
+                    "classification_refinement": True,
+                    "adaptive_metadata": True,
+                    "dynamic_planning": True,
+                    "execution_monitoring": True,
+                    "feedback_collection": True,
+                    "future_phase_ready": True
+                },
+                "iterative_metadata": {
+                    "complexity": routing_decision.get("complexity", 8),
+                    "refinement_iterations": 1,  # Phase 1 uses single iteration
+                    "confidence_threshold": 0.8,
+                    "template_used": graph_result.get("graph_specification", {}).get("template_name", "iterative_workflow")
+                }
+            }
+            
+            logger.info(f"Iterative workflow Phase 1 complete with graph template: {final_result['iterative_metadata']['template_used']}")
+            
+            return final_result
+            
+        except Exception as e:
+            logger.error(f"Iterative workflow failed: {e}")
+            return {"error": str(e), "workflow": "iterative", "phase": "phase_1_error"} 

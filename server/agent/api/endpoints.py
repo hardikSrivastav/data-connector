@@ -22,7 +22,7 @@ from ..meta.ingest import SchemaSearcher, ensure_index_exists, build_and_save_in
 from ..performance.schema_monitor import ensure_schema_index_updated
 
 # Import the enhanced cross-database query engine
-from ..db.execute import query_engine, process_ai_query
+from ..db.execute import get_query_engine, process_ai_query
 
 # Import cross-database components
 from ..db.classifier import DatabaseClassifier
@@ -460,7 +460,7 @@ async def cross_database_query(request: CrossDatabaseQueryRequest, http_request:
         else:
             cross_db_logger.info("Executing cross-database query")
             # Execute the cross-database query
-            result = await query_engine.execute_cross_database_query(
+            result = await get_query_engine().execute_cross_database_query(
                 request.question,
                 analyze=request.analyze,
                 optimize=request.optimize,
@@ -519,7 +519,7 @@ async def classify_query(request: ClassifyRequest):
     
     try:
         # Use the query engine's classification
-        classification = await query_engine.classify_query(request.question)
+        classification = await get_query_engine().classify_query(request.question)
         
         response = ClassifyResponse(
             question=classification.get("question", request.question),
@@ -1051,7 +1051,7 @@ async def get_metadata():
             "schema_elements": len(schema_metadata),
             "tables": list(set(item.get("table_name", "") for item in schema_metadata if item.get("table_name"))),
             "cross_database_enabled": True,
-            "available_sources": len(query_engine.classifier.get_available_sources() if hasattr(query_engine.classifier, 'get_available_sources') else [])
+            "available_sources": len(get_query_engine().classifier.get_available_sources() if hasattr(get_query_engine().classifier, 'get_available_sources') else [])
         }
         
         logger.info(f"📤 Returning metadata for {len(schema_metadata)} schema elements")
@@ -1142,7 +1142,7 @@ async def process_ai_query_stream(
         yield create_stream_event("classifying", session_id, message="Determining relevant databases...")
         
         # Get classification from query engine
-        classification = await query_engine.classify_query(question)
+        classification = await get_query_engine().classify_query(question)
         
         databases = classification.get("sources", [])
         database_names = [db.get("name", db.get("id", "unknown")) for db in databases]
@@ -1292,7 +1292,7 @@ async def execute_cross_database_query_stream(
         yield create_stream_event("schema_loading", session_id, database="mongodb", progress=0.6)
         
         # Execute the actual cross-database query
-        result = await query_engine.execute_cross_database_query(
+        result = await get_query_engine().execute_cross_database_query(
             question,
             analyze=analyze
         )
@@ -1520,7 +1520,7 @@ async def classify_query_stream(request: ClassifyRequest):
             yield create_stream_event("classifying", session_id, message="Matching against database schemas...")
             
             # Perform actual classification
-            classification = await query_engine.classify_query(request.question)
+            classification = await get_query_engine().classify_query(request.question)
             
             yield create_stream_event(
                 "databases_selected",

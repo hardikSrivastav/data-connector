@@ -81,7 +81,7 @@ class PlanningAgent:
         self.session_id = str(uuid.uuid4())
         
         # LangGraph integration
-        self.langgraph_enabled = self.config.get("langgraph_enabled", False) and LANGGRAPH_AVAILABLE
+        self.langgraph_enabled = self.config.get("langgraph_enabled", True) and LANGGRAPH_AVAILABLE
         self.bedrock_client = None
         
         if self.langgraph_enabled:
@@ -90,6 +90,8 @@ class PlanningAgent:
         else:
             if not LANGGRAPH_AVAILABLE:
                 logger.info("LangGraph not available, using traditional planning only")
+            else:
+                logger.info("LangGraph available but disabled by config, using traditional planning only")
     
     def _clean_json_response(self, response: str) -> str:
         """

@@ -144,7 +144,6 @@ class BedrockLangGraphClient:
                 aws_config = settings.aws_credentials_config
                 bedrock_config = settings.bedrock_config
                 
-                logger.info(f"Initializing Bedrock with config: {bedrock_config}")
                 logger.info(f"AWS credentials config keys: {list(aws_config.keys())}")
                 
                 # Initialize AWS Bedrock runtime client with explicit credentials

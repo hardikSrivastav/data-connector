@@ -16,6 +16,10 @@ from ..streaming import StreamingGraphCoordinator
 from ..nodes.metadata import MetadataCollectionNode
 from ..nodes.planning import PlanningNode
 from ..nodes.execution import ExecutionNode
+from ..nodes.classification import DatabaseClassificationNode
+from ..nodes.adaptive_metadata import AdaptiveMetadataNode
+from ..nodes.iterative_planning import IterativePlanningNode
+from ..nodes.execution_monitor import ExecutionMonitorNode
 from .bedrock_client import BedrockLangGraphClient
 
 logger = logging.getLogger(__name__)
@@ -30,6 +34,7 @@ class DatabaseDrivenGraphBuilder:
     - Adaptive parallelism and resource allocation
     - Streaming integration for real-time progress
     - Error recovery and circuit breaker patterns
+    - Iterative workflow support with dynamic refinement
     """
     
     def __init__(self, config: Optional[Dict[str, Any]] = None):
@@ -58,10 +63,18 @@ class DatabaseDrivenGraphBuilder:
         self.performance_cache = {}
         self.graph_templates = {}
         
+        # Initialize iterative nodes
+        self.iterative_nodes = {
+            "classification": DatabaseClassificationNode(config),
+            "adaptive_metadata": AdaptiveMetadataNode(config),
+            "iterative_planning": IterativePlanningNode(config),
+            "execution_monitor": ExecutionMonitorNode(config)
+        }
+        
         # Initialize graph templates
         self._initialize_graph_templates()
         
-        logger.info("Initialized DatabaseDrivenGraphBuilder with LangGraph integration")
+        logger.info("Initialized DatabaseDrivenGraphBuilder with LangGraph integration and iterative capabilities")
     
     def _create_mock_llm_client(self):
         """Create a mock LLM client for testing purposes."""
@@ -137,6 +150,63 @@ class DatabaseDrivenGraphBuilder:
             "complexity": 8,
             "estimated_time": 30
         }
+        
+        # NEW: Iterative workflow template - Phase 1
+        self.graph_templates["iterative_workflow"] = {
+            "nodes": [
+                {"id": "classification", "type": "database_classification"},
+                {"id": "adaptive_metadata", "type": "adaptive_metadata"},
+                {"id": "iterative_planning", "type": "iterative_planning"},
+                {"id": "execution_monitor", "type": "execution_monitor"}
+            ],
+            "edges": [
+                {"from": "classification", "to": "adaptive_metadata"},
+                {"from": "adaptive_metadata", "to": "iterative_planning"},
+                {"from": "iterative_planning", "to": "execution_monitor"}
+            ],
+            "complexity": 9,
+            "estimated_time": 60,
+            "iterative_features": {
+                "dynamic_classification": True,
+                "adaptive_metadata": True,
+                "iterative_planning": True,
+                "execution_feedback": True,
+                "phase": "phase_1_foundation"
+            }
+        }
+        
+        # Advanced iterative with execution feedback (future phases)
+        self.graph_templates["advanced_iterative"] = {
+            "nodes": [
+                {"id": "classification", "type": "database_classification"},
+                {"id": "adaptive_metadata", "type": "adaptive_metadata"},
+                {"id": "iterative_planning", "type": "iterative_planning"},
+                {"id": "execution", "type": "execution"},
+                {"id": "execution_monitor", "type": "execution_monitor"},
+                {"id": "feedback_refinement", "type": "feedback_refinement"}
+            ],
+            "edges": [
+                {"from": "classification", "to": "adaptive_metadata"},
+                {"from": "adaptive_metadata", "to": "iterative_planning"},
+                {"from": "iterative_planning", "to": "execution"},
+                {"from": "execution", "to": "execution_monitor"},
+                {"from": "execution_monitor", "to": "feedback_refinement"},
+                # Feedback loops for future phases
+                {"from": "feedback_refinement", "to": "classification", "condition": "needs_reclassification"},
+                {"from": "feedback_refinement", "to": "adaptive_metadata", "condition": "needs_metadata_refinement"},
+                {"from": "feedback_refinement", "to": "iterative_planning", "condition": "needs_replanning"}
+            ],
+            "complexity": 12,
+            "estimated_time": 90,
+            "iterative_features": {
+                "dynamic_classification": True,
+                "adaptive_metadata": True,
+                "iterative_planning": True,
+                "execution_feedback": True,
+                "feedback_loops": True,
+                "phase": "future_implementation"
+            }
+        }
     
     async def build_optimal_graph(
         self,
@@ -181,10 +251,20 @@ class DatabaseDrivenGraphBuilder:
             # Step 3: Optimize graph for performance
             if self.enable_optimization:
                 optimized_spec = await self._optimize_graph(graph_spec, requirements, performance_requirements)
-                graph_spec = optimized_spec
+                # Validate optimized spec has required keys
+                if isinstance(optimized_spec, dict) and "nodes" in optimized_spec:
+                    graph_spec = optimized_spec
+                    logger.info("Applied optimization to graph")
+                else:
+                    logger.warning("Optimization returned invalid spec, keeping original")
             
             # Step 4: Add streaming and monitoring capabilities
             enhanced_spec = self._enhance_with_streaming(graph_spec)
+            
+            # Validate enhanced spec has required structure
+            if not isinstance(enhanced_spec, dict) or "nodes" not in enhanced_spec:
+                logger.error(f"Enhanced spec is invalid: {enhanced_spec}")
+                raise ValueError("Enhanced graph specification is missing required 'nodes' key")
             
             # Step 5: Create executable graph
             executable_graph = await self._create_executable_graph(enhanced_spec, question)
@@ -270,18 +350,22 @@ class DatabaseDrivenGraphBuilder:
             
             if "error" in analysis:
                 # Fallback to rule-based analysis
-                return self._fallback_requirements_analysis(question, available_databases)
+                return self._fallback_requirements_analysis(question, available_databases, context)
             
-            return analysis.get("requirements", analysis)
+            # Include context in the requirements
+            requirements = analysis.get("requirements", analysis)
+            requirements["context"] = context
+            return requirements
             
         except Exception as e:
             logger.warning(f"LLM analysis failed, using fallback: {e}")
-            return self._fallback_requirements_analysis(question, available_databases)
+            return self._fallback_requirements_analysis(question, available_databases, context)
     
     def _fallback_requirements_analysis(
         self,
         question: str,
-        available_databases: List[str]
+        available_databases: List[str],
+        context: Dict[str, Any]
     ) -> Dict[str, Any]:
         """Fallback rule-based requirements analysis."""
         complexity = 3  # Default medium complexity
@@ -307,7 +391,8 @@ class DatabaseDrivenGraphBuilder:
             "cross_database_needed": len(available_databases) > 1,
             "estimated_time": complexity * 5,
             "resource_intensity": "medium" if complexity > 5 else "low",
-            "special_requirements": []
+            "special_requirements": [],
+            "context": context
         }
     
     def _should_use_template(self, requirements: Dict[str, Any]) -> bool:
@@ -324,7 +409,13 @@ class DatabaseDrivenGraphBuilder:
         parallelization = requirements.get("parallelization_level", "low")
         cross_database = requirements.get("cross_database_needed", False)
         
-        if complexity <= 3 and not cross_database:
+        # Check for iterative workflow request in context
+        context = requirements.get("context", {})
+        if context.get("workflow_type") == "iterative" or context.get("iterative_features"):
+            template = self.graph_templates["iterative_workflow"].copy()
+            template["template_name"] = "iterative_workflow"
+            logger.info("Selected iterative workflow template")
+        elif complexity <= 3 and not cross_database:
             template = self.graph_templates["simple_query"].copy()
             template["template_name"] = "simple_query"
         elif parallelization == "high":
@@ -413,8 +504,12 @@ class DatabaseDrivenGraphBuilder:
                 }
             )
             
-            if "error" not in optimized:
+            # Check if optimization returned valid graph structure
+            if isinstance(optimized, dict) and "nodes" in optimized and "error" not in optimized:
+                logger.info("LLM optimization successful, using optimized graph")
                 return optimized
+            else:
+                logger.warning(f"LLM optimization returned invalid structure: {type(optimized)}, using fallback")
             
         except Exception as e:
             logger.warning(f"LLM optimization failed: {e}")

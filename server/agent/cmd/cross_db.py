@@ -817,6 +817,92 @@ def langgraph(
                     else:
                         console.print("[yellow]No results to display[/yellow]")
             
+            elif workflow == "iterative":
+                # NEW: Iterative workflow results (Phase 1)
+                console.print(f"\n[bold cyan]🔄 Iterative Workflow Results (Phase 1):[/bold cyan]")
+                
+                # Display phase information
+                phase = result.get("phase", "unknown")
+                console.print(f"Phase: [green]{phase}[/green]")
+                
+                # Display iterative capabilities
+                iterative_capabilities = result.get("iterative_capabilities", {})
+                if verbose and iterative_capabilities:
+                    console.print(f"\n[bold]Iterative Capabilities:[/bold]")
+                    for capability, enabled in iterative_capabilities.items():
+                        status = "✅" if enabled else "❌"
+                        console.print(f"{status} {capability.replace('_', ' ').title()}")
+                
+                # Display classification results
+                classification = result.get("classification", {})
+                if classification:
+                    console.print(f"\n[bold]🔍 Database Classification:[/bold]")
+                    databases = classification.get("databases_identified", [])
+                    confidence = classification.get("confidence", 0.0)
+                    console.print(f"Databases: [cyan]{', '.join(databases)}[/cyan]")
+                    console.print(f"Confidence: [{'green' if confidence >= 0.8 else 'yellow' if confidence >= 0.6 else 'red'}]{confidence:.2f}[/{'green' if confidence >= 0.8 else 'yellow' if confidence >= 0.6 else 'red'}]")
+                    
+                    if verbose:
+                        iterative_features = classification.get("iterative_features", {})
+                        if iterative_features:
+                            console.print(f"Classification Features: {list(iterative_features.keys())}")
+                
+                # Display metadata results
+                metadata = result.get("metadata", {})
+                if metadata:
+                    console.print(f"\n[bold]📊 Adaptive Metadata Collection:[/bold]")
+                    schemas = metadata.get("schemas", {})
+                    confidence = metadata.get("confidence", 0.0)
+                    strategy = metadata.get("collection_strategy", {}).get("strategy_type", "unknown")
+                    console.print(f"Schemas collected: [cyan]{len(schemas)}[/cyan]")
+                    console.print(f"Collection strategy: [yellow]{strategy}[/yellow]")
+                    console.print(f"Confidence: [{'green' if confidence >= 0.8 else 'yellow' if confidence >= 0.6 else 'red'}]{confidence:.2f}[/{'green' if confidence >= 0.8 else 'yellow' if confidence >= 0.6 else 'red'}]")
+                
+                # Display planning results
+                planning = result.get("planning", {})
+                if planning:
+                    console.print(f"\n[bold]📋 Iterative Planning:[/bold]")
+                    plan = planning.get("execution_plan", {})
+                    confidence = planning.get("confidence", 0.0)
+                    steps = len(plan.get("steps", []))
+                    console.print(f"Plan steps: [cyan]{steps}[/cyan]")
+                    console.print(f"Confidence: [{'green' if confidence >= 0.8 else 'yellow' if confidence >= 0.6 else 'red'}]{confidence:.2f}[/{'green' if confidence >= 0.8 else 'yellow' if confidence >= 0.6 else 'red'}]")
+                    
+                    if verbose:
+                        iterative_features = planning.get("iterative_features", {})
+                        if iterative_features:
+                            console.print(f"Planning Features: {list(iterative_features.keys())}")
+                
+                # Display monitoring results
+                monitoring = result.get("monitoring", {})
+                if monitoring:
+                    console.print(f"\n[bold]📈 Execution Monitoring:[/bold]")
+                    metrics = monitoring.get("metrics", {})
+                    feedback = monitoring.get("feedback", {})
+                    recommendations = monitoring.get("recommendations", [])
+                    
+                    if metrics:
+                        console.print(f"Performance metrics collected: [cyan]{len(metrics)}[/cyan]")
+                    
+                    if recommendations:
+                        console.print(f"Improvement recommendations: [yellow]{len(recommendations)}[/yellow]")
+                        
+                        if verbose:
+                            console.print(f"\n[bold]Recommendations:[/bold]")
+                            for i, rec in enumerate(recommendations[:3], 1):  # Show first 3
+                                area = rec.get("area", "unknown")
+                                priority = rec.get("priority", "medium")
+                                suggestion = rec.get("suggestion", "No suggestion")
+                                priority_color = "red" if priority == "high" else "yellow" if priority == "medium" else "green"
+                                console.print(f"{i}. [{priority_color}]{priority.upper()}[/{priority_color}] {area}: {suggestion}")
+                            
+                            if len(recommendations) > 3:
+                                console.print(f"   ... and {len(recommendations) - 3} more recommendations")
+                
+                # Show that this is Phase 1 foundation
+                console.print(f"\n[dim]Phase 1 Foundation: Classification, Metadata, Planning, and Monitoring complete[/dim]")
+                console.print(f"[dim]Future phases will implement execution feedback loops and dynamic refinement[/dim]")
+            
             # Show performance statistics if available
             if verbose:
                 integration_status = orchestrator.get_integration_status()
@@ -878,6 +964,179 @@ def langgraph_short(
     """Execute a query using LangGraph orchestration (short alias for 'langgraph')"""
     # Call the main langgraph function with the same parameters
     langgraph(question, force_langgraph, show_routing, verbose, save_session, stream_output)
+
+@app.command("iterative")
+def iterative_workflow(
+    question: str = typer.Argument(..., help="Natural language question to execute using iterative LangGraph workflow"),
+    verbose: bool = typer.Option(False, "--verbose", "-v", help="Show detailed execution information"),
+    save_session: bool = typer.Option(True, "--save-session/--no-save", help="Save session to disk"),
+    show_progress: bool = typer.Option(True, "--progress/--no-progress", help="Show progress indicators")
+):
+    """Execute a query using the new iterative LangGraph workflow (Phase 1)"""
+    async def run():
+        # Initialize LangGraph integration orchestrator with iterative configuration
+        config = {
+            "use_langgraph_for_complex": True,
+            "complexity_threshold": 1,  # Low threshold to force iterative workflow
+            "preserve_trivial_routing": False,
+            "force_iterative": True,  # Force iterative workflow
+            "iterative_config": {
+                "enable_refinement": True,
+                "confidence_threshold": 0.7,
+                "enable_adaptive_metadata": True,
+                "enable_iterative_planning": True,
+                "enable_execution_monitoring": True
+            },
+            "llm_config": {
+                "primary_provider": "bedrock",
+                "fallbacks": ["anthropic", "openai"]
+            }
+        }
+        
+        orchestrator = LangGraphIntegrationOrchestrator(config)
+        
+        # Create session for tracking
+        session_id = str(uuid.uuid4())
+        
+        console.print(f"🔄 [bold blue]Iterative LangGraph Workflow (Phase 1)[/bold blue]")
+        console.print(f"Question: [italic]{question}[/italic]")
+        console.print(f"Session ID: [dim]{session_id[:8]}...[/dim]")
+        console.print()
+        
+        try:
+            # Execute query with iterative workflow
+            if show_progress:
+                with Progress(
+                    SpinnerColumn(),
+                    TextColumn("[bold blue]Processing with iterative workflow..."),
+                    transient=not verbose,
+                ) as progress:
+                    task = progress.add_task("Executing iterative workflow...", total=None)
+                    
+                    # Force iterative workflow execution
+                    result = await orchestrator.process_query(
+                        question=question,
+                        session_id=session_id,
+                        databases_available=None,  # Let it auto-detect
+                        force_langgraph=True  # Force LangGraph usage
+                    )
+                    
+                    progress.update(task, completed=True)
+            else:
+                result = await orchestrator.process_query(
+                    question=question,
+                    session_id=session_id,
+                    databases_available=None,
+                    force_langgraph=True
+                )
+            
+            # Display execution results
+            if "error" in result:
+                console.print(f"\n[bold red]❌ Iterative Workflow Failed[/bold red]")
+                console.print(f"Error: {result['error']}")
+                
+                if verbose and "execution_metadata" in result:
+                    error_details = result["execution_metadata"].get("error_details")
+                    if error_details:
+                        console.print(f"Details: {error_details}")
+                
+                return
+            
+            # Success - display iterative workflow results
+            workflow = result.get("workflow", "unknown")
+            console.print(f"\n[bold green]✅ Iterative Workflow Successful[/bold green] ({workflow})")
+            
+            # Display execution summary
+            execution_metadata = result.get("execution_metadata", {})
+            execution_time = execution_metadata.get("execution_time", 0)
+            console.print(f"Total execution time: {execution_time:.2f} seconds")
+            
+            # Display iterative workflow specific results
+            if workflow == "iterative":
+                # Display detailed iterative results using the new display logic
+                phase = result.get("phase", "phase_1")
+                console.print(f"\n[bold cyan]🔄 Iterative Workflow Results:[/bold cyan]")
+                console.print(f"Phase: [green]{phase}[/green]")
+                
+                # Show node execution summary
+                node_results = result.get("node_results", {})
+                if node_results:
+                    console.print(f"\n[bold]Node Execution Summary:[/bold]")
+                    for node_id, node_result in node_results.items():
+                        status = "✅" if "error" not in node_result else "❌"
+                        duration = node_result.get("duration", 0)
+                        console.print(f"{status} {node_id}: {duration:.2f}s")
+                        
+                        if verbose and "error" in node_result:
+                            console.print(f"   Error: {node_result['error']}")
+                
+                # Display iterative capabilities demonstrated
+                iterative_capabilities = result.get("iterative_capabilities", {})
+                if iterative_capabilities:
+                    console.print(f"\n[bold]Iterative Capabilities Demonstrated:[/bold]")
+                    for capability, enabled in iterative_capabilities.items():
+                        status = "✅" if enabled else "❌"
+                        console.print(f"{status} {capability.replace('_', ' ').title()}")
+                
+                # Show foundation readiness for future phases
+                console.print(f"\n[bold green]🏗️ Foundation Status:[/bold green]")
+                console.print("✅ Database Classification with confidence analysis")
+                console.print("✅ Adaptive Metadata Collection strategies")
+                console.print("✅ Iterative Planning with refinement capabilities")
+                console.print("✅ Execution Monitoring with feedback generation")
+                console.print()
+                console.print("[dim]Ready for Phase 2: Execution feedback loops and dynamic refinement[/dim]")
+            
+            else:
+                # Fallback to standard workflow display
+                console.print(f"[yellow]Note: Expected iterative workflow but got '{workflow}'[/yellow]")
+                console.print("This might indicate the workflow routing didn't select iterative mode.")
+                
+                # Show basic results
+                final_result = result.get("final_result", {})
+                if "formatted_result" in final_result:
+                    console.print(f"\n[bold]Results:[/bold]")
+                    console.print(Panel(Markdown(final_result["formatted_result"])))
+            
+            # Save session if requested
+            if save_session:
+                state_manager = StateManager()
+                session_state = AnalysisState(
+                    session_id=session_id,
+                    user_question=question
+                )
+                
+                # Add iterative execution metadata
+                session_state.add_insight("execution", "Iterative LangGraph execution", {
+                    "iterative_execution": True,
+                    "workflow_type": workflow,
+                    "phase": result.get("phase", "phase_1"),
+                    "execution_time": execution_time,
+                    "iterative_capabilities": result.get("iterative_capabilities", {}),
+                    "node_results": {k: v.get("duration", 0) for k, v in node_results.items()}
+                })
+                
+                # Set final result
+                if "final_result" in result:
+                    session_state.set_final_result(
+                        result["final_result"],
+                        result.get("final_result", {}).get("formatted_result", str(result.get("final_result", {})))
+                    )
+                
+                await state_manager.update_state(session_state)
+                console.print(f"\n[dim]Session saved with ID: {session_id}[/dim]")
+                console.print(f"[dim]Use 'cross_db show-session {session_id}' to view details[/dim]")
+        
+        except Exception as e:
+            console.print(f"\n[bold red]❌ Iterative Workflow Failed[/bold red]")
+            console.print(f"Error: {str(e)}")
+            
+            if verbose:
+                import traceback
+                console.print(f"\n[dim]Full traceback:[/dim]")
+                console.print(traceback.format_exc())
+    
+    asyncio.run(run())
 
 if __name__ == "__main__":
     app() 
