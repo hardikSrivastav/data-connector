@@ -272,6 +272,9 @@ class QdrantAdapter(DBAdapter):
         Returns:
             List of dictionaries with search results
         """
+        # Convert query format if needed (handles string queries from LangGraph)
+        query = await self._convert_query_format(query)
+        
         if not isinstance(query, dict):
             raise ValueError("Query must be a dictionary with 'vector' and other fields")
             
@@ -331,6 +334,55 @@ class QdrantAdapter(DBAdapter):
             List of dictionaries with search results
         """
         return await self.execute(query)
+    
+    async def _convert_query_format(self, query: Any) -> Dict:
+        """
+        Convert different query formats to Qdrant-compatible format.
+        Handles string queries from LangGraph by converting them to vector search format.
+        
+        Args:
+            query: Query in various formats (string, dict)
+            
+        Returns:
+            Dict in Qdrant format
+        """
+        if isinstance(query, dict):
+            # Already in proper format, return as-is
+            return query
+        
+        elif isinstance(query, str):
+            # Convert string query to vector search
+            logger.info(f"🔍 Qdrant Query Conversion: Converting string query to vector search")
+            
+            try:
+                # Generate embedding for the string query
+                vector = await self.embedding_provider.get_embedding(query)
+                
+                # Create Qdrant search query
+                qdrant_query = {
+                    "vector": vector,
+                    "top_k": 10,  # Default limit
+                    "collection": self.collection_name
+                }
+                
+                logger.info(f"🔍 Qdrant Query Conversion: \"{query}\" → vector search with {len(vector)} dimensions")
+                return qdrant_query
+                
+            except Exception as e:
+                logger.error(f"Error converting string query to vector: {e}")
+                # Fallback to a basic query structure
+                return {
+                    "error": f"Failed to convert query to vector: {str(e)}",
+                    "original_query": query
+                }
+        
+        else:
+            # Unknown format, try to handle gracefully
+            logger.warning(f"Unknown query format: {type(query)}")
+            return {
+                "error": f"Unsupported query format: {type(query)}",
+                "original_query": str(query)
+            }
     
     def _parse_filter(self, filter_json: Dict) -> Filter:
         """
@@ -638,4 +690,271 @@ class QdrantAdapter(DBAdapter):
             return True
         except Exception as e:
             logger.error(f"Qdrant connection test failed: {e}")
-            return False 
+            return False
+    
+    # Additional Qdrant-specific tools for the registry
+    
+    async def analyze_collection_performance(self, collection_name: str = None) -> Dict[str, Any]:
+        """
+        Analyze Qdrant collection performance and index configuration.
+        
+        Args:
+            collection_name: Name of the collection to analyze
+            
+        Returns:
+            Performance analysis results
+        """
+        collection = collection_name or self.collection_name
+        logger.info(f"Analyzing performance for Qdrant collection: {collection}")
+        
+        try:
+            # Get collection info
+            collection_info = self.client.get_collection(collection_name=collection)
+            
+            # Get collection statistics  
+            try:
+                cluster_info = self.client.cluster_info()
+            except:
+                cluster_info = None
+            
+            analysis = {
+                "collection_name": collection,
+                "vectors_count": collection_info.vectors_count if hasattr(collection_info, 'vectors_count') else 0,
+                "indexed_vectors_count": collection_info.indexed_vectors_count if hasattr(collection_info, 'indexed_vectors_count') else 0,
+                "points_count": collection_info.points_count if hasattr(collection_info, 'points_count') else 0,
+                "segments_count": collection_info.segments_count if hasattr(collection_info, 'segments_count') else 0,
+                "disk_data_size": collection_info.disk_data_size if hasattr(collection_info, 'disk_data_size') else 0,
+                "ram_data_size": collection_info.ram_data_size if hasattr(collection_info, 'ram_data_size') else 0,
+                "config": collection_info.config.__dict__ if hasattr(collection_info, 'config') else {},
+                "indexing_threshold": collection_info.config.optimizers_config.indexing_threshold if hasattr(collection_info, 'config') and hasattr(collection_info.config, 'optimizers_config') else 0,
+                "cluster_info": cluster_info.__dict__ if cluster_info else {},
+                "performance_recommendations": self._generate_qdrant_performance_recommendations(collection_info)
+            }
+            
+            logger.info(f"Qdrant performance analysis completed for {collection}: {analysis['points_count']} points")
+            return analysis
+            
+        except Exception as e:
+            logger.error(f"Failed to analyze Qdrant collection performance: {e}")
+            raise
+    
+    def _generate_qdrant_performance_recommendations(self, collection_info) -> List[str]:
+        """Generate performance recommendations for Qdrant collection."""
+        recommendations = []
+        
+        try:
+            if hasattr(collection_info, 'points_count') and hasattr(collection_info, 'indexed_vectors_count'):
+                points_count = collection_info.points_count
+                indexed_count = collection_info.indexed_vectors_count
+                
+                # Check indexing ratio
+                if points_count > 0:
+                    indexing_ratio = indexed_count / points_count
+                    if indexing_ratio < 0.8 and points_count > 1000:
+                        recommendations.append("Low indexing ratio detected, consider running optimization")
+                
+                # Check for large unindexed collections
+                if points_count > 10000 and indexed_count < points_count * 0.5:
+                    recommendations.append("Large collection with many unindexed vectors, optimize indexing")
+            
+            if hasattr(collection_info, 'config') and hasattr(collection_info.config, 'optimizers_config'):
+                threshold = collection_info.config.optimizers_config.indexing_threshold
+                if threshold > 50000:
+                    recommendations.append("High indexing threshold may delay optimization, consider lowering")
+            
+            # Check memory usage
+            if hasattr(collection_info, 'ram_data_size') and hasattr(collection_info, 'disk_data_size'):
+                ram_size = collection_info.ram_data_size
+                disk_size = collection_info.disk_data_size
+                if ram_size > 0 and disk_size > 0:
+                    ram_ratio = ram_size / (ram_size + disk_size)
+                    if ram_ratio < 0.1:
+                        recommendations.append("Low RAM usage ratio, consider increasing memory allocation")
+            
+        except Exception as e:
+            logger.warning(f"Failed to generate Qdrant recommendations: {e}")
+        
+        return recommendations
+    
+    async def optimize_collection(self, collection_name: str = None) -> Dict[str, Any]:
+        """
+        Optimize Qdrant collection performance.
+        
+        Args:
+            collection_name: Name of the collection to optimize
+            
+        Returns:
+            Optimization results
+        """
+        collection = collection_name or self.collection_name
+        logger.info(f"Optimizing Qdrant collection: {collection}")
+        
+        try:
+            optimization_results = {
+                "collection_name": collection,
+                "operations_performed": [],
+                "before_stats": {},
+                "after_stats": {},
+                "recommendations": []
+            }
+            
+            # Get before statistics
+            optimization_results["before_stats"] = await self.analyze_collection_performance(collection)
+            
+            # Run collection optimization
+            try:
+                from qdrant_client.models import OptimizersConfig
+                optimize_result = self.client.update_collection(
+                    collection_name=collection,
+                    optimizer_config=OptimizersConfig(
+                        deleted_threshold=0.1,  # Trigger optimization when 10% of vectors are deleted
+                        vacuum_min_vector_number=1000,
+                        default_segment_number=2
+                    )
+                )
+                optimization_results["operations_performed"].append("update_optimizer_config")
+                logger.info(f"Optimizer config updated for {collection}")
+            except Exception as e:
+                logger.warning(f"Failed to update optimizer config: {e}")
+            
+            # Get after statistics
+            optimization_results["after_stats"] = await self.analyze_collection_performance(collection)
+            
+            # Generate recommendations
+            optimization_results["recommendations"] = await self._generate_collection_recommendations(collection)
+            
+            logger.info(f"Qdrant collection optimization completed for {collection}")
+            return optimization_results
+            
+        except Exception as e:
+            logger.error(f"Failed to optimize Qdrant collection {collection}: {e}")
+            raise
+    
+    async def _generate_collection_recommendations(self, collection_name: str) -> List[str]:
+        """Generate optimization recommendations for a Qdrant collection."""
+        recommendations = []
+        
+        try:
+            analysis = await self.analyze_collection_performance(collection_name)
+            
+            # Check vector count vs segments
+            points_count = analysis.get("points_count", 0)
+            segments_count = analysis.get("segments_count", 0)
+            
+            if segments_count > 0:
+                points_per_segment = points_count / segments_count
+                if points_per_segment < 1000:
+                    recommendations.append("Too many segments for collection size, consider increasing segment size")
+                elif points_per_segment > 100000:
+                    recommendations.append("Large segments detected, consider splitting for better performance")
+            
+            # Check memory usage
+            ram_size = analysis.get("ram_data_size", 0)
+            disk_size = analysis.get("disk_data_size", 0)
+            if ram_size + disk_size > 0:
+                total_size_gb = (ram_size + disk_size) / (1024**3)
+                if total_size_gb > 10:
+                    recommendations.append("Large collection detected, consider sharding across multiple nodes")
+            
+        except Exception as e:
+            logger.warning(f"Failed to generate recommendations for {collection_name}: {e}")
+        
+        return recommendations
+    
+    async def validate_vector_compatibility(self, vector: List[float], collection_name: str = None) -> Dict[str, Any]:
+        """
+        Validate that a vector is compatible with the collection configuration.
+        
+        Args:
+            vector: Vector to validate
+            collection_name: Name of the collection
+            
+        Returns:
+            Validation results
+        """
+        collection = collection_name or self.collection_name
+        logger.info(f"Validating vector compatibility for collection: {collection}")
+        logger.debug(f"Vector dimensions: {len(vector)}")
+        
+        try:
+            # Get collection info
+            collection_info = self.client.get_collection(collection_name=collection)
+            
+            # Check vector dimensions
+            expected_size = collection_info.config.params.vectors.size
+            actual_size = len(vector)
+            
+            # Check distance metric compatibility
+            distance_metric = collection_info.config.params.vectors.distance
+            
+            validation_result = {
+                "valid": True,
+                "expected_dimensions": expected_size,
+                "actual_dimensions": actual_size,
+                "distance_metric": distance_metric.name if hasattr(distance_metric, 'name') else str(distance_metric),
+                "errors": [],
+                "warnings": []
+            }
+            
+            if actual_size != expected_size:
+                validation_result["valid"] = False
+                validation_result["errors"].append(f"Vector dimension mismatch: expected {expected_size}, got {actual_size}")
+            
+            # Check for potential issues
+            vector_magnitude = sum(x**2 for x in vector) ** 0.5
+            if vector_magnitude < 0.1:
+                validation_result["warnings"].append("Vector has very low magnitude, may affect search quality")
+            
+            if any(abs(x) > 10 for x in vector):
+                validation_result["warnings"].append("Vector contains very large values, consider normalization")
+            
+            logger.info(f"Vector validation completed: {'valid' if validation_result['valid'] else 'invalid'}")
+            return validation_result
+            
+        except Exception as e:
+            logger.error(f"Failed to validate vector compatibility: {e}")
+            raise
+    
+    async def get_collection_statistics(self, collection_name: str = None) -> Dict[str, Any]:
+        """
+        Get comprehensive statistics for a Qdrant collection.
+        
+        Args:
+            collection_name: Name of the collection
+            
+        Returns:
+            Collection statistics and metadata
+        """
+        collection = collection_name or self.collection_name
+        logger.info(f"Getting statistics for Qdrant collection: {collection}")
+        
+        try:
+            # Get collection info
+            collection_info = self.client.get_collection(collection_name=collection)
+            
+            statistics = {
+                "collection_name": collection,
+                "points_count": collection_info.points_count if hasattr(collection_info, 'points_count') else 0,
+                "vectors_count": collection_info.vectors_count if hasattr(collection_info, 'vectors_count') else 0,
+                "indexed_vectors_count": collection_info.indexed_vectors_count if hasattr(collection_info, 'indexed_vectors_count') else 0,
+                "segments_count": collection_info.segments_count if hasattr(collection_info, 'segments_count') else 0,
+                "disk_data_size_bytes": collection_info.disk_data_size if hasattr(collection_info, 'disk_data_size') else 0,
+                "ram_data_size_bytes": collection_info.ram_data_size if hasattr(collection_info, 'ram_data_size') else 0,
+                "vector_size": collection_info.config.params.vectors.size if hasattr(collection_info, 'config') else 0,
+                "distance_metric": collection_info.config.params.vectors.distance.name if hasattr(collection_info, 'config') and hasattr(collection_info.config.params.vectors.distance, 'name') else "unknown",
+                "indexing_threshold": collection_info.config.optimizers_config.indexing_threshold if hasattr(collection_info, 'config') and hasattr(collection_info.config, 'optimizers_config') else 0,
+                "recommendations": self._generate_qdrant_performance_recommendations(collection_info)
+            }
+            
+            # Calculate indexing ratio
+            if statistics["points_count"] > 0:
+                statistics["indexing_ratio"] = statistics["indexed_vectors_count"] / statistics["points_count"]
+            else:
+                statistics["indexing_ratio"] = 0.0
+            
+            logger.info(f"Collection statistics collected for {collection}: {statistics['points_count']} points")
+            return statistics
+            
+        except Exception as e:
+            logger.error(f"Failed to get collection statistics for {collection}: {e}")
+            raise 

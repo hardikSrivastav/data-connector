@@ -32,6 +32,7 @@ from agent.llm.client import get_llm_client
 from agent.tools.state_manager import StateManager, AnalysisState
 from agent.config.settings import Settings
 from agent.config.config_loader import load_config, load_config_with_defaults
+from agent.langgraph.integration import LangGraphIntegrationOrchestrator
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
@@ -652,6 +653,231 @@ def display_query_results(rows):
     
     if len(rows) > 20:
         console.print(f"[italic](Showing 20 of {len(rows)} rows)[/italic]")
+
+@app.command()
+def langgraph(
+    question: str = typer.Argument(..., help="Natural language question to execute using LangGraph orchestration"),
+    force_langgraph: bool = typer.Option(False, "--force", "-f", help="Force use of LangGraph (bypass complexity analysis)"),
+    show_routing: bool = typer.Option(False, "--show-routing", "-r", help="Show routing decision details"),
+    verbose: bool = typer.Option(False, "--verbose", "-v", help="Show detailed execution information"),
+    save_session: bool = typer.Option(True, "--save-session/--no-save", help="Save session to disk"),
+    stream_output: bool = typer.Option(True, "--stream/--no-stream", help="Enable streaming output")
+):
+    """Execute a query using LangGraph orchestration with automatic database detection"""
+    async def run():
+        # Initialize LangGraph integration orchestrator
+        config = {
+            "use_langgraph_for_complex": True,
+            "complexity_threshold": 3,  # Lower threshold for testing
+            "preserve_trivial_routing": True,
+            "llm_config": {
+                "primary_provider": "bedrock",
+                "fallbacks": ["anthropic", "openai"]
+            }
+        }
+        
+        orchestrator = LangGraphIntegrationOrchestrator(config)
+        
+        # Create session for tracking
+        session_id = str(uuid.uuid4())
+        
+        console.print(f"🚀 [bold blue]LangGraph Query Execution[/bold blue]")
+        console.print(f"Question: [italic]{question}[/italic]")
+        console.print(f"Session ID: [dim]{session_id[:8]}...[/dim]")
+        console.print()
+        
+        try:
+            # Execute query with LangGraph orchestration
+            with Progress(
+                SpinnerColumn(),
+                TextColumn("[bold blue]Processing with LangGraph orchestration..."),
+                transient=not verbose,
+            ) as progress:
+                task = progress.add_task("Executing...", total=None)
+                
+                # Process query - let LangGraph determine optimal routing and databases
+                result = await orchestrator.process_query(
+                    question=question,
+                    session_id=session_id,
+                    databases_available=None,  # Let it auto-detect
+                    force_langgraph=force_langgraph
+                )
+                
+                progress.update(task, completed=True)
+            
+            # Display routing information if requested
+            if show_routing or verbose:
+                execution_metadata = result.get("execution_metadata", {})
+                routing_method = execution_metadata.get("routing_method", "unknown")
+                complexity_analysis = execution_metadata.get("complexity_analysis", {})
+                
+                console.print(f"\n[bold cyan]Routing Decision:[/bold cyan]")
+                console.print(f"Method: [green]{routing_method}[/green]")
+                console.print(f"Complexity: {complexity_analysis.get('complexity', 'unknown')}")
+                console.print(f"Reason: {complexity_analysis.get('reason', 'No reason provided')}")
+                console.print(f"Confidence: {complexity_analysis.get('confidence', 'unknown')}")
+            
+            # Display execution results
+            if "error" in result:
+                console.print(f"\n[bold red]❌ Execution Failed[/bold red]")
+                console.print(f"Error: {result['error']}")
+                
+                # Show additional error details if available
+                if verbose and "execution_metadata" in result:
+                    error_details = result["execution_metadata"].get("error_details")
+                    if error_details:
+                        console.print(f"Details: {error_details}")
+                
+                return
+            
+            # Success - display results based on workflow type
+            workflow = result.get("workflow", "unknown")
+            console.print(f"\n[bold green]✅ Execution Successful[/bold green] ({workflow} workflow)")
+            
+            # Display execution summary
+            execution_metadata = result.get("execution_metadata", {})
+            execution_time = execution_metadata.get("execution_time", 0)
+            console.print(f"Execution time: {execution_time:.2f} seconds")
+            
+            # Display results based on workflow type
+            if workflow == "traditional":
+                # Traditional workflow results
+                final_result = result.get("final_result", {})
+                operation_results = result.get("operation_results", {})
+                
+                if verbose:
+                    console.print(f"\n[bold]Operation Results:[/bold]")
+                    for op_id, op_result in operation_results.items():
+                        status = "✅" if "error" not in op_result else "❌"
+                        console.print(f"{status} {op_id}: {len(op_result.get('data', []))} rows")
+                
+                # Display final formatted result
+                if "formatted_result" in final_result:
+                    console.print(f"\n[bold]Results:[/bold]")
+                    console.print(Panel(Markdown(final_result["formatted_result"])))
+                elif "data" in final_result and final_result["data"]:
+                    display_query_results(final_result["data"])
+                else:
+                    console.print("[yellow]No results to display[/yellow]")
+            
+            elif workflow == "langgraph":
+                # LangGraph workflow results
+                node_results = result.get("node_results", {})
+                final_state = result.get("final_result", {})
+                
+                if verbose:
+                    console.print(f"\n[bold]Node Execution Results:[/bold]")
+                    for node_id, node_result in node_results.items():
+                        status = "✅" if "error" not in node_result else "❌"
+                        console.print(f"{status} {node_id}")
+                
+                # Display final results from graph state
+                if "operation_results" in final_state:
+                    console.print(f"\n[bold]Query Results:[/bold]")
+                    operation_results = final_state["operation_results"]
+                    
+                    # Try to extract and display data
+                    all_data = []
+                    for op_result in operation_results.values():
+                        if isinstance(op_result, dict) and "data" in op_result:
+                            all_data.extend(op_result["data"])
+                    
+                    if all_data:
+                        display_query_results(all_data)
+                    else:
+                        console.print("[yellow]No tabular results to display[/yellow]")
+                        # Show raw results if no tabular data
+                        if final_state:
+                            console.print(f"Final state keys: {list(final_state.keys())}")
+                
+            elif workflow == "hybrid":
+                # Hybrid workflow results
+                final_result = result.get("final_result", {})
+                operation_results = result.get("operation_results", {})
+                hybrid_advantages = result.get("hybrid_advantages", [])
+                
+                if verbose:
+                    console.print(f"\n[bold]Hybrid Workflow Advantages:[/bold]")
+                    for advantage in hybrid_advantages:
+                        console.print(f"• {advantage}")
+                
+                # Display results similar to traditional but with hybrid enhancements
+                if "formatted_result" in final_result:
+                    console.print(f"\n[bold]Results:[/bold]")
+                    console.print(Panel(Markdown(final_result["formatted_result"])))
+                elif operation_results:
+                    # Extract data from operation results
+                    all_data = []
+                    for op_result in operation_results.values():
+                        if isinstance(op_result, dict) and "data" in op_result:
+                            all_data.extend(op_result["data"])
+                    
+                    if all_data:
+                        display_query_results(all_data)
+                    else:
+                        console.print("[yellow]No results to display[/yellow]")
+            
+            # Show performance statistics if available
+            if verbose:
+                integration_status = orchestrator.get_integration_status()
+                exec_stats = integration_status.get("execution_statistics", {})
+                
+                console.print(f"\n[bold]LangGraph Integration Statistics:[/bold]")
+                console.print(f"Traditional executions: {exec_stats.get('traditional_executions', 0)}")
+                console.print(f"LangGraph executions: {exec_stats.get('langgraph_executions', 0)}")
+                console.print(f"Hybrid executions: {exec_stats.get('hybrid_executions', 0)}")
+            
+            # Save session if requested
+            if save_session:
+                # Use existing state manager to save session details
+                state_manager = StateManager()
+                session_state = AnalysisState(
+                    session_id=session_id,
+                    user_question=question
+                )
+                
+                # Add execution metadata as insights
+                session_state.add_insight("execution", "LangGraph execution", {
+                    "langgraph_execution": True,
+                    "workflow_type": workflow,
+                    "routing_method": execution_metadata.get("routing_method"),
+                    "execution_time": execution_time
+                })
+                
+                # Set final result
+                if "final_result" in result:
+                    session_state.set_final_result(
+                        result["final_result"],
+                        result.get("final_result", {}).get("formatted_result", str(result.get("final_result", {})))
+                    )
+                
+                await state_manager.update_state(session_state)
+                console.print(f"\n[dim]Session saved with ID: {session_id}[/dim]")
+                console.print(f"[dim]Use 'cross_db show-session {session_id}' to view details[/dim]")
+        
+        except Exception as e:
+            console.print(f"\n[bold red]❌ LangGraph Execution Failed[/bold red]")
+            console.print(f"Error: {str(e)}")
+            
+            if verbose:
+                import traceback
+                console.print(f"\n[dim]Full traceback:[/dim]")
+                console.print(traceback.format_exc())
+    
+    asyncio.run(run())
+
+@app.command("lg")
+def langgraph_short(
+    question: str = typer.Argument(..., help="Natural language question to execute using LangGraph orchestration"),
+    force_langgraph: bool = typer.Option(False, "--force", "-f", help="Force use of LangGraph (bypass complexity analysis)"),
+    show_routing: bool = typer.Option(False, "--show-routing", "-r", help="Show routing decision details"),
+    verbose: bool = typer.Option(False, "--verbose", "-v", help="Show detailed execution information"),
+    save_session: bool = typer.Option(True, "--save-session/--no-save", help="Save session to disk"),
+    stream_output: bool = typer.Option(True, "--stream/--no-stream", help="Enable streaming output")
+):
+    """Execute a query using LangGraph orchestration (short alias for 'langgraph')"""
+    # Call the main langgraph function with the same parameters
+    langgraph(question, force_langgraph, show_routing, verbose, save_session, stream_output)
 
 if __name__ == "__main__":
     app() 

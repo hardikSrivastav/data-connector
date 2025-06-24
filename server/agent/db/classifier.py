@@ -14,8 +14,7 @@ from pathlib import Path
 # Import the schema registry client
 from .registry.integrations import registry_client
 
-# Import schema searcher
-from ..meta.ingest import SchemaSearcher
+# SchemaSearcher will be imported lazily to avoid circular imports
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -34,8 +33,8 @@ class DatabaseClassifier:
         # Make sure the registry client is initialized
         self.client = registry_client
         
-        # Initialize the schema searcher for FAISS access
-        self.schema_searcher = SchemaSearcher()
+        # Initialize the schema searcher for FAISS access (lazy initialization)
+        self.schema_searcher = None
         
         # Load database types from config.yaml
         self.db_types = self._load_database_types()
@@ -138,6 +137,11 @@ class DatabaseClassifier:
             for db_type in search_db_types:
                 # Search FAISS index for this db_type
                 try:
+                    # Initialize schema_searcher lazily to avoid circular imports
+                    if self.schema_searcher is None:
+                        from ..meta.ingest import SchemaSearcher
+                        self.schema_searcher = SchemaSearcher()
+                    
                     schema_results = await self.schema_searcher.search(
                         query=question,
                         top_k=5,  # Get top 5 results

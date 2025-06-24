@@ -12,6 +12,7 @@ from ..config.settings import Settings
 from ..tools.tools import DataTools
 from ..tools.state_manager import StateManager, AnalysisState
 import re
+import asyncio
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
@@ -2866,7 +2867,7 @@ def get_llm_client() -> LLMClient:
     """
     settings = Settings()
     
-    # Create a list to hold available clients
+    # Create a list to hold available clients (in priority order)
     clients = []
     
     # Check if we want to use the dummy client
@@ -2875,35 +2876,58 @@ def get_llm_client() -> LLMClient:
         logger.info(f"Using dummy LLM client with mode: {response_mode}")
         return DummyLLMClient(response_mode=response_mode)
     
-    # Try to initialize Anthropic client if API key is available
+    # PRIORITY 1: Try to initialize Bedrock client first (primary choice)
+    try:
+        logger.info("🥇 PRIORITY 1: Attempting to initialize AWS Bedrock client...")
+        bedrock_client = BedrockClient()
+        clients.append(bedrock_client)
+        logger.info("✅ Successfully initialized AWS Bedrock client as PRIMARY")
+    except Exception as e:
+        logger.warning(f"❌ Failed to initialize Bedrock client (will try fallbacks): {str(e)}")
+    
+    # PRIORITY 2: Try to initialize Anthropic client as first fallback
     if os.environ.get("ANTHROPIC_API_KEY"):
         try:
-            logger.info("Initializing Anthropic client")
-            clients.append(AnthropicClient())
+            logger.info("🥈 PRIORITY 2: Attempting to initialize Anthropic client as fallback...")
+            anthropic_client = AnthropicClient()
+            clients.append(anthropic_client)
+            logger.info("✅ Successfully initialized Anthropic client as FALLBACK")
         except Exception as e:
-            logger.warning(f"Failed to initialize Anthropic client: {str(e)}")
+            logger.warning(f"❌ Failed to initialize Anthropic fallback client: {str(e)}")
     
-    # Try to initialize OpenAI client if API key and URL are available
+    # PRIORITY 3: Try to initialize OpenAI client as second fallback
     if settings.LLM_API_URL and settings.LLM_API_KEY:
         try:
-            logger.info("Initializing OpenAI client")
-            clients.append(OpenAIClient())
+            logger.info("🥉 PRIORITY 3: Attempting to initialize OpenAI client as fallback...")
+            openai_client = OpenAIClient()
+            clients.append(openai_client)
+            logger.info("✅ Successfully initialized OpenAI client as FALLBACK")
         except Exception as e:
-            logger.warning(f"Failed to initialize OpenAI client: {str(e)}")
+            logger.warning(f"❌ Failed to initialize OpenAI fallback client: {str(e)}")
     
-    # Try to initialize local model if path and type are available
+    # PRIORITY 4: Try to initialize local model as last fallback
     if settings.MODEL_PATH and settings.MODEL_TYPE:
         try:
-            logger.info("Initializing local LLM client")
-            clients.append(LocalLLMClient())
+            logger.info("🎯 PRIORITY 4: Attempting to initialize local LLM client as last fallback...")
+            local_client = LocalLLMClient()
+            clients.append(local_client)
+            logger.info("✅ Successfully initialized local LLM client as FALLBACK")
         except Exception as e:
-            logger.warning(f"Failed to initialize local LLM client: {str(e)}")
+            logger.warning(f"❌ Failed to initialize local LLM fallback client: {str(e)}")
     
     # Create and return fallback client if we have at least one client
     if clients:
+        logger.info(f"🎉 LLM CLIENT INITIALIZATION COMPLETE:")
+        for i, client in enumerate(clients):
+            priority = ["PRIMARY", "FALLBACK 1", "FALLBACK 2", "FALLBACK 3"][i]
+            client_name = client.__class__.__name__
+            model_name = getattr(client, 'model_name', 'unknown')
+            logger.info(f"   {priority}: {client_name} ({model_name})")
+        
         return FallbackLLMClient(clients)
     else:
-        raise ValueError("No valid LLM clients could be initialized. Check your configuration.")
+        logger.error("💥 No valid LLM clients could be initialized!")
+        raise ValueError("No valid LLM clients could be initialized. Check your configuration and ensure Bedrock credentials are properly set.")
 
 class OrchestrationClassificationClient:
     """
@@ -3113,3 +3137,532 @@ def get_classification_client() -> OrchestrationClassificationClient:
     if _classification_client is None:
         _classification_client = OrchestrationClassificationClient()
     return _classification_client
+
+class BedrockClient(LLMClient):
+    """Client for AWS Bedrock API"""
+    
+    def __init__(self):
+        super().__init__()
+        
+        # Check if Bedrock settings are configured
+        if not self.settings.BEDROCK_ENABLED:
+            raise ValueError("Bedrock is not enabled in configuration")
+            
+        # Initialize Bedrock client
+        try:
+            import boto3
+            import json
+            
+            # Get AWS credentials configuration from settings
+            aws_config = self.settings.aws_credentials_config
+            bedrock_config = self.settings.bedrock_config
+            
+            logger.info(f"Initializing Bedrock client with config: {bedrock_config}")
+            logger.info(f"AWS credentials config keys: {list(aws_config.keys())}")
+            
+            # Initialize AWS Bedrock runtime client with explicit credentials
+            self.client = boto3.client(
+                "bedrock-runtime",
+                **aws_config  # This includes region_name, aws_access_key_id, aws_secret_access_key
+            )
+            
+            # Test Bedrock connectivity
+            test_client = boto3.client("bedrock", **aws_config)
+            models_response = test_client.list_foundation_models()
+            logger.info(f"Bedrock connectivity test successful. Found {len(models_response.get('modelSummaries', []))} models")
+            
+            # Store configuration
+            self.model_id = bedrock_config['model_id']
+            self.max_tokens = bedrock_config['max_tokens']
+            self.temperature = bedrock_config['temperature']
+            self.top_p = bedrock_config['top_p']
+            
+            logger.info(f"Successfully initialized Bedrock client in region: {aws_config.get('region_name', 'us-east-1')}")
+            logger.info(f"Using model: {self.model_id}")
+            
+        except Exception as e:
+            logger.error(f"Failed to initialize Bedrock client: {e}")
+            raise ValueError(f"Bedrock initialization failed: {e}")
+    
+    async def _invoke_bedrock(self, prompt: str, system_prompt: str = "", max_tokens: int = None, temperature: float = None, retry_count: int = 0) -> str:
+        """
+        Helper method to invoke Bedrock with proper error handling and retry logic
+        
+        Args:
+            prompt: User prompt
+            system_prompt: System prompt (if any)
+            max_tokens: Override max tokens
+            temperature: Override temperature
+            retry_count: Current retry attempt (for rate limiting)
+            
+        Returns:
+            Generated text response
+        """
+        import json
+        import time
+        from botocore.exceptions import ClientError
+        
+        max_retries = 3
+        base_delay = 1.0  # Base delay for exponential backoff
+        
+        try:
+            # Use provided values or defaults
+            tokens = max_tokens or self.max_tokens
+            temp = temperature if temperature is not None else self.temperature
+            
+            # Construct request body for Claude models
+            messages = [{"role": "user", "content": prompt}]
+            if system_prompt:
+                # For Claude models, system prompt is separate
+                body = {
+                    "anthropic_version": "bedrock-2023-05-31",
+                    "max_tokens": min(tokens, 4000),  # Ensure within limits
+                    "temperature": temp,
+                    "top_p": self.top_p,
+                    "system": system_prompt,
+                    "messages": messages
+                }
+            else:
+                body = {
+                    "anthropic_version": "bedrock-2023-05-31",
+                    "max_tokens": min(tokens, 4000),
+                    "temperature": temp,
+                    "top_p": self.top_p,
+                    "messages": messages
+                }
+            
+            logger.debug(f"🔵 Bedrock request (attempt {retry_count + 1}): {self.model_id}")
+            
+            # Call Bedrock
+            response = self.client.invoke_model(
+                modelId=self.model_id,
+                body=json.dumps(body),
+                contentType="application/json",
+                accept="application/json"
+            )
+            
+            # Parse response
+            response_body = json.loads(response['body'].read())
+            logger.debug(f"🟢 Bedrock response successful")
+            
+            # Extract content from Claude response format
+            if "content" in response_body and len(response_body["content"]) > 0:
+                return response_body["content"][0]["text"]
+            else:
+                raise Exception("No content in Bedrock response")
+                
+        except ClientError as e:
+            error_code = e.response.get('Error', {}).get('Code', 'Unknown')
+            error_message = e.response.get('Error', {}).get('Message', str(e))
+            
+            # Handle specific AWS/Bedrock errors
+            if error_code == 'ThrottlingException' or 'throttling' in error_message.lower():
+                if retry_count < max_retries:
+                    # Exponential backoff for rate limiting
+                    delay = base_delay * (2 ** retry_count)
+                    logger.warning(f"🟡 Bedrock rate limited (attempt {retry_count + 1}/{max_retries + 1}). Retrying in {delay}s...")
+                    await asyncio.sleep(delay)
+                    return await self._invoke_bedrock(prompt, system_prompt, max_tokens, temperature, retry_count + 1)
+                else:
+                    logger.error(f"🔴 Bedrock rate limit exceeded after {max_retries + 1} attempts")
+                    raise Exception(f"Bedrock rate limit exceeded: {error_message}")
+            
+            elif error_code == 'ValidationException':
+                logger.error(f"🔴 Bedrock validation error: {error_message}")
+                raise Exception(f"Bedrock validation error: {error_message}")
+            
+            elif error_code == 'AccessDeniedException':
+                logger.error(f"🔴 Bedrock access denied: {error_message}")
+                raise Exception(f"Bedrock access denied: {error_message}")
+            
+            elif error_code == 'ModelNotReadyException':
+                if retry_count < max_retries:
+                    delay = base_delay * 2  # Fixed delay for model loading
+                    logger.warning(f"🟡 Bedrock model not ready (attempt {retry_count + 1}/{max_retries + 1}). Retrying in {delay}s...")
+                    await asyncio.sleep(delay)
+                    return await self._invoke_bedrock(prompt, system_prompt, max_tokens, temperature, retry_count + 1)
+                else:
+                    logger.error(f"🔴 Bedrock model not ready after {max_retries + 1} attempts")
+                    raise Exception(f"Bedrock model not ready: {error_message}")
+            
+            else:
+                logger.error(f"🔴 Bedrock client error ({error_code}): {error_message}")
+                raise Exception(f"Bedrock error ({error_code}): {error_message}")
+                
+        except Exception as e:
+            logger.error(f"🔴 Bedrock invocation failed: {e}")
+            logger.error(f"Error type: {type(e).__name__}")
+            
+            # Don't retry for non-AWS errors
+            if retry_count == 0:
+                import traceback
+                logger.error(f"Full traceback: {traceback.format_exc()}")
+            
+            raise
+    
+    async def generate_sql(self, prompt: str) -> str:
+        """
+        Generate SQL from a natural language prompt using AWS Bedrock
+        
+        Args:
+            prompt: The prompt to send to Bedrock
+            
+        Returns:
+            Generated SQL as a string
+        """
+        logger.info("Generating SQL using AWS Bedrock")
+        
+        try:
+            system_prompt = "You are a SQL expert. Generate only SQL code without explanations."
+            response = await self._invoke_bedrock(prompt, system_prompt, temperature=0.1)
+            
+            # Clean up the response - sometimes models add explanations
+            sql = response.strip()
+            
+            # If there are code blocks, extract SQL from them
+            import re
+            sql_match = re.search(r'```(?:sql)?\s*(.*?)```', sql, re.DOTALL)
+            if sql_match:
+                sql = sql_match.group(1).strip()
+            
+            logger.info("Successfully generated SQL query using Bedrock")
+            return sql
+            
+        except Exception as e:
+            logger.error(f"Error generating SQL with Bedrock: {str(e)}")
+            raise
+    
+    async def generate_mongodb_query(self, prompt: str) -> str:
+        """
+        Generate MongoDB aggregation pipeline from a natural language prompt using AWS Bedrock
+        
+        Args:
+            prompt: The prompt to send to Bedrock
+            
+        Returns:
+            Generated MongoDB query as a JSON string
+        """
+        logger.info("Generating MongoDB query using AWS Bedrock")
+        
+        try:
+            system_prompt = "You are a MongoDB expert. Generate only JSON representing a valid MongoDB query."
+            response = await self._invoke_bedrock(prompt, system_prompt, temperature=0.1)
+            
+            # Clean up the response
+            mongodb_query = response.strip()
+            
+            # If there are code blocks, extract JSON from them
+            import re
+            json_match = re.search(r'```(?:json)?\s*(.*?)```', mongodb_query, re.DOTALL)
+            if json_match:
+                mongodb_query = json_match.group(1).strip()
+            
+            # Validate that the response is valid JSON
+            try:
+                import json
+                json.loads(mongodb_query)
+            except json.JSONDecodeError:
+                raise ValueError("Generated MongoDB query is not valid JSON")
+            
+            logger.info("Successfully generated MongoDB query using Bedrock")
+            return mongodb_query
+            
+        except Exception as e:
+            logger.error(f"Error generating MongoDB query with Bedrock: {str(e)}")
+            raise
+    
+    async def analyze_results(self, rows: List[Dict[str, Any]], is_vector_search: bool = False) -> str:
+        """
+        Analyze query results using AWS Bedrock
+        
+        Args:
+            rows: Query results as a list of dictionaries
+            is_vector_search: Whether the results are from a vector search
+            
+        Returns:
+            Analysis as a string
+        """
+        logger.info(f"Analyzing {'vector search' if is_vector_search else 'query'} results using AWS Bedrock")
+        
+        # Prepare the data for the prompt
+        data_str = self._serialize_data_for_llm(rows[:100])  # Limit to 100 rows
+        
+        # Choose appropriate prompt based on result type
+        if is_vector_search:
+            prompt = f"""
+            Analyze these vector search results and provide key insights:
+            
+            {data_str}
+            
+            Consider:
+            1. Similarity patterns in the results
+            2. Key information or themes present in the top results
+            3. How well the results match the semantic meaning of the query
+            4. Any patterns in the metadata of the results
+            
+            Format your analysis in markdown with clean sections and bullet points.
+            """
+        else:
+            prompt = f"""
+            Analyze these SQL query results and provide key insights:
+            
+            {data_str}
+            
+            Consider:
+            1. Key patterns and trends
+            2. Notable outliers
+            3. Statistical observations
+            4. Business implications
+            
+            Format your analysis in markdown with clean sections and bullet points.
+            """
+        
+        try:
+            system_prompt = "You are a data analyst providing clear, concise insights."
+            analysis = await self._invoke_bedrock(prompt, system_prompt, temperature=0.1)
+            
+            logger.info("Successfully generated analysis using Bedrock")
+            return analysis
+            
+        except Exception as e:
+            logger.error(f"Error analyzing results with Bedrock: {str(e)}")
+            raise
+    
+    async def orchestrate_analysis(self, question: str, db_type: str = "postgres") -> Dict[str, Any]:
+        """
+        Orchestrate a multi-step analysis process using available tools with Bedrock
+        
+        Note: This is a simplified implementation. Full orchestration with function calling
+        would require more complex prompt engineering for Bedrock.
+        
+        Args:
+            question: Natural language question from the user
+            db_type: Database type being queried
+            
+        Returns:
+            Final analysis result
+        """
+        logger.info(f"Starting orchestrated analysis using Bedrock for question: {question} with database type: {db_type}")
+        
+        # For now, provide a basic analysis without full tool orchestration
+        # In a full implementation, you would need to implement function calling for Bedrock
+        try:
+            prompt = f"""
+            You are a data analysis expert. Analyze the following question for a {db_type} database:
+            
+            Question: {question}
+            Database Type: {db_type}
+            
+            Provide a comprehensive analysis that includes:
+            1. What type of data this question is asking for
+            2. What database tables or collections might be relevant
+            3. What kind of query structure would be appropriate
+            4. What insights the user is likely looking for
+            
+            Format your response as a structured analysis.
+            """
+            
+            system_prompt = "You are a database analysis expert providing comprehensive insights."
+            analysis = await self._invoke_bedrock(prompt, system_prompt, temperature=0.2)
+            
+            return {
+                "session_id": f"bedrock-{uuid.uuid4()}",
+                "question": question,
+                "analysis": analysis,
+                "method": "bedrock_basic_analysis",
+                "db_type": db_type
+            }
+            
+        except Exception as e:
+            logger.error(f"Error in Bedrock orchestration: {str(e)}")
+            return {
+                "session_id": f"bedrock-{uuid.uuid4()}",
+                "question": question,
+                "error": f"Bedrock orchestration failed: {str(e)}",
+                "db_type": db_type
+            }
+
+    # Streaming method implementations for BedrockClient
+    async def generate_sql_stream(self, prompt: str) -> AsyncIterator[Dict[str, Any]]:
+        """
+        Generate SQL using AWS Bedrock with simulated streaming
+        
+        Note: Bedrock doesn't support streaming in the same way as OpenAI/Anthropic,
+        so this simulates streaming by chunking the response.
+        """
+        logger.info("Generating SQL using AWS Bedrock with simulated streaming")
+        session_id = str(uuid.uuid4())
+        
+        try:
+            yield self._create_stream_event("status", 
+                                           message="Starting SQL generation with Bedrock...", 
+                                           session_id=session_id)
+            
+            # Generate the full response
+            sql = await self.generate_sql(prompt)
+            
+            # Simulate streaming by chunking the response
+            chunk_size = 20  # Characters per chunk
+            for i in range(0, len(sql), chunk_size):
+                chunk = sql[:i+chunk_size]
+                is_complete = (i + chunk_size) >= len(sql)
+                
+                yield self._create_stream_event("partial_sql", 
+                                               content=chunk, 
+                                               is_complete=is_complete,
+                                               chunk_index=i//chunk_size + 1,
+                                               session_id=session_id)
+                
+                # Small delay to simulate streaming
+                await asyncio.sleep(0.01)
+            
+            # Validate SQL
+            validation_status = "valid"
+            if not sql or not any(keyword in sql.upper() for keyword in ["SELECT", "INSERT", "UPDATE", "DELETE", "WITH"]):
+                validation_status = "warning"
+            
+            yield self._create_stream_event("sql_complete", 
+                                           sql=sql, 
+                                           validation_status=validation_status,
+                                           total_chunks=(len(sql) // chunk_size) + 1,
+                                           session_id=session_id)
+            
+        except Exception as e:
+            logger.error(f"Error generating SQL with Bedrock streaming: {str(e)}")
+            yield self._create_stream_event("error", 
+                                           error_code="GENERATION_FAILED",
+                                           message=f"Error generating SQL: {str(e)}",
+                                           recoverable=True,
+                                           session_id=session_id)
+            raise
+
+    async def generate_mongodb_query_stream(self, prompt: str) -> AsyncIterator[Dict[str, Any]]:
+        """Generate MongoDB query using AWS Bedrock with simulated streaming"""
+        logger.info("Generating MongoDB query using AWS Bedrock with simulated streaming")
+        session_id = str(uuid.uuid4())
+        
+        try:
+            yield self._create_stream_event("status", 
+                                           message="Starting MongoDB query generation with Bedrock...", 
+                                           session_id=session_id)
+            
+            # Generate the full response
+            mongodb_query = await self.generate_mongodb_query(prompt)
+            
+            # Simulate streaming by chunking the response
+            chunk_size = 30
+            for i in range(0, len(mongodb_query), chunk_size):
+                chunk = mongodb_query[:i+chunk_size]
+                is_complete = (i + chunk_size) >= len(mongodb_query)
+                
+                yield self._create_stream_event("partial_mongodb_query", 
+                                               content=chunk, 
+                                               is_complete=is_complete,
+                                               chunk_index=i//chunk_size + 1,
+                                               session_id=session_id)
+                
+                await asyncio.sleep(0.01)
+            
+            # Validate JSON
+            validation_status = "valid"
+            try:
+                import json
+                json.loads(mongodb_query)
+            except json.JSONDecodeError:
+                validation_status = "invalid"
+            
+            yield self._create_stream_event("mongodb_query_complete", 
+                                           query=mongodb_query, 
+                                           validation_status=validation_status,
+                                           total_chunks=(len(mongodb_query) // chunk_size) + 1,
+                                           session_id=session_id)
+            
+        except Exception as e:
+            logger.error(f"Error generating MongoDB query with Bedrock streaming: {str(e)}")
+            yield self._create_stream_event("error", 
+                                           error_code="GENERATION_FAILED",
+                                           message=f"Error generating MongoDB query: {str(e)}",
+                                           recoverable=True,
+                                           session_id=session_id)
+            raise
+
+    async def analyze_results_stream(self, rows: List[Dict[str, Any]], is_vector_search: bool = False) -> AsyncIterator[Dict[str, Any]]:
+        """Analyze query results using AWS Bedrock with simulated streaming"""
+        logger.info(f"Analyzing {'vector search' if is_vector_search else 'query'} results using AWS Bedrock with simulated streaming")
+        session_id = str(uuid.uuid4())
+        
+        try:
+            yield self._create_stream_event("status", 
+                                           message="Starting results analysis with Bedrock...", 
+                                           session_id=session_id)
+            
+            # Generate the full analysis
+            analysis = await self.analyze_results(rows, is_vector_search)
+            
+            # Simulate streaming by chunking the response
+            chunk_size = 50
+            for i in range(0, len(analysis), chunk_size):
+                chunk = analysis[:i+chunk_size]
+                is_final = (i + chunk_size) >= len(analysis)
+                
+                yield self._create_stream_event("analysis_chunk", 
+                                               text=chunk, 
+                                               chunk_index=i//chunk_size + 1,
+                                               is_final=is_final,
+                                               session_id=session_id)
+                
+                await asyncio.sleep(0.02)
+            
+        except Exception as e:
+            logger.error(f"Error analyzing results with Bedrock streaming: {str(e)}")
+            yield self._create_stream_event("error", 
+                                           error_code="ANALYSIS_FAILED",
+                                           message=f"Error analyzing results: {str(e)}",
+                                           recoverable=True,
+                                           session_id=session_id)
+            raise
+
+    async def orchestrate_analysis_stream(self, question: str, db_type: str = "postgres") -> AsyncIterator[Dict[str, Any]]:
+        """Orchestrate analysis using AWS Bedrock with simulated streaming"""
+        logger.info(f"Starting orchestrated analysis streaming with Bedrock for question: {question}")
+        session_id = str(uuid.uuid4())
+        
+        try:
+            yield self._create_stream_event("status", 
+                                           message="Initializing orchestrated analysis with Bedrock...", 
+                                           session_id=session_id)
+            
+            # Generate the full orchestration
+            result = await self.orchestrate_analysis(question, db_type)
+            
+            if "error" in result:
+                yield self._create_stream_event("error", 
+                                               error_code="ORCHESTRATION_FAILED",
+                                               message=result["error"],
+                                               recoverable=True,
+                                               session_id=session_id)
+            else:
+                analysis = result.get("analysis", "")
+                
+                # Simulate streaming the analysis
+                chunk_size = 60
+                for i in range(0, len(analysis), chunk_size):
+                    chunk = analysis[:i+chunk_size]
+                    is_final = (i + chunk_size) >= len(analysis)
+                    
+                    yield self._create_stream_event("analysis_chunk", 
+                                                   text=chunk, 
+                                                   chunk_index=i//chunk_size + 1,
+                                                   is_final=is_final,
+                                                   session_id=session_id)
+                    
+                    await asyncio.sleep(0.02)
+            
+        except Exception as e:
+            logger.error(f"Error in Bedrock orchestration streaming: {str(e)}")
+            yield self._create_stream_event("error", 
+                                           error_code="ORCHESTRATION_FAILED",
+                                           message=f"Error in Bedrock orchestration: {str(e)}",
+                                           recoverable=False,
+                                           session_id=session_id)
+            raise

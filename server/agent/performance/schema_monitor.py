@@ -7,9 +7,9 @@ from typing import Dict, List, Optional, Tuple, Any
 from pathlib import Path
 from urllib.parse import urlparse
 
-from agent.db.introspect import get_schema_metadata
-from agent.meta.ingest import build_and_save_index_for_db, ensure_index_exists
-from agent.config.settings import Settings
+from ..db.introspect import get_schema_metadata
+# build_and_save_index_for_db and ensure_index_exists will be imported lazily to avoid circular imports
+from ..config.settings import Settings
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
@@ -159,6 +159,8 @@ class SchemaMonitor:
             
             if schema_changed or force:
                 # Rebuild the index for this database type
+                # Import lazily to avoid circular imports
+                from ..meta.ingest import build_and_save_index_for_db
                 success = await build_and_save_index_for_db(db_type=self.db_type, conn_uri=self.conn_uri)
                 if success:
                     # Update the stored hash
@@ -234,6 +236,8 @@ async def ensure_schema_index_updated(
             
             if schema_changed or force:
                 # Rebuild the index for this database type
+                # Import lazily to avoid circular imports
+                from ..meta.ingest import build_and_save_index_for_db
                 success = await build_and_save_index_for_db(db_type=db_type, conn_uri=conn_uri, **kwargs)
                 if success:
                     # Update the stored hash

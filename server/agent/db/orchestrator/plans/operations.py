@@ -489,6 +489,108 @@ class ShopifyOperation(Operation):
         return True
 
 
+def create_operation_from_dict(operation_dict: Dict[str, Any]) -> Operation:
+    """
+    Create an Operation object from a dictionary representation.
+    
+    Args:
+        operation_dict: Dictionary containing operation data
+        
+    Returns:
+        Operation object of the appropriate type
+    """
+    # Extract basic fields
+    op_id = operation_dict.get("id", "")
+    source_id = operation_dict.get("source_id", "")
+    depends_on = operation_dict.get("depends_on", [])
+    metadata = operation_dict.get("metadata", {})
+    db_type = operation_dict.get("db_type", "")
+    
+    # Get operation parameters
+    params = operation_dict.get("params", {})
+    
+    # Determine operation type based on db_type and params
+    if db_type == "postgres":
+        sql_query = params.get("query", "")
+        query_params = params.get("params", [])
+        return SqlOperation(
+            id=op_id,
+            source_id=source_id,
+            sql_query=sql_query,
+            params=query_params,
+            depends_on=depends_on,
+            metadata=metadata
+        )
+    elif db_type == "mongodb" or db_type == "mongo":
+        collection = params.get("collection", "")
+        pipeline = params.get("pipeline", [])
+        query = params.get("query", {})
+        projection = params.get("projection", {})
+        return MongoOperation(
+            id=op_id,
+            source_id=source_id,
+            collection=collection,
+            pipeline=pipeline,
+            query=query,
+            projection=projection,
+            depends_on=depends_on,
+            metadata=metadata
+        )
+    elif db_type == "qdrant":
+        collection = params.get("collection", "")
+        vector_query = params.get("vector_query", [])
+        filter_conditions = params.get("filter", {})
+        top_k = params.get("top_k", 10)
+        return QdrantOperation(
+            id=op_id,
+            source_id=source_id,
+            collection=collection,
+            vector_query=vector_query,
+            filter=filter_conditions,
+            top_k=top_k,
+            depends_on=depends_on,
+            metadata=metadata
+        )
+    elif db_type == "slack":
+        channel = params.get("channel", "")
+        query = params.get("query", "")
+        time_range = params.get("time_range", {})
+        limit = params.get("limit", 100)
+        return SlackOperation(
+            id=op_id,
+            source_id=source_id,
+            channel=channel,
+            query=query,
+            time_range=time_range,
+            limit=limit,
+            depends_on=depends_on,
+            metadata=metadata
+        )
+    elif db_type == "shopify":
+        endpoint = params.get("endpoint", "")
+        query_params = params.get("query_params", {})
+        api_method = params.get("api_method", "GET")
+        limit = params.get("limit", 100)
+        return ShopifyOperation(
+            id=op_id,
+            source_id=source_id,
+            endpoint=endpoint,
+            query_params=query_params,
+            api_method=api_method,
+            limit=limit,
+            depends_on=depends_on,
+            metadata=metadata
+        )
+    else:
+        # Use GenericOperation for unknown types
+        return GenericOperation(
+            id=op_id,
+            source_id=source_id,
+            params=params,
+            depends_on=depends_on,
+            metadata=metadata
+        )
+
 def initialize_operations(db_types: List[str]) -> None:
     """
     Initialize operation classes for all database types

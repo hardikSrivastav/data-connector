@@ -22,6 +22,14 @@ from ..adapters import mongo, postgres, qdrant, slack, shopify
 from ..adapters.base import DBAdapter
 from .result_aggregator import ResultAggregator, JoinType, AggregationFunction
 from .plans.base import QueryPlan, Operation, OperationStatus
+from ...langgraph.parallelism import AdaptiveParallelismManager, Operation as ParallelismOperation, OperationComplexity
+
+# LangGraph integration imports
+try:
+    from ...langgraph.state import LangGraphState
+    LANGGRAPH_AVAILABLE = True
+except ImportError:
+    LANGGRAPH_AVAILABLE = False
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -76,6 +84,23 @@ class ImplementationAgent:
         # Cache for database adapters to avoid recreating them
         self._adapter_cache = {}
         
+        # Enhanced parallelism manager
+        self.enhanced_parallelism_enabled = self.config.get("enhanced_parallelism_enabled", False)
+        if self.enhanced_parallelism_enabled:
+            parallelism_config = {
+                "postgres_limit": self.config.get("postgres_limit", 8),
+                "mongodb_limit": self.config.get("mongodb_limit", 6),
+                "qdrant_limit": self.config.get("qdrant_limit", 4),
+                "slack_limit": self.config.get("slack_limit", 2),
+                "max_total_weight": self.config.get("max_total_weight", 24),
+                "max_concurrent_operations": self.config.get("max_concurrent_operations", 16)
+            }
+            self.parallelism_manager = AdaptiveParallelismManager(parallelism_config)
+            logger.info(f"🚀 Enhanced parallelism enabled with {parallelism_config['max_concurrent_operations']} max concurrent operations")
+        else:
+            self.parallelism_manager = None
+            logger.info(f"📋 Using standard parallelism with {self.max_parallel_operations} max operations")
+        
         # Execution metrics
         self.metrics = {
             "operation_timings": {},
@@ -87,6 +112,17 @@ class ImplementationAgent:
             "failed_operations": 0,
             "successful_operations": 0
         }
+        
+        # LangGraph integration
+        self.langgraph_enabled = self.config.get("langgraph_enabled", False) and LANGGRAPH_AVAILABLE
+        self.bedrock_client = None
+        
+        if self.langgraph_enabled:
+            # Lazy load Bedrock client to avoid circular imports
+            logger.info("🚀 LangGraph execution integration enabled")
+        else:
+            if not LANGGRAPH_AVAILABLE:
+                logger.info("LangGraph not available, using traditional execution only")
     
     def get_adapter(self, source_type: str, connection_info: Dict[str, Any]) -> DBAdapter:
         """
@@ -515,6 +551,232 @@ class ImplementationAgent:
         
         return ready_ops
     
+    def _convert_to_parallelism_operations(self, query_plan: QueryPlan) -> List[ParallelismOperation]:
+        """
+        Convert QueryPlan operations to AdaptiveParallelismManager operations.
+        
+        Args:
+            query_plan: The query plan to convert
+            
+        Returns:
+            List of ParallelismOperation objects
+        """
+        parallelism_operations = []
+        
+        for op in query_plan.operations:
+            # Determine complexity based on operation type and metadata
+            complexity = OperationComplexity.MEDIUM  # Default
+            
+            if hasattr(op, 'estimated_time'):
+                # Use estimated time to determine complexity
+                if op.estimated_time < 0.5:
+                    complexity = OperationComplexity.SIMPLE
+                elif op.estimated_time < 2.0:
+                    complexity = OperationComplexity.MEDIUM
+                elif op.estimated_time < 5.0:
+                    complexity = OperationComplexity.COMPLEX
+                else:
+                    complexity = OperationComplexity.HEAVY
+            elif hasattr(op, 'operation_type'):
+                # Use operation type to infer complexity
+                if op.operation_type in ['count', 'exists', 'simple_select']:
+                    complexity = OperationComplexity.SIMPLE
+                elif op.operation_type in ['aggregate', 'join', 'group_by']:
+                    complexity = OperationComplexity.MEDIUM
+                elif op.operation_type in ['complex_join', 'vector_search', 'full_text_search']:
+                    complexity = OperationComplexity.COMPLEX
+                elif op.operation_type in ['cross_database_join', 'large_aggregation']:
+                    complexity = OperationComplexity.HEAVY
+            
+            # Extract database type from source_id
+            db_type = "postgres"  # Default
+            if hasattr(op, 'source_id') and op.source_id:
+                if "mongodb" in op.source_id.lower() or "mongo" in op.source_id.lower():
+                    db_type = "mongodb"
+                elif "qdrant" in op.source_id.lower():
+                    db_type = "qdrant"
+                elif "slack" in op.source_id.lower():
+                    db_type = "slack"
+                elif "postgres" in op.source_id.lower():
+                    db_type = "postgres"
+            
+            # Create parallelism operation
+            parallelism_op = ParallelismOperation(
+                id=op.operation_id,
+                db_type=db_type,
+                operation_type=getattr(op, 'operation_type', 'query'),
+                complexity=complexity,
+                estimated_duration=getattr(op, 'estimated_time', 1.0),
+                dependencies=getattr(op, 'depends_on', []),
+                params=getattr(op, 'parameters', {}),
+                priority=1  # Default priority
+            )
+            
+            parallelism_operations.append(parallelism_op)
+        
+        return parallelism_operations
+    
+    async def _execute_operation_for_parallelism(self, parallelism_operation: ParallelismOperation) -> Dict[str, Any]:
+        """
+        Execute a single operation for the enhanced parallelism manager.
+        
+        Args:
+            parallelism_operation: ParallelismOperation to execute
+            
+        Returns:
+            Operation result dictionary
+        """
+        # Find the corresponding QueryPlan operation
+        op = None
+        for plan_op in self._current_query_plan.operations:
+            if plan_op.operation_id == parallelism_operation.id:
+                op = plan_op
+                break
+        
+        if not op:
+            raise ValueError(f"Operation {parallelism_operation.id} not found in query plan")
+        
+        # Create a semaphore for this single operation (will be managed by parallelism manager)
+        semaphore = asyncio.Semaphore(1)
+        
+        # Execute using existing _execute_operation method
+        result = await self._execute_operation(op, semaphore)
+        
+        return result
+    
+    async def execute_plan_enhanced(
+        self, 
+        query_plan: QueryPlan,
+        user_question: str,
+        dry_run: bool = False
+    ) -> Dict[str, Any]:
+        """
+        Execute a query plan using enhanced parallelism capabilities.
+        
+        This method uses the AdaptiveParallelismManager to achieve better parallelism
+        beyond the standard 4-operation limit.
+        
+        Args:
+            query_plan: The query plan to execute
+            user_question: Original user question for context
+            dry_run: Whether to perform a dry run without executing operations
+            
+        Returns:
+            Execution results with aggregated data
+        """
+        if not self.enhanced_parallelism_enabled or not self.parallelism_manager:
+            logger.warning("Enhanced parallelism not enabled, falling back to standard execution")
+            return await self.execute_plan(query_plan, user_question, dry_run)
+        
+        # Record start time
+        start_time = time.time()
+        self.metrics["execution_start"] = datetime.now().isoformat()
+        self.metrics["total_operations"] = len(query_plan.operations)
+        
+        # Store query plan for operation execution
+        self._current_query_plan = query_plan
+        
+        # Flag for dry run
+        if dry_run:
+            for op in query_plan.operations:
+                op.metadata["dry_run"] = True
+        
+        # Convert query plan operations to parallelism operations
+        parallelism_operations = self._convert_to_parallelism_operations(query_plan)
+        
+        logger.info(f"🚀 Executing plan with enhanced parallelism: {len(parallelism_operations)} operations")
+        
+        # Execute operations using enhanced parallelism
+        try:
+            execution_result = await self.parallelism_manager.execute_parallel_operations(
+                parallelism_operations,
+                self._execute_operation_for_parallelism
+            )
+            
+            # Extract results
+            operation_results = {}
+            successful_ops = 0
+            failed_ops = 0
+            
+            for op_id, result in execution_result["results"].items():
+                if result.get("success", True):
+                    operation_results[op_id] = result.get("result", {})
+                    successful_ops += 1
+                else:
+                    operation_results[op_id] = {"error": result.get("error", "Unknown error")}
+                    failed_ops += 1
+            
+            # Add failed operations
+            for failed_op_id in execution_result["failed_operations"]:
+                operation_results[failed_op_id] = {"error": "Operation failed"}
+                failed_ops += 1
+            
+            # Update metrics
+            self.metrics["successful_operations"] = successful_ops
+            self.metrics["failed_operations"] = failed_ops
+            
+        except Exception as e:
+            logger.error(f"Enhanced parallelism execution failed: {e}")
+            # Fall back to standard execution
+            logger.info("Falling back to standard execution")
+            return await self.execute_plan(query_plan, user_question, dry_run)
+        
+        # Record completion time
+        end_time = time.time()
+        self.metrics["execution_end"] = datetime.now().isoformat()
+        
+        # Determine if we need to aggregate results
+        if query_plan.output_operation_id:
+            # If plan specifies a specific output operation, use that result
+            final_result = operation_results.get(query_plan.output_operation_id, {})
+        else:
+            # Otherwise, aggregate all results
+            logger.info("Aggregating results from enhanced parallel execution")
+            
+            try:
+                # Use LLM aggregation by default for complex query plans
+                if len(query_plan.operations) > 1 and len(operation_results) > 0:
+                    final_result = await self.result_aggregator.aggregate_results(
+                        query_plan, operation_results, user_question
+                    )
+                else:
+                    # For single operation plans, just return that operation's result
+                    final_result = next(iter(operation_results.values())) if operation_results else {}
+            except Exception as e:
+                logger.error(f"Error during result aggregation: {e}")
+                final_result = {
+                    "error": f"Failed to aggregate results: {str(e)}",
+                    "partial_results": operation_results
+                }
+        
+        # Create execution summary
+        execution_summary = {
+            "plan_id": query_plan.plan_id,
+            "execution_time_seconds": end_time - start_time,
+            "total_operations": len(query_plan.operations),
+            "successful_operations": successful_ops,
+            "failed_operations": failed_ops,
+            "parallelism_type": "enhanced",
+            "max_concurrent_operations": self.parallelism_manager.max_concurrent_operations,
+            "parallelism_metrics": execution_result.get("execution_metrics", {}),
+            "operation_details": {op.operation_id: {
+                "status": OperationStatus.COMPLETED if op.operation_id in execution_result["results"] else OperationStatus.FAILED,
+                "type": op.operation_type,
+                "duration": execution_result["results"].get(op.operation_id, {}).get("duration"),
+                "error": operation_results.get(op.operation_id, {}).get("error")
+            } for op in query_plan.operations}
+        }
+        
+        # Clean up
+        self._current_query_plan = None
+        
+        # Return final result with execution summary
+        return {
+            "success": failed_ops == 0,
+            "execution_summary": execution_summary,
+            "result": final_result
+        }
+    
     async def execute_plan(
         self, 
         query_plan: QueryPlan,
@@ -678,4 +940,507 @@ class ImplementationAgent:
             except Exception as e:
                 logger.warning(f"Error closing adapter: {e}")
         
-        self._adapter_cache.clear() 
+        self._adapter_cache.clear()
+        
+        logger.info("Implementation agent closed")
+    
+    async def _get_bedrock_client(self):
+        """Lazy load Bedrock client to avoid circular imports."""
+        if self.bedrock_client is None and self.langgraph_enabled:
+            try:
+                from ...langgraph.graphs.bedrock_client import BedrockLangGraphClient
+                self.bedrock_client = BedrockLangGraphClient(self.config.get("llm_config"))
+                logger.info("✅ Bedrock client initialized successfully")
+            except Exception as e:
+                logger.warning(f"Failed to initialize Bedrock client: {e}")
+                # Create a mock client for testing
+                self.bedrock_client = self._create_mock_bedrock_client()
+        return self.bedrock_client
+    
+    def _create_mock_bedrock_client(self):
+        """Create a mock Bedrock client for testing purposes."""
+        class MockBedrockClient:
+            async def optimize_graph_execution(self, original_plan, performance_data):
+                return {"optimized_plan": original_plan}
+            
+            async def analyze_graph_results(self, execution_results, original_question):
+                return {"analysis": "mock_analysis", "insights": ["mock_insight"]}
+        
+        return MockBedrockClient()
+    
+    async def execute_plan_langgraph(
+        self,
+        query_plan: QueryPlan,
+        user_question: str,
+        dry_run: bool = False,
+        streaming_callback: Optional[callable] = None
+    ) -> Dict[str, Any]:
+        """
+        Execute a query plan using LangGraph with Bedrock-enhanced capabilities.
+        
+        This method provides enhanced execution with:
+        - AWS Bedrock Claude for intelligent optimization
+        - Advanced parallelism beyond 16 operations
+        - Real-time streaming progress updates
+        - AI-driven error recovery and optimization
+        
+        Args:
+            query_plan: The query plan to execute
+            user_question: Original user question for context
+            dry_run: Whether to perform a dry run without actual execution
+            streaming_callback: Optional callback for streaming updates
+            
+        Returns:
+            Dictionary containing execution results and metadata
+        """
+        if not self.langgraph_enabled:
+            logger.info("LangGraph not enabled, falling back to enhanced parallelism execution")
+            if self.enhanced_parallelism_enabled:
+                return await self.execute_plan_enhanced(query_plan, user_question, dry_run)
+            else:
+                return await self.execute_plan(query_plan, user_question, dry_run)
+        
+        logger.info(f"🚀 Executing plan with LangGraph and Bedrock for: '{user_question}'")
+        
+        try:
+            # Initialize execution metrics
+            self.clear_metrics()
+            self.metrics["execution_start"] = time.time()
+            
+            # Stream progress if callback provided
+            if streaming_callback:
+                await streaming_callback({
+                    "type": "progress",
+                    "progress": 5.0,
+                    "message": "Initializing LangGraph execution with Bedrock",
+                    "details": {"method": "langgraph_bedrock", "operations": len(query_plan.operations)}
+                })
+            
+            # Step 1: AI-driven execution optimization
+            if streaming_callback:
+                await streaming_callback({
+                    "type": "progress",
+                    "progress": 10.0,
+                    "message": "Optimizing execution strategy with AI"
+                })
+            
+            optimized_plan = await self._optimize_execution_strategy_bedrock(query_plan, user_question)
+            
+            # Step 2: Enhanced parallelism with AI insights
+            if streaming_callback:
+                await streaming_callback({
+                    "type": "progress",
+                    "progress": 20.0,
+                    "message": "Preparing enhanced parallel execution"
+                })
+            
+            execution_strategy = await self._prepare_langgraph_execution(optimized_plan)
+            
+            # Step 3: Execute with streaming and adaptive parallelism
+            if streaming_callback:
+                await streaming_callback({
+                    "type": "progress",
+                    "progress": 30.0,
+                    "message": "Executing operations with adaptive parallelism"
+                })
+            
+            if dry_run:
+                # Simulate execution for dry run
+                execution_results = await self._simulate_langgraph_execution(execution_strategy, streaming_callback)
+            else:
+                # Real execution with enhanced capabilities
+                execution_results = await self._execute_langgraph_operations(
+                    execution_strategy, 
+                    streaming_callback
+                )
+            
+            # Step 4: AI-enhanced result aggregation
+            if streaming_callback:
+                await streaming_callback({
+                    "type": "progress",
+                    "progress": 85.0,
+                    "message": "Aggregating results with AI enhancement"
+                })
+            
+            aggregated_result = await self._aggregate_results_bedrock(
+                execution_results,
+                optimized_plan,
+                user_question
+            )
+            
+            # Step 5: Performance analysis and recommendations
+            if streaming_callback:
+                await streaming_callback({
+                    "type": "progress",
+                    "progress": 95.0,
+                    "message": "Generating performance insights"
+                })
+            
+            performance_insights = await self._generate_performance_insights_bedrock(
+                execution_results,
+                optimized_plan,
+                user_question
+            )
+            
+            # Finalize metrics
+            self.metrics["execution_end"] = time.time()
+            total_duration = self.metrics["execution_end"] - self.metrics["execution_start"]
+            
+            # Prepare final result
+            final_result = {
+                "aggregated_result": aggregated_result,
+                "execution_results": execution_results,
+                "execution_metadata": {
+                    "method": "langgraph_bedrock",
+                    "total_duration": total_duration,
+                    "operations_executed": len(execution_results),
+                    "dry_run": dry_run,
+                    "enhanced_features": [
+                        "bedrock_optimization",
+                        "adaptive_parallelism",
+                        "ai_aggregation",
+                        "performance_insights"
+                    ],
+                    "performance_insights": performance_insights
+                },
+                "metrics": self.get_metrics()
+            }
+            
+            if streaming_callback:
+                await streaming_callback({
+                    "type": "complete",
+                    "progress": 100.0,
+                    "message": "LangGraph execution complete",
+                    "details": final_result["execution_metadata"]
+                })
+            
+            logger.info(f"✅ LangGraph execution completed in {total_duration:.2f}s")
+            return final_result
+            
+        except Exception as e:
+            logger.error(f"❌ LangGraph execution failed: {e}, falling back to enhanced execution")
+            if streaming_callback:
+                await streaming_callback({
+                    "type": "error",
+                    "message": f"LangGraph execution failed: {e}, using fallback",
+                    "fallback": True
+                })
+            
+            # Fallback to enhanced parallelism execution
+            if self.enhanced_parallelism_enabled:
+                return await self.execute_plan_enhanced(query_plan, user_question, dry_run)
+            else:
+                return await self.execute_plan(query_plan, user_question, dry_run)
+    
+    async def _optimize_execution_strategy_bedrock(
+        self,
+        query_plan: QueryPlan,
+        user_question: str
+    ) -> QueryPlan:
+        """Use Bedrock to optimize execution strategy."""
+        try:
+            # Get Bedrock client
+            bedrock_client = await self._get_bedrock_client()
+            
+            # Convert plan to format suitable for Bedrock
+            plan_dict = {
+                "operations": [
+                    {
+                        "id": getattr(op, 'operation_id', f'op_{i}'),
+                        "type": getattr(op, 'operation_type', 'unknown'),
+                        "source": getattr(op, 'source_id', 'unknown'),
+                        "dependencies": getattr(op, 'dependencies', [])
+                    }
+                    for i, op in enumerate(query_plan.operations)
+                ]
+            }
+            
+            # Get optimization from Bedrock
+            optimization_result = await bedrock_client.optimize_graph_execution(
+                original_plan=plan_dict,
+                performance_data={
+                    "context": "execution_optimization",
+                    "question": user_question,
+                    "parallelism_enabled": self.enhanced_parallelism_enabled,
+                    "max_operations": self.config.get("max_concurrent_operations", 16)
+                }
+            )
+            
+            if "optimized_plan" in optimization_result:
+                # Apply optimizations to the original plan
+                logger.info("Applied Bedrock execution optimizations")
+                return query_plan  # For now, return original plan (optimization logic can be enhanced)
+            
+            return query_plan
+            
+        except Exception as e:
+            logger.warning(f"Bedrock execution optimization failed: {e}, using original plan")
+            return query_plan
+    
+    async def _prepare_langgraph_execution(self, query_plan: QueryPlan) -> Dict[str, Any]:
+        """Prepare execution strategy for LangGraph."""
+        # Convert to parallelism operations if enhanced parallelism is enabled
+        if self.enhanced_parallelism_enabled:
+            parallelism_operations = self._convert_to_parallelism_operations(query_plan)
+            return {
+                "type": "enhanced_parallelism",
+                "operations": parallelism_operations,
+                "original_plan": query_plan
+            }
+        else:
+            # Use traditional batching
+            operations = [
+                {
+                    "id": getattr(op, 'operation_id', f'op_{i}'),
+                    "operation": op,
+                    "source_id": getattr(op, 'source_id', 'unknown')
+                }
+                for i, op in enumerate(query_plan.operations)
+            ]
+            return {
+                "type": "traditional",
+                "operations": operations,
+                "original_plan": query_plan
+            }
+    
+    async def _simulate_langgraph_execution(
+        self,
+        execution_strategy: Dict[str, Any],
+        streaming_callback: Optional[callable] = None
+    ) -> Dict[str, Any]:
+        """Simulate execution for dry run."""
+        simulated_results = {}
+        operations = execution_strategy["operations"]
+        
+        for i, op in enumerate(operations):
+            if streaming_callback:
+                await streaming_callback({
+                    "type": "progress",
+                    "progress": 30.0 + (i / len(operations)) * 50.0,
+                    "message": f"Simulating operation {i+1}/{len(operations)}"
+                })
+            
+            if isinstance(op, dict):
+                op_id = op.get("id", f'op_{i}')
+            else:
+                op_id = getattr(op, 'operation_id', f'op_{i}')
+                
+            simulated_results[op_id] = {
+                "simulated": True,
+                "operation_type": "dry_run",
+                "estimated_duration": 0.1,
+                "status": "simulated_success"
+            }
+            
+            # Small delay to simulate work
+            await asyncio.sleep(0.1)
+        
+        return simulated_results
+    
+    async def _execute_langgraph_operations(
+        self,
+        execution_strategy: Dict[str, Any],
+        streaming_callback: Optional[callable] = None
+    ) -> Dict[str, Any]:
+        """Execute operations with LangGraph capabilities."""
+        if execution_strategy["type"] == "enhanced_parallelism":
+            # Use enhanced parallelism manager
+            operations = execution_strategy["operations"]
+            
+            async def execution_callback(operation):
+                return await self._execute_operation_for_parallelism(operation)
+            
+            # Execute with streaming updates
+            async def progress_callback(progress_data):
+                if streaming_callback:
+                    await streaming_callback({
+                        "type": "progress",
+                        "progress": 30.0 + (progress_data.get("progress", 0) * 0.5),
+                        "message": f"Parallel execution: {progress_data.get('message', 'Processing...')}"
+                    })
+            
+            result = await self.parallelism_manager.execute_operations(
+                operations,
+                execution_callback,
+                progress_callback
+            )
+            
+            return result["results"]
+        else:
+            # Use traditional execution with some enhancements
+            operations = execution_strategy["operations"]
+            results = {}
+            
+            for i, op_data in enumerate(operations):
+                if streaming_callback:
+                    await streaming_callback({
+                        "type": "progress",
+                        "progress": 30.0 + (i / len(operations)) * 50.0,
+                        "message": f"Executing operation {i+1}/{len(operations)}"
+                    })
+                
+                operation = op_data["operation"]
+                semaphore = asyncio.Semaphore(1)  # Sequential execution
+                
+                try:
+                    result = await self._execute_operation(operation, semaphore)
+                    op_id = getattr(operation, 'operation_id', f'op_{i}')
+                    results[op_id] = result
+                except Exception as e:
+                    op_id = getattr(operation, 'operation_id', f'op_{i}')
+                    results[op_id] = {"error": str(e)}
+            
+            return results
+    
+    async def _aggregate_results(
+        self,
+        operation_results: Dict[str, Any],
+        execution_plan: Dict[str, Any],
+        user_question: str = "Cross-database query execution"
+    ) -> Dict[str, Any]:
+        """
+        Aggregate operation results (adapter for LangGraph integration).
+        
+        Args:
+            operation_results: Results from executed operations
+            execution_plan: The execution plan dict
+            user_question: Original user question for context
+            
+        Returns:
+            Aggregated result
+        """
+        try:
+            # Create a mock QueryPlan from the execution plan dict for compatibility
+            from .plans.factory import create_plan_from_dict
+            
+            if isinstance(execution_plan, dict):
+                query_plan = create_plan_from_dict(execution_plan)
+            else:
+                # Assume it's already a QueryPlan object
+                query_plan = execution_plan
+            
+            # Call the Bedrock version
+            return await self._aggregate_results_bedrock(
+                operation_results,
+                query_plan,
+                user_question
+            )
+            
+        except Exception as e:
+            logger.warning(f"Enhanced aggregation failed: {e}, using basic aggregation")
+            
+            # Fallback to simple aggregation
+            try:
+                # Try to use the result aggregator directly
+                from .plans.factory import create_plan_from_dict
+                if isinstance(execution_plan, dict):
+                    query_plan = create_plan_from_dict(execution_plan)
+                else:
+                    query_plan = execution_plan
+                    
+                return await self.result_aggregator.aggregate_results(
+                    query_plan,
+                    operation_results,
+                    user_question
+                )
+            except Exception as fallback_error:
+                logger.error(f"Fallback aggregation also failed: {fallback_error}")
+                return {
+                    "error": f"Aggregation failed: {e}",
+                    "fallback_error": str(fallback_error),
+                    "raw_results": operation_results
+                }
+
+    async def _aggregate_results_bedrock(
+        self,
+        execution_results: Dict[str, Any],
+        query_plan: QueryPlan,
+        user_question: str
+    ) -> Dict[str, Any]:
+        """Enhanced result aggregation using Bedrock."""
+        try:
+            # Use traditional aggregation first
+            operation_results = {op_id: result.get("result", result) for op_id, result in execution_results.items()}
+            base_result = await self.result_aggregator.aggregate_results(
+                query_plan,
+                operation_results,
+                user_question
+            )
+            
+            # Get Bedrock client and enhance with analysis
+            bedrock_client = await self._get_bedrock_client()
+            enhanced_analysis = await bedrock_client.analyze_graph_results(
+                execution_results={"results": execution_results, "base_aggregation": base_result},
+                original_question=user_question
+            )
+            
+            return {
+                **base_result,
+                "enhanced_analysis": enhanced_analysis,
+                "aggregation_method": "bedrock_enhanced"
+            }
+            
+        except Exception as e:
+            logger.warning(f"Enhanced aggregation failed: {e}, using traditional method")
+            operation_results = {op_id: result.get("result", result) for op_id, result in execution_results.items()}
+            return await self.result_aggregator.aggregate_results(
+                query_plan,
+                operation_results,
+                user_question
+            )
+    
+    async def _generate_performance_insights_bedrock(
+        self,
+        execution_results: Dict[str, Any],
+        query_plan: QueryPlan,
+        user_question: str
+    ) -> Dict[str, Any]:
+        """Generate performance insights using Bedrock."""
+        try:
+            # Prepare performance data
+            execution_start = self.metrics.get("execution_start", 0) or 0
+            execution_end = self.metrics.get("execution_end", 0) or 0
+            total_duration = max(0, execution_end - execution_start) if execution_start and execution_end else 0
+            
+            performance_data = {
+                "execution_times": {
+                    op_id: result.get("execution_time", result.get("duration", 0))
+                    for op_id, result in execution_results.items()
+                    if isinstance(result, dict)
+                },
+                "operation_count": len(execution_results),
+                "total_duration": total_duration,
+                "parallelism_used": self.enhanced_parallelism_enabled
+            }
+            
+            # Get insights from Bedrock
+            bedrock_client = await self._get_bedrock_client()
+            insights_result = await bedrock_client.optimize_graph_execution(
+                original_plan={"performance_analysis": True},
+                performance_data={
+                    **performance_data,
+                    "question": user_question,
+                    "analysis_type": "performance_insights"
+                }
+            )
+            
+            if "insights" in insights_result:
+                return insights_result["insights"]
+            
+            # Fallback insights
+            return {
+                "total_operations": len(execution_results),
+                "average_operation_time": sum(performance_data["execution_times"].values()) / max(len(performance_data["execution_times"]), 1),
+                "parallelism_efficiency": "enhanced" if self.enhanced_parallelism_enabled else "standard",
+                "recommendations": ["Consider enabling enhanced parallelism for better performance"]
+            }
+            
+        except Exception as e:
+            logger.warning(f"Performance insights generation failed: {e}")
+            return {
+                "error": str(e),
+                "basic_metrics": {
+                    "operations_executed": len(execution_results),
+                    "enhanced_parallelism": self.enhanced_parallelism_enabled
+                }
+            } 

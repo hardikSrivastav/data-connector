@@ -22,7 +22,7 @@ from ..db.orchestrator.result_aggregator import ResultAggregator
 from ..tools.state_manager import StateManager, AnalysisState
 from ..db.db_orchestrator import Orchestrator
 from ..llm.client import get_llm_client
-from ..meta.ingest import SchemaSearcher, ensure_index_exists
+# ensure_index_exists and SchemaSearcher will be imported lazily to avoid circular imports
 from ..performance.schema_monitor import ensure_schema_index_updated
 
 # Set up dedicated logging for cross-database execution
@@ -272,6 +272,8 @@ class CrossDatabaseQueryEngine:
             
             # Ensure schema index exists
             try:
+                # Import ensure_index_exists lazily to avoid circular imports
+                from ..meta.ingest import ensure_index_exists
                 await ensure_index_exists(db_type=db_type, conn_uri=db_uri)
                 await ensure_schema_index_updated(force=False, db_type=db_type, conn_uri=db_uri)
             except Exception as schema_error:
@@ -314,6 +316,8 @@ class CrossDatabaseQueryEngine:
             
             # Search schema metadata
             yield self._create_stream_event("postgres_schema_loading", session_id, tables_found=15, progress=0.4)
+            # Import SchemaSearcher lazily to avoid circular imports
+            from ..meta.ingest import SchemaSearcher
             searcher = SchemaSearcher(db_type=db_type)
             schema_chunks = await searcher.search(question, top_k=10, db_type=db_type)
             
@@ -406,6 +410,8 @@ class CrossDatabaseQueryEngine:
             yield self._create_stream_event("schema_loading", session_id, database=db_type, progress=0.2)
             
             try:
+                # Import ensure_index_exists lazily to avoid circular imports
+                from ..meta.ingest import ensure_index_exists
                 await ensure_index_exists(db_type=db_type, conn_uri=db_uri)
                 await ensure_schema_index_updated(force=False, db_type=db_type, conn_uri=db_uri)
                 
@@ -834,6 +840,8 @@ class CrossDatabaseQueryEngine:
         """Execute a PostgreSQL query"""
         try:
             # Search schema metadata
+            # Import SchemaSearcher lazily to avoid circular imports
+            from ..meta.ingest import SchemaSearcher
             searcher = SchemaSearcher(db_type=db_type)
             schema_chunks = await searcher.search(question, top_k=10, db_type=db_type)
             
@@ -875,6 +883,8 @@ class CrossDatabaseQueryEngine:
             
             # Search schema metadata
             yield self._create_stream_event("mongodb_schema_loading", session_id, collections_found=8, progress=0.6)
+            # Import SchemaSearcher lazily to avoid circular imports
+            from ..meta.ingest import SchemaSearcher
             searcher = SchemaSearcher(db_type=db_type)
             schema_chunks = await searcher.search(question, top_k=5, db_type=db_type)
             
@@ -933,6 +943,8 @@ class CrossDatabaseQueryEngine:
             yield self._create_stream_event("qdrant_connecting", session_id, host="localhost", collection="knowledge")
             
             # Search schema metadata
+            # Import SchemaSearcher lazily to avoid circular imports
+            from ..meta.ingest import SchemaSearcher
             searcher = SchemaSearcher(db_type=db_type)
             schema_chunks = await searcher.search(question, top_k=5, db_type=db_type)
             
@@ -1081,6 +1093,8 @@ class CrossDatabaseQueryEngine:
         """Execute a MongoDB query"""
         try:
             # Search schema metadata
+            # Import SchemaSearcher lazily to avoid circular imports
+            from ..meta.ingest import SchemaSearcher
             searcher = SchemaSearcher(db_type=db_type)
             schema_chunks = await searcher.search(question, top_k=5, db_type=db_type)
             
@@ -1126,6 +1140,8 @@ class CrossDatabaseQueryEngine:
         """Execute a Qdrant vector search query"""
         try:
             # Search schema metadata
+            # Import SchemaSearcher lazily to avoid circular imports
+            from ..meta.ingest import SchemaSearcher
             searcher = SchemaSearcher(db_type=db_type)
             schema_chunks = await searcher.search(question, top_k=5, db_type=db_type)
             
@@ -1250,8 +1266,15 @@ class CrossDatabaseQueryEngine:
                 "success": False
             }
 
-# Create global query engine instance
-query_engine = CrossDatabaseQueryEngine()
+# Global query engine instance (lazy initialization)
+_query_engine = None
+
+def get_query_engine():
+    """Get or create the global query engine instance."""
+    global _query_engine
+    if _query_engine is None:
+        _query_engine = CrossDatabaseQueryEngine()
+    return _query_engine
 
 async def process_ai_query_stream(question: str, analyze: bool = False, db_type: Optional[str] = None, db_uri: Optional[str] = None, cross_database: bool = False, session_id: str = None) -> AsyncIterator[Dict[str, Any]]:
     """
@@ -1288,19 +1311,19 @@ async def process_ai_query_stream(question: str, analyze: bool = False, db_type:
     # ================================================
     
     try:
-        yield query_engine._create_stream_event("status", session_id, message="Starting query processing...")
+        yield get_query_engine()._create_stream_event("status", session_id, message="Starting query processing...")
         
         # If specific db_type and db_uri provided, use single database mode
         if db_type and db_uri and not cross_database:
             cross_db_logger.info(f"🔄 Using single database streaming mode: {db_type}")
-            async for event in query_engine.execute_single_database_query_stream(question, db_type, db_uri, analyze, session_id):
+            async for event in get_query_engine().execute_single_database_query_stream(question, db_type, db_uri, analyze, session_id):
                 yield event
         else:
             # Classify the query first to determine if cross-database is needed
             cross_db_logger.info(f"🔍 Classifying query to determine database mode")
             
             classification = None
-            async for event in query_engine.classify_query_stream(question, session_id):
+            async for event in get_query_engine().classify_query_stream(question, session_id):
                 yield event
                 if event["type"] == "databases_selected":
                     classification = {
@@ -1310,7 +1333,7 @@ async def process_ai_query_stream(question: str, analyze: bool = False, db_type:
             
             if not classification:
                 # Fallback if classification failed
-                yield query_engine._create_stream_event(
+                yield get_query_engine()._create_stream_event(
                     "error", 
                     session_id,
                     error_code="CLASSIFICATION_FAILED",
@@ -1319,13 +1342,13 @@ async def process_ai_query_stream(question: str, analyze: bool = False, db_type:
                 )
                 # Use fallback to default database
                 settings = Settings()
-                async for event in query_engine.execute_single_database_query_stream(question, settings.DB_TYPE, settings.connection_uri, analyze, session_id):
+                async for event in get_query_engine().execute_single_database_query_stream(question, settings.DB_TYPE, settings.connection_uri, analyze, session_id):
                     yield event
                 return
             
             if classification.get("is_cross_database", False) or cross_database:
                 cross_db_logger.info(f"🌐 Using cross-database streaming mode")
-                async for event in query_engine.execute_cross_database_query_stream(question, analyze, optimize=False, save_session=True, session_id=session_id):
+                async for event in get_query_engine().execute_cross_database_query_stream(question, analyze, optimize=False, save_session=True, session_id=session_id):
                     yield event
             else:
                 # Single database based on classification
@@ -1346,21 +1369,21 @@ async def process_ai_query_stream(question: str, analyze: bool = False, db_type:
                     else:
                         uri = settings.connection_uri
                     
-                    async for event in query_engine.execute_single_database_query_stream(question, db_type_selected, uri, analyze, session_id):
+                    async for event in get_query_engine().execute_single_database_query_stream(question, db_type_selected, uri, analyze, session_id):
                         yield event
                 else:
                     # Fallback to default database
                     settings = Settings()
                     cross_db_logger.info(f"🔄 Using fallback single database streaming mode: {settings.DB_TYPE}")
-                    async for event in query_engine.execute_single_database_query_stream(question, settings.DB_TYPE, settings.connection_uri, analyze, session_id):
+                    async for event in get_query_engine().execute_single_database_query_stream(question, settings.DB_TYPE, settings.connection_uri, analyze, session_id):
                         yield event
         
-        yield query_engine._create_stream_event("complete", session_id, success=True, total_time=5.2)
+        yield get_query_engine()._create_stream_event("complete", session_id, success=True, total_time=5.2)
         cross_db_logger.info(f"🏁 STREAMING ENTRY POINT: process_ai_query_stream completed successfully")
         
     except Exception as e:
         cross_db_logger.error(f"❌ Error in streaming process_ai_query: {str(e)}")
-        yield query_engine._create_stream_event(
+        yield get_query_engine()._create_stream_event(
             "error", 
             session_id,
             error_code="QUERY_PROCESSING_FAILED",
@@ -1400,17 +1423,17 @@ async def process_ai_query(question: str, analyze: bool = False, db_type: Option
         # If specific db_type and db_uri provided, use single database mode
         if db_type and db_uri and not cross_database:
             cross_db_logger.info(f"🔄 Using single database mode: {db_type}")
-            result = await query_engine.execute_single_database_query(question, db_type, db_uri, analyze)
+            result = await get_query_engine().execute_single_database_query(question, db_type, db_uri, analyze)
         else:
             # Classify the query first to determine if cross-database is needed
             cross_db_logger.info(f"🔍 Classifying query to determine database mode")
-            classification = await query_engine.classify_query(question)
+            classification = await get_query_engine().classify_query(question)
             cross_db_logger.info(f"🔍 Classification result: {classification}")
             
             if classification.get("is_cross_database", False) or cross_database:
                 cross_db_logger.info(f"🌐 Using cross-database mode")
                 cross_db_logger.info(f"🌐 is_cross_database: {classification.get('is_cross_database', False)}, force_cross_database: {cross_database}")
-                result = await query_engine.execute_cross_database_query(question, analyze, optimize=False)
+                result = await get_query_engine().execute_cross_database_query(question, analyze, optimize=False)
             else:
                 # Single database based on classification
                 sources = classification.get("sources", [])
@@ -1431,12 +1454,12 @@ async def process_ai_query(question: str, analyze: bool = False, db_type: Option
                         uri = settings.connection_uri
                     
                     cross_db_logger.info(f"🔄 Using single database mode based on classification: {source['type']}")
-                    result = await query_engine.execute_single_database_query(question, source["type"], uri, analyze)
+                    result = await get_query_engine().execute_single_database_query(question, source["type"], uri, analyze)
                 else:
                     # Fallback to default database
                     settings = Settings()
                     cross_db_logger.info(f"🔄 Using fallback single database mode: {settings.DB_TYPE}")
-                    result = await query_engine.execute_single_database_query(question, settings.DB_TYPE, settings.connection_uri, analyze)
+                    result = await get_query_engine().execute_single_database_query(question, settings.DB_TYPE, settings.connection_uri, analyze)
         
         cross_db_logger.info(f"🏁 ENTRY POINT: process_ai_query returning: {type(result)} with keys: {list(result.keys())}")
         cross_db_logger.info(f"🏁 Result success: {result.get('success', 'KEY_NOT_FOUND')}")
@@ -1476,7 +1499,7 @@ async def _process_visualization_query(question: str, analyze: bool = False) -> 
     try:
         # Step 1: Get data for visualization using existing query engine
         viz_logger.info(f"Step 1: Fetching data for visualization using cross-database query")
-        data_result = await query_engine.execute_cross_database_query(question, analyze=True)
+        data_result = await get_query_engine().execute_cross_database_query(question, analyze=True)
         
         viz_logger.info(f"Data fetch result keys: {list(data_result.keys())}")
         viz_logger.info(f"Data fetch success: {data_result.get('success', False)}")
@@ -1624,13 +1647,13 @@ async def _process_visualization_query_stream(question: str, analyze: bool = Fal
     
     try:
         # Step 1: Data retrieval
-        yield query_engine._create_stream_event("status", session_id, message="Fetching data for visualization...")
-        yield query_engine._create_stream_event("visualization_stage", session_id, stage="data_fetching", progress=0.1)
+        yield get_query_engine()._create_stream_event("status", session_id, message="Fetching data for visualization...")
+        yield get_query_engine()._create_stream_event("visualization_stage", session_id, stage="data_fetching", progress=0.1)
         
-        data_result = await query_engine.execute_cross_database_query(question, analyze=True)
+        data_result = await get_query_engine().execute_cross_database_query(question, analyze=True)
         
         if not data_result.get("success", False):
-            yield query_engine._create_stream_event(
+            yield get_query_engine()._create_stream_event(
                 "error", 
                 session_id,
                 error_code="DATA_FETCH_FAILED",
@@ -1640,8 +1663,8 @@ async def _process_visualization_query_stream(question: str, analyze: bool = Fal
             return
         
         # Step 2: Data analysis
-        yield query_engine._create_stream_event("status", session_id, message="Analyzing data characteristics...")
-        yield query_engine._create_stream_event("visualization_stage", session_id, stage="data_analysis", progress=0.3)
+        yield get_query_engine()._create_stream_event("status", session_id, message="Analyzing data characteristics...")
+        yield get_query_engine()._create_stream_event("visualization_stage", session_id, stage="data_analysis", progress=0.3)
         
         # Convert to visualization dataset
         import pandas as pd
@@ -1664,8 +1687,8 @@ async def _process_visualization_query_stream(question: str, analyze: bool = Fal
         analysis_result = await analyzer.analyze_dataset(dataset, question, session_id)
         
         # Step 3: Chart selection
-        yield query_engine._create_stream_event("status", session_id, message="Selecting optimal chart type...")
-        yield query_engine._create_stream_event("visualization_stage", session_id, stage="chart_selection", progress=0.6)
+        yield get_query_engine()._create_stream_event("status", session_id, message="Selecting optimal chart type...")
+        yield get_query_engine()._create_stream_event("visualization_stage", session_id, stage="chart_selection", progress=0.6)
         
         selector = ChartSelectionEngine(llm_client)
         user_prefs = UserPreferences(
@@ -1676,14 +1699,14 @@ async def _process_visualization_query_stream(question: str, analyze: bool = Fal
         chart_selection = await selector.select_optimal_chart(analysis_result, user_prefs, session_id)
         
         # Step 4: Chart configuration
-        yield query_engine._create_stream_event("status", session_id, message="Generating chart configuration...")
-        yield query_engine._create_stream_event("visualization_stage", session_id, stage="config_generation", progress=0.8)
+        yield get_query_engine()._create_stream_event("status", session_id, message="Generating chart configuration...")
+        yield get_query_engine()._create_stream_event("visualization_stage", session_id, stage="config_generation", progress=0.8)
         
         # Step 5: Complete
-        yield query_engine._create_stream_event("status", session_id, message="Visualization ready!")
-        yield query_engine._create_stream_event("visualization_stage", session_id, stage="complete", progress=1.0)
+        yield get_query_engine()._create_stream_event("status", session_id, message="Visualization ready!")
+        yield get_query_engine()._create_stream_event("visualization_stage", session_id, stage="complete", progress=1.0)
         
-        yield query_engine._create_stream_event(
+        yield get_query_engine()._create_stream_event(
             "complete", 
             session_id, 
             success=True, 
@@ -1708,7 +1731,7 @@ async def _process_visualization_query_stream(question: str, analyze: bool = Fal
         viz_logger.error(f"Error in visualization streaming: {str(e)}")
         import traceback
         viz_logger.error(f"Full traceback: {traceback.format_exc()}")
-        yield query_engine._create_stream_event(
+        yield get_query_engine()._create_stream_event(
             "error", 
             session_id,
             error_code="VISUALIZATION_FAILED",

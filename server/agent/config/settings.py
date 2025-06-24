@@ -176,6 +176,20 @@ class Settings(BaseSettings):
     TRIVIAL_LLM_TIMEOUT: float = yaml_config.get('trivial_llm', {}).get('timeout', float(os.getenv('TRIVIAL_LLM_TIMEOUT', 3.0)))
     TRIVIAL_LLM_MAX_RETRIES: int = yaml_config.get('trivial_llm', {}).get('max_retries', int(os.getenv('TRIVIAL_LLM_MAX_RETRIES', 1)))
     
+    # AWS Bedrock Settings
+    AWS_ACCESS_KEY_ID: Optional[str] = yaml_config.get('aws', {}).get('access_key_id', os.getenv('AWS_ACCESS_KEY_ID'))
+    AWS_SECRET_ACCESS_KEY: Optional[str] = yaml_config.get('aws', {}).get('secret_access_key', os.getenv('AWS_SECRET_ACCESS_KEY'))
+    AWS_REGION: Optional[str] = yaml_config.get('aws', {}).get('region', os.getenv('AWS_REGION', 'us-east-1'))
+    AWS_SESSION_TOKEN: Optional[str] = yaml_config.get('aws', {}).get('session_token', os.getenv('AWS_SESSION_TOKEN'))
+    
+    # Bedrock-specific settings
+    BEDROCK_MODEL_ID: Optional[str] = yaml_config.get('bedrock', {}).get('model_id', os.getenv('BEDROCK_MODEL_ID', 'anthropic.claude-3-sonnet-20240229-v1:0'))
+    BEDROCK_RUNTIME_REGION: Optional[str] = yaml_config.get('bedrock', {}).get('runtime_region', os.getenv('BEDROCK_RUNTIME_REGION', AWS_REGION))
+    BEDROCK_MAX_TOKENS: int = yaml_config.get('bedrock', {}).get('max_tokens', int(os.getenv('BEDROCK_MAX_TOKENS', 4000)))
+    BEDROCK_TEMPERATURE: float = yaml_config.get('bedrock', {}).get('temperature', float(os.getenv('BEDROCK_TEMPERATURE', 0.1)))
+    BEDROCK_TOP_P: float = yaml_config.get('bedrock', {}).get('top_p', float(os.getenv('BEDROCK_TOP_P', 0.9)))
+    BEDROCK_ENABLED: bool = yaml_config.get('bedrock', {}).get('enabled', os.getenv('BEDROCK_ENABLED', 'true').lower() == 'true')
+    
     def get_app_dir(self) -> str:
         """
         Returns the directory where application data should be stored.
@@ -207,6 +221,39 @@ class Settings(BaseSettings):
         
         # Default to disabled if protocol not recognized
         return False
+    
+    @property
+    def aws_credentials_config(self) -> Dict[str, Any]:
+        """Get AWS credentials configuration for Bedrock"""
+        config = {}
+        
+        if self.AWS_ACCESS_KEY_ID:
+            config['aws_access_key_id'] = self.AWS_ACCESS_KEY_ID
+            
+        if self.AWS_SECRET_ACCESS_KEY:
+            config['aws_secret_access_key'] = self.AWS_SECRET_ACCESS_KEY
+            
+        if self.AWS_REGION:
+            config['region_name'] = self.AWS_REGION
+            
+        if self.AWS_SESSION_TOKEN:
+            config['aws_session_token'] = self.AWS_SESSION_TOKEN
+            
+        return config
+    
+    @property
+    def bedrock_config(self) -> Dict[str, Any]:
+        """Get complete Bedrock configuration"""
+        config = {
+            'enabled': self.BEDROCK_ENABLED,
+            'model_id': self.BEDROCK_MODEL_ID,
+            'runtime_region': self.BEDROCK_RUNTIME_REGION or self.AWS_REGION,
+            'max_tokens': self.BEDROCK_MAX_TOKENS,
+            'temperature': self.BEDROCK_TEMPERATURE,
+            'top_p': self.BEDROCK_TOP_P,
+            'credentials': self.aws_credentials_config
+        }
+        return config
     
     @property
     def db_dsn(self) -> str:
