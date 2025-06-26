@@ -11,10 +11,15 @@ import time
 import boto3
 from typing import Dict, List, Any, Optional, AsyncIterator, Union
 from datetime import datetime
+import hashlib
 
 from ...llm.client import get_llm_client, get_classification_client, AnthropicClient, OpenAIClient
 
 logger = logging.getLogger(__name__)
+
+# Global singleton instance
+_bedrock_langgraph_client = None
+_singleton_config_hash = None
 
 class BedrockLangGraphClient:
     """
@@ -645,3 +650,62 @@ Format your response as clear, structured analysis with sections for different i
             }
         
         return status 
+
+def get_bedrock_langgraph_client(config: Optional[Dict[str, Any]] = None) -> BedrockLangGraphClient:
+    """
+    Factory function to get the singleton BedrockLangGraphClient instance.
+    Uses singleton pattern to avoid repeated expensive Bedrock initialization.
+    
+    Args:
+        config: Optional configuration (only used for first initialization)
+        
+    Returns:
+        Singleton instance of BedrockLangGraphClient
+    """
+    global _bedrock_langgraph_client, _singleton_config_hash
+    
+    # Create config hash for comparison
+    config_hash = None
+    if config:
+        config_str = json.dumps(config, sort_keys=True)
+        config_hash = hashlib.md5(config_str.encode()).hexdigest()
+    
+    # Return existing instance if available and config is compatible
+    if _bedrock_langgraph_client is not None:
+        if config is None or _singleton_config_hash == config_hash:
+            logger.debug("🔄 Returning existing BedrockLangGraphClient instance (singleton)")
+            return _bedrock_langgraph_client
+        else:
+            logger.warning(f"⚠️ Config change detected (old: {_singleton_config_hash}, new: {config_hash}) - but reusing existing client to avoid re-initialization")
+            return _bedrock_langgraph_client
+    
+    logger.info("🚀 Initializing BedrockLangGraphClient singleton...")
+    logger.info(f"🔧 Config hash: {config_hash}")
+    
+    # Create new singleton instance
+    _bedrock_langgraph_client = BedrockLangGraphClient(config)
+    _singleton_config_hash = config_hash
+    logger.info("💾 BedrockLangGraphClient singleton stored successfully")
+    
+    return _bedrock_langgraph_client
+
+def reset_bedrock_langgraph_client():
+    """
+    Reset the singleton BedrockLangGraphClient instance. Useful for testing or configuration changes.
+    """
+    global _bedrock_langgraph_client, _singleton_config_hash
+    logger.info("🔄 Resetting BedrockLangGraphClient singleton")
+    _bedrock_langgraph_client = None
+    _singleton_config_hash = None
+
+def get_singleton_status() -> Dict[str, Any]:
+    """Get status information about the singleton instance"""
+    global _bedrock_langgraph_client, _singleton_config_hash
+    
+    return {
+        "initialized": _bedrock_langgraph_client is not None,
+        "config_hash": _singleton_config_hash,
+        "is_functional": _bedrock_langgraph_client.is_functional if _bedrock_langgraph_client else False,
+        "primary_client": _bedrock_langgraph_client.primary_client if _bedrock_langgraph_client else None,
+        "fallback_count": len(_bedrock_langgraph_client.fallback_clients) if _bedrock_langgraph_client else 0
+    }

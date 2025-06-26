@@ -25,7 +25,7 @@ from ...tools.tools import DataTools
 # LangGraph integration imports
 try:
     from ...langgraph.state import LangGraphState
-    from ...langgraph.graphs.bedrock_client import BedrockLangGraphClient
+    from ...langgraph.graphs.bedrock_client import get_bedrock_langgraph_client
     from ...langgraph.streaming import StreamingNodeBase
     LANGGRAPH_AVAILABLE = True
 except ImportError:
@@ -81,7 +81,7 @@ class PlanningAgent:
         self.session_id = str(uuid.uuid4())
         
         # LangGraph integration
-        self.langgraph_enabled = self.config.get("langgraph_enabled", True) and LANGGRAPH_AVAILABLE
+        self.langgraph_enabled = self.config.get("langgraph_enabled", False) and LANGGRAPH_AVAILABLE
         self.bedrock_client = None
         
         if self.langgraph_enabled:
@@ -90,8 +90,6 @@ class PlanningAgent:
         else:
             if not LANGGRAPH_AVAILABLE:
                 logger.info("LangGraph not available, using traditional planning only")
-            else:
-                logger.info("LangGraph available but disabled by config, using traditional planning only")
     
     def _clean_json_response(self, response: str) -> str:
         """
@@ -804,8 +802,7 @@ class PlanningAgent:
         """Lazy load Bedrock client to avoid circular imports."""
         if self.bedrock_client is None and self.langgraph_enabled:
             try:
-                from ...langgraph.graphs.bedrock_client import BedrockLangGraphClient
-                self.bedrock_client = BedrockLangGraphClient(self.config.get("llm_config"))
+                self.bedrock_client = get_bedrock_langgraph_client(self.config.get("llm_config"))
                 logger.info("✅ Bedrock client initialized successfully")
             except Exception as e:
                 logger.warning(f"Failed to initialize Bedrock client: {e}")

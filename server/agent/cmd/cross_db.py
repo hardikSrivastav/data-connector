@@ -44,6 +44,28 @@ console = Console()
 # Create typer app
 app = typer.Typer(help="Cross-Database Orchestration CLI")
 
+# Global orchestrator instance to avoid re-initialization
+_global_orchestrator = None
+
+def get_orchestrator():
+    """Get or create the global LangGraph orchestrator instance"""
+    global _global_orchestrator
+    
+    if _global_orchestrator is None:
+        config = {
+            "use_langgraph_for_complex": True,
+            "complexity_threshold": 3,  # Lower threshold for testing
+            "preserve_trivial_routing": True,
+            "llm_config": {
+                "primary_provider": "bedrock",
+                "fallbacks": ["anthropic", "openai"]
+            }
+        }
+        _global_orchestrator = LangGraphIntegrationOrchestrator(config)
+        console.print("[dim]🔧 Initialized global LangGraph orchestrator[/dim]")
+    
+    return _global_orchestrator
+
 @app.command()
 def query(
     question: str = typer.Argument(..., help="Natural language question to execute across databases"),
@@ -654,29 +676,213 @@ def display_query_results(rows):
     if len(rows) > 20:
         console.print(f"[italic](Showing 20 of {len(rows)} rows)[/italic]")
 
+def display_output_breakdown(aggregator):
+    """Display comprehensive breakdown of all captured outputs"""
+    
+    # Get all different types of outputs
+    raw_data = aggregator.get_all_raw_data()
+    execution_plans = aggregator.get_all_execution_plans()
+    tool_executions = aggregator.get_all_tool_executions()
+    final_synthesis = aggregator.get_final_synthesis()
+    performance = aggregator.get_performance_summary()
+    
+    # Summary table
+    summary_table = Table(title="Output Summary")
+    summary_table.add_column("Output Type", style="cyan")
+    summary_table.add_column("Count", style="green")
+    summary_table.add_column("Description", style="white")
+    
+    summary_table.add_row("Raw Data Sources", str(len(raw_data)), "Database queries and API responses")
+    summary_table.add_row("Execution Plans", str(len(execution_plans)), "Query planning and optimization decisions")
+    summary_table.add_row("Tool Executions", str(len(tool_executions)), "Individual tool calls and results")
+    summary_table.add_row("Final Synthesis", "1" if final_synthesis else "0", "LLM-generated final response")
+    summary_table.add_row("Performance Metrics", "1" if performance else "0", "Timing and resource usage")
+    
+    console.print(summary_table)
+    
+    # Raw Data Breakdown
+    if raw_data:
+        console.print(f"\n[bold yellow]📁 Raw Data Sources ({len(raw_data)})[/bold yellow]")
+        data_table = Table()
+        data_table.add_column("Source", style="cyan")
+        data_table.add_column("Rows", style="green")
+        data_table.add_column("Columns", style="yellow")
+        data_table.add_column("Execution Time", style="white")
+        data_table.add_column("Sample?", style="dim")
+        
+        total_rows = 0
+        for data in raw_data:
+            total_rows += data.row_count
+            data_table.add_row(
+                data.source,
+                str(data.row_count),
+                str(len(data.columns)),
+                f"{data.execution_time_ms:.1f}ms",
+                "Yes" if data.is_sample else "No"
+            )
+        
+        console.print(data_table)
+        console.print(f"[dim]Total rows retrieved: {total_rows}[/dim]")
+    
+    # Execution Plans Breakdown
+    if execution_plans:
+        console.print(f"\n[bold yellow]📋 Execution Plans ({len(execution_plans)})[/bold yellow]")
+        for i, plan in enumerate(execution_plans):
+            console.print(f"[cyan]Plan {i+1}:[/cyan] {plan.strategy} strategy with {len(plan.operations)} operations")
+            if plan.optimizations_applied:
+                console.print(f"  Optimizations: {', '.join(plan.optimizations_applied)}")
+            if plan.estimated_duration_ms:
+                console.print(f"  Estimated duration: {plan.estimated_duration_ms:.1f}ms")
+    
+    # Tool Executions Breakdown
+    if tool_executions:
+        console.print(f"\n[bold yellow]🔧 Tool Executions ({len(tool_executions)})[/bold yellow]")
+        tool_table = Table()
+        tool_table.add_column("Tool ID", style="cyan")
+        tool_table.add_column("Status", style="green")
+        tool_table.add_column("Execution Time", style="yellow")
+        tool_table.add_column("Retries", style="white")
+        tool_table.add_column("Dependencies", style="dim")
+        
+        successful_tools = 0
+        total_execution_time = 0
+        
+        for tool in tool_executions:
+            if tool.success:
+                successful_tools += 1
+                status = "[green]✅ Success[/green]"
+            else:
+                status = "[red]❌ Failed[/red]"
+            
+            total_execution_time += tool.execution_time_ms
+            
+            tool_table.add_row(
+                tool.tool_id,
+                status,
+                f"{tool.execution_time_ms:.1f}ms",
+                str(tool.retry_count),
+                str(len(tool.dependencies_resolved))
+            )
+        
+        console.print(tool_table)
+        console.print(f"[dim]Success rate: {successful_tools}/{len(tool_executions)} ({successful_tools/len(tool_executions)*100:.1f}%)[/dim]")
+        console.print(f"[dim]Total tool execution time: {total_execution_time:.1f}ms[/dim]")
+    
+    # Final Synthesis
+    if final_synthesis:
+        console.print(f"\n[bold yellow]📝 Final Synthesis[/bold yellow]")
+        console.print(f"Response length: {len(final_synthesis.response_text)} characters")
+        console.print(f"Confidence score: {final_synthesis.confidence_score:.2f}")
+        console.print(f"Sources used: {len(final_synthesis.sources_used)}")
+        console.print(f"Synthesis method: {final_synthesis.synthesis_method}")
+        
+        if final_synthesis.quality_metrics:
+            console.print(f"Quality metrics: {final_synthesis.quality_metrics}")
+    
+    # Performance Summary
+    if performance:
+        console.print(f"\n[bold yellow]⚡ Performance Metrics[/bold yellow]")
+        console.print(f"Total duration: {performance.total_duration_ms:.1f}ms")
+        console.print(f"Database query time: {performance.database_query_time:.1f}ms")
+        console.print(f"LLM processing time: {performance.llm_processing_time:.1f}ms")
+        console.print(f"Operations executed: {performance.operations_executed}")
+        console.print(f"Operations successful: {performance.operations_successful}")
+        
+        if performance.parallel_efficiency:
+            console.print(f"Parallel efficiency: {performance.parallel_efficiency:.2f}")
+        if performance.cache_hit_rate > 0:
+            console.print(f"Cache hit rate: {performance.cache_hit_rate:.2f}")
+
+def display_workflow_timeline(aggregator):
+    """Display chronological timeline of workflow execution"""
+    
+    timeline = aggregator.get_workflow_timeline()
+    
+    if not timeline:
+        console.print("[yellow]No timeline data available[/yellow]")
+        return
+    
+    # Create timeline table
+    timeline_table = Table(title="Workflow Execution Timeline")
+    timeline_table.add_column("Timestamp", style="dim")
+    timeline_table.add_column("Output Type", style="cyan")
+    timeline_table.add_column("Node", style="yellow")
+    timeline_table.add_column("Summary", style="white")
+    timeline_table.add_column("Size", style="green")
+    timeline_table.add_column("Duration", style="magenta")
+    
+    # Parse timeline and add rows
+    for event in timeline:
+        # Format timestamp (show only time, not date)
+        from datetime import datetime
+        try:
+            dt = datetime.fromisoformat(event["timestamp"].replace("Z", "+00:00"))
+            time_str = dt.strftime("%H:%M:%S.%f")[:-3]  # Include milliseconds
+        except:
+            time_str = event["timestamp"][-12:]  # Fallback to last 12 chars
+        
+        # Format size
+        size_bytes = event.get("size_bytes")
+        if size_bytes:
+            if size_bytes < 1024:
+                size_str = f"{size_bytes}B"
+            elif size_bytes < 1024 * 1024:
+                size_str = f"{size_bytes/1024:.1f}KB"
+            else:
+                size_str = f"{size_bytes/(1024*1024):.1f}MB"
+        else:
+            size_str = "-"
+        
+        # Format processing time
+        proc_time = event.get("processing_time_ms")
+        time_str_proc = f"{proc_time:.1f}ms" if proc_time else "-"
+        
+        timeline_table.add_row(
+            time_str,
+            event["output_type"].replace("_", " ").title(),
+            event.get("node_id", "-"),
+            event["content_summary"],
+            size_str,
+            time_str_proc
+        )
+    
+    console.print(timeline_table)
+    
+    # Show summary statistics
+    console.print(f"\n[dim]Timeline contains {len(timeline)} events[/dim]")
+    
+    # Calculate total data processed
+    total_bytes = sum(event.get("size_bytes", 0) for event in timeline)
+    if total_bytes > 0:
+        if total_bytes < 1024 * 1024:
+            console.print(f"[dim]Total data processed: {total_bytes/1024:.1f}KB[/dim]")
+        else:
+            console.print(f"[dim]Total data processed: {total_bytes/(1024*1024):.1f}MB[/dim]")
+    
+    # Show event type distribution
+    event_types = {}
+    for event in timeline:
+        event_type = event["output_type"]
+        event_types[event_type] = event_types.get(event_type, 0) + 1
+    
+    console.print(f"[dim]Event distribution: {dict(event_types)}[/dim]")
+
 @app.command()
 def langgraph(
     question: str = typer.Argument(..., help="Natural language question to execute using LangGraph orchestration"),
     force_langgraph: bool = typer.Option(False, "--force", "-f", help="Force use of LangGraph (bypass complexity analysis)"),
     show_routing: bool = typer.Option(False, "--show-routing", "-r", help="Show routing decision details"),
     verbose: bool = typer.Option(False, "--verbose", "-v", help="Show detailed execution information"),
+    show_outputs: bool = typer.Option(False, "--show-outputs", "-o", help="Show comprehensive output breakdown"),
+    show_timeline: bool = typer.Option(False, "--show-timeline", "-t", help="Show workflow execution timeline"),
+    export_analysis: Optional[str] = typer.Option(None, "--export", "-e", help="Export full analysis to JSON file"),
     save_session: bool = typer.Option(True, "--save-session/--no-save", help="Save session to disk"),
     stream_output: bool = typer.Option(True, "--stream/--no-stream", help="Enable streaming output")
 ):
     """Execute a query using LangGraph orchestration with automatic database detection"""
     async def run():
         # Initialize LangGraph integration orchestrator
-        config = {
-            "use_langgraph_for_complex": True,
-            "complexity_threshold": 3,  # Lower threshold for testing
-            "preserve_trivial_routing": True,
-            "llm_config": {
-                "primary_provider": "bedrock",
-                "fallbacks": ["anthropic", "openai"]
-            }
-        }
-        
-        orchestrator = LangGraphIntegrationOrchestrator(config)
+        orchestrator = get_orchestrator()
         
         # Create session for tracking
         session_id = str(uuid.uuid4())
@@ -704,6 +910,13 @@ def langgraph(
                 )
                 
                 progress.update(task, completed=True)
+            
+            # CRITICAL: Extract the actual session ID used by the workflow execution
+            # The workflow may have created internal sessions we need to track
+            actual_session_id = result.get("session_id", session_id)
+            if actual_session_id != session_id:
+                console.print(f"[dim]🔧 Using workflow session ID: {actual_session_id[:8]}...[/dim]")
+                session_id = actual_session_id
             
             # Display routing information if requested
             if show_routing or verbose:
@@ -738,6 +951,37 @@ def langgraph(
             execution_metadata = result.get("execution_metadata", {})
             execution_time = execution_metadata.get("execution_time", 0)
             console.print(f"Execution time: {execution_time:.2f} seconds")
+            
+            # Show comprehensive output breakdown if requested
+            if show_outputs or show_timeline or export_analysis:
+                from agent.langgraph.output_aggregator import get_output_integrator
+                
+                try:
+                    output_integrator = get_output_integrator()
+                    aggregator = output_integrator.get_aggregator(session_id)
+                    
+                    # Show output breakdown
+                    if show_outputs:
+                        console.print(f"\n[bold cyan]📊 Comprehensive Output Analysis[/bold cyan]")
+                        display_output_breakdown(aggregator)
+                    
+                    # Show timeline
+                    if show_timeline:
+                        console.print(f"\n[bold cyan]⏱️ Workflow Execution Timeline[/bold cyan]")
+                        display_workflow_timeline(aggregator)
+                    
+                    # Export analysis
+                    if export_analysis:
+                        export_data = aggregator.export_for_analysis()
+                        with open(export_analysis, 'w') as f:
+                            json.dump(export_data, f, indent=2, default=str)
+                        console.print(f"\n[green]📄 Full analysis exported to {export_analysis}[/green]")
+                    
+                except Exception as e:
+                    console.print(f"\n[yellow]⚠️ Could not access output aggregator: {e}[/yellow]")
+                    if verbose:
+                        import traceback
+                        console.print(traceback.format_exc())
             
             # Display results based on workflow type
             if workflow == "traditional":
@@ -817,92 +1061,6 @@ def langgraph(
                     else:
                         console.print("[yellow]No results to display[/yellow]")
             
-            elif workflow == "iterative":
-                # NEW: Iterative workflow results (Phase 1)
-                console.print(f"\n[bold cyan]🔄 Iterative Workflow Results (Phase 1):[/bold cyan]")
-                
-                # Display phase information
-                phase = result.get("phase", "unknown")
-                console.print(f"Phase: [green]{phase}[/green]")
-                
-                # Display iterative capabilities
-                iterative_capabilities = result.get("iterative_capabilities", {})
-                if verbose and iterative_capabilities:
-                    console.print(f"\n[bold]Iterative Capabilities:[/bold]")
-                    for capability, enabled in iterative_capabilities.items():
-                        status = "✅" if enabled else "❌"
-                        console.print(f"{status} {capability.replace('_', ' ').title()}")
-                
-                # Display classification results
-                classification = result.get("classification", {})
-                if classification:
-                    console.print(f"\n[bold]🔍 Database Classification:[/bold]")
-                    databases = classification.get("databases_identified", [])
-                    confidence = classification.get("confidence", 0.0)
-                    console.print(f"Databases: [cyan]{', '.join(databases)}[/cyan]")
-                    console.print(f"Confidence: [{'green' if confidence >= 0.8 else 'yellow' if confidence >= 0.6 else 'red'}]{confidence:.2f}[/{'green' if confidence >= 0.8 else 'yellow' if confidence >= 0.6 else 'red'}]")
-                    
-                    if verbose:
-                        iterative_features = classification.get("iterative_features", {})
-                        if iterative_features:
-                            console.print(f"Classification Features: {list(iterative_features.keys())}")
-                
-                # Display metadata results
-                metadata = result.get("metadata", {})
-                if metadata:
-                    console.print(f"\n[bold]📊 Adaptive Metadata Collection:[/bold]")
-                    schemas = metadata.get("schemas", {})
-                    confidence = metadata.get("confidence", 0.0)
-                    strategy = metadata.get("collection_strategy", {}).get("strategy_type", "unknown")
-                    console.print(f"Schemas collected: [cyan]{len(schemas)}[/cyan]")
-                    console.print(f"Collection strategy: [yellow]{strategy}[/yellow]")
-                    console.print(f"Confidence: [{'green' if confidence >= 0.8 else 'yellow' if confidence >= 0.6 else 'red'}]{confidence:.2f}[/{'green' if confidence >= 0.8 else 'yellow' if confidence >= 0.6 else 'red'}]")
-                
-                # Display planning results
-                planning = result.get("planning", {})
-                if planning:
-                    console.print(f"\n[bold]📋 Iterative Planning:[/bold]")
-                    plan = planning.get("execution_plan", {})
-                    confidence = planning.get("confidence", 0.0)
-                    steps = len(plan.get("steps", []))
-                    console.print(f"Plan steps: [cyan]{steps}[/cyan]")
-                    console.print(f"Confidence: [{'green' if confidence >= 0.8 else 'yellow' if confidence >= 0.6 else 'red'}]{confidence:.2f}[/{'green' if confidence >= 0.8 else 'yellow' if confidence >= 0.6 else 'red'}]")
-                    
-                    if verbose:
-                        iterative_features = planning.get("iterative_features", {})
-                        if iterative_features:
-                            console.print(f"Planning Features: {list(iterative_features.keys())}")
-                
-                # Display monitoring results
-                monitoring = result.get("monitoring", {})
-                if monitoring:
-                    console.print(f"\n[bold]📈 Execution Monitoring:[/bold]")
-                    metrics = monitoring.get("metrics", {})
-                    feedback = monitoring.get("feedback", {})
-                    recommendations = monitoring.get("recommendations", [])
-                    
-                    if metrics:
-                        console.print(f"Performance metrics collected: [cyan]{len(metrics)}[/cyan]")
-                    
-                    if recommendations:
-                        console.print(f"Improvement recommendations: [yellow]{len(recommendations)}[/yellow]")
-                        
-                        if verbose:
-                            console.print(f"\n[bold]Recommendations:[/bold]")
-                            for i, rec in enumerate(recommendations[:3], 1):  # Show first 3
-                                area = rec.get("area", "unknown")
-                                priority = rec.get("priority", "medium")
-                                suggestion = rec.get("suggestion", "No suggestion")
-                                priority_color = "red" if priority == "high" else "yellow" if priority == "medium" else "green"
-                                console.print(f"{i}. [{priority_color}]{priority.upper()}[/{priority_color}] {area}: {suggestion}")
-                            
-                            if len(recommendations) > 3:
-                                console.print(f"   ... and {len(recommendations) - 3} more recommendations")
-                
-                # Show that this is Phase 1 foundation
-                console.print(f"\n[dim]Phase 1 Foundation: Classification, Metadata, Planning, and Monitoring complete[/dim]")
-                console.print(f"[dim]Future phases will implement execution feedback loops and dynamic refinement[/dim]")
-            
             # Show performance statistics if available
             if verbose:
                 integration_status = orchestrator.get_integration_status()
@@ -958,183 +1116,72 @@ def langgraph_short(
     force_langgraph: bool = typer.Option(False, "--force", "-f", help="Force use of LangGraph (bypass complexity analysis)"),
     show_routing: bool = typer.Option(False, "--show-routing", "-r", help="Show routing decision details"),
     verbose: bool = typer.Option(False, "--verbose", "-v", help="Show detailed execution information"),
+    show_outputs: bool = typer.Option(False, "--show-outputs", "-o", help="Show comprehensive output breakdown"),
+    show_timeline: bool = typer.Option(False, "--show-timeline", "-t", help="Show workflow execution timeline"),
+    export_analysis: Optional[str] = typer.Option(None, "--export", "-e", help="Export full analysis to JSON file"),
     save_session: bool = typer.Option(True, "--save-session/--no-save", help="Save session to disk"),
     stream_output: bool = typer.Option(True, "--stream/--no-stream", help="Enable streaming output")
 ):
     """Execute a query using LangGraph orchestration (short alias for 'langgraph')"""
     # Call the main langgraph function with the same parameters
-    langgraph(question, force_langgraph, show_routing, verbose, save_session, stream_output)
+    langgraph(question, force_langgraph, show_routing, verbose, show_outputs, show_timeline, export_analysis, save_session, stream_output)
 
-@app.command("iterative")
-def iterative_workflow(
-    question: str = typer.Argument(..., help="Natural language question to execute using iterative LangGraph workflow"),
-    verbose: bool = typer.Option(False, "--verbose", "-v", help="Show detailed execution information"),
-    save_session: bool = typer.Option(True, "--save-session/--no-save", help="Save session to disk"),
-    show_progress: bool = typer.Option(True, "--progress/--no-progress", help="Show progress indicators")
-):
-    """Execute a query using the new iterative LangGraph workflow (Phase 1)"""
+
+@app.command(name="bedrock-status")
+def bedrock_status():
+    """Show Bedrock client singleton status for debugging re-initialization issues"""
     async def run():
-        # Initialize LangGraph integration orchestrator with iterative configuration
+        from agent.langgraph.graphs.bedrock_client import get_singleton_status, get_bedrock_langgraph_client
+        
+        # Get singleton status
+        status = get_singleton_status()
+        
+        console.print("[bold cyan]Bedrock Client Singleton Status[/bold cyan]")
+        
+        # Create status table
+        table = Table(title="Singleton Information")
+        table.add_column("Property", style="cyan")
+        table.add_column("Value", style="white")
+        
+        table.add_row("Initialized", "[green]Yes[/green]" if status["initialized"] else "[red]No[/red]")
+        table.add_row("Config Hash", status.get("config_hash", "None") or "None")
+        table.add_row("Is Functional", "[green]Yes[/green]" if status.get("is_functional") else "[red]No[/red]")
+        table.add_row("Primary Client", status.get("primary_client", "None") or "None")
+        table.add_row("Fallback Count", str(status.get("fallback_count", 0)))
+        
+        console.print(table)
+        
+        # Test singleton behavior
+        console.print("\n[bold yellow]Testing Singleton Behavior[/bold yellow]")
+        
+        # Get client twice with same config
         config = {
-            "use_langgraph_for_complex": True,
-            "complexity_threshold": 1,  # Low threshold to force iterative workflow
-            "preserve_trivial_routing": False,
-            "force_iterative": True,  # Force iterative workflow
-            "iterative_config": {
-                "enable_refinement": True,
-                "confidence_threshold": 0.7,
-                "enable_adaptive_metadata": True,
-                "enable_iterative_planning": True,
-                "enable_execution_monitoring": True
-            },
             "llm_config": {
                 "primary_provider": "bedrock",
                 "fallbacks": ["anthropic", "openai"]
             }
         }
         
-        orchestrator = LangGraphIntegrationOrchestrator(config)
+        client1 = get_bedrock_langgraph_client(config)
+        client2 = get_bedrock_langgraph_client(config)
         
-        # Create session for tracking
-        session_id = str(uuid.uuid4())
+        if client1 is client2:
+            console.print("[green]✅ Singleton working correctly - same instance returned[/green]")
+        else:
+            console.print("[red]❌ Singleton BROKEN - different instances returned![/red]")
         
-        console.print(f"🔄 [bold blue]Iterative LangGraph Workflow (Phase 1)[/bold blue]")
-        console.print(f"Question: [italic]{question}[/italic]")
-        console.print(f"Session ID: [dim]{session_id[:8]}...[/dim]")
-        console.print()
+        # Show client details
+        console.print(f"\nClient 1 ID: {id(client1)}")
+        console.print(f"Client 2 ID: {id(client2)}")
+        console.print(f"Primary Client: {client1.primary_client}")
+        console.print(f"Fallback Clients: {len(client1.fallback_clients)}")
         
-        try:
-            # Execute query with iterative workflow
-            if show_progress:
-                with Progress(
-                    SpinnerColumn(),
-                    TextColumn("[bold blue]Processing with iterative workflow..."),
-                    transient=not verbose,
-                ) as progress:
-                    task = progress.add_task("Executing iterative workflow...", total=None)
-                    
-                    # Force iterative workflow execution
-                    result = await orchestrator.process_query(
-                        question=question,
-                        session_id=session_id,
-                        databases_available=None,  # Let it auto-detect
-                        force_langgraph=True  # Force LangGraph usage
-                    )
-                    
-                    progress.update(task, completed=True)
-            else:
-                result = await orchestrator.process_query(
-                    question=question,
-                    session_id=session_id,
-                    databases_available=None,
-                    force_langgraph=True
-                )
-            
-            # Display execution results
-            if "error" in result:
-                console.print(f"\n[bold red]❌ Iterative Workflow Failed[/bold red]")
-                console.print(f"Error: {result['error']}")
-                
-                if verbose and "execution_metadata" in result:
-                    error_details = result["execution_metadata"].get("error_details")
-                    if error_details:
-                        console.print(f"Details: {error_details}")
-                
-                return
-            
-            # Success - display iterative workflow results
-            workflow = result.get("workflow", "unknown")
-            console.print(f"\n[bold green]✅ Iterative Workflow Successful[/bold green] ({workflow})")
-            
-            # Display execution summary
-            execution_metadata = result.get("execution_metadata", {})
-            execution_time = execution_metadata.get("execution_time", 0)
-            console.print(f"Total execution time: {execution_time:.2f} seconds")
-            
-            # Display iterative workflow specific results
-            if workflow == "iterative":
-                # Display detailed iterative results using the new display logic
-                phase = result.get("phase", "phase_1")
-                console.print(f"\n[bold cyan]🔄 Iterative Workflow Results:[/bold cyan]")
-                console.print(f"Phase: [green]{phase}[/green]")
-                
-                # Show node execution summary
-                node_results = result.get("node_results", {})
-                if node_results:
-                    console.print(f"\n[bold]Node Execution Summary:[/bold]")
-                    for node_id, node_result in node_results.items():
-                        status = "✅" if "error" not in node_result else "❌"
-                        duration = node_result.get("duration", 0)
-                        console.print(f"{status} {node_id}: {duration:.2f}s")
-                        
-                        if verbose and "error" in node_result:
-                            console.print(f"   Error: {node_result['error']}")
-                
-                # Display iterative capabilities demonstrated
-                iterative_capabilities = result.get("iterative_capabilities", {})
-                if iterative_capabilities:
-                    console.print(f"\n[bold]Iterative Capabilities Demonstrated:[/bold]")
-                    for capability, enabled in iterative_capabilities.items():
-                        status = "✅" if enabled else "❌"
-                        console.print(f"{status} {capability.replace('_', ' ').title()}")
-                
-                # Show foundation readiness for future phases
-                console.print(f"\n[bold green]🏗️ Foundation Status:[/bold green]")
-                console.print("✅ Database Classification with confidence analysis")
-                console.print("✅ Adaptive Metadata Collection strategies")
-                console.print("✅ Iterative Planning with refinement capabilities")
-                console.print("✅ Execution Monitoring with feedback generation")
-                console.print()
-                console.print("[dim]Ready for Phase 2: Execution feedback loops and dynamic refinement[/dim]")
-            
-            else:
-                # Fallback to standard workflow display
-                console.print(f"[yellow]Note: Expected iterative workflow but got '{workflow}'[/yellow]")
-                console.print("This might indicate the workflow routing didn't select iterative mode.")
-                
-                # Show basic results
-                final_result = result.get("final_result", {})
-                if "formatted_result" in final_result:
-                    console.print(f"\n[bold]Results:[/bold]")
-                    console.print(Panel(Markdown(final_result["formatted_result"])))
-            
-            # Save session if requested
-            if save_session:
-                state_manager = StateManager()
-                session_state = AnalysisState(
-                    session_id=session_id,
-                    user_question=question
-                )
-                
-                # Add iterative execution metadata
-                session_state.add_insight("execution", "Iterative LangGraph execution", {
-                    "iterative_execution": True,
-                    "workflow_type": workflow,
-                    "phase": result.get("phase", "phase_1"),
-                    "execution_time": execution_time,
-                    "iterative_capabilities": result.get("iterative_capabilities", {}),
-                    "node_results": {k: v.get("duration", 0) for k, v in node_results.items()}
-                })
-                
-                # Set final result
-                if "final_result" in result:
-                    session_state.set_final_result(
-                        result["final_result"],
-                        result.get("final_result", {}).get("formatted_result", str(result.get("final_result", {})))
-                    )
-                
-                await state_manager.update_state(session_state)
-                console.print(f"\n[dim]Session saved with ID: {session_id}[/dim]")
-                console.print(f"[dim]Use 'cross_db show-session {session_id}' to view details[/dim]")
-        
-        except Exception as e:
-            console.print(f"\n[bold red]❌ Iterative Workflow Failed[/bold red]")
-            console.print(f"Error: {str(e)}")
-            
-            if verbose:
-                import traceback
-                console.print(f"\n[dim]Full traceback:[/dim]")
-                console.print(traceback.format_exc())
+        # Show orchestrator status
+        console.print("\n[bold yellow]Orchestrator Status[/bold yellow]")
+        orchestrator = get_orchestrator()
+        console.print(f"Orchestrator ID: {id(orchestrator)}")
+        console.print(f"Orchestrator LLM Client ID: {id(orchestrator.llm_client)}")
+        console.print(f"Are they the same? {orchestrator.llm_client is client1}")
     
     asyncio.run(run())
 

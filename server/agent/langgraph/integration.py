@@ -13,16 +13,15 @@ from typing import Dict, List, Any, Optional, AsyncIterator
 from .state import HybridStateManager, LangGraphState
 from .streaming import StreamingGraphCoordinator
 from .graphs.builder import DatabaseDrivenGraphBuilder
-from .graphs.bedrock_client import BedrockLangGraphClient
+from .graphs.bedrock_client import get_bedrock_langgraph_client
 from .nodes.metadata import MetadataCollectionNode
 from .nodes.planning import PlanningNode
 from .nodes.execution import ExecutionNode
 from .nodes.tool_execution_node import ToolExecutionNode
-# Import new iterative nodes
-from .nodes.classification import DatabaseClassificationNode
-from .nodes.adaptive_metadata import AdaptiveMetadataNode
+from .nodes.classification import ClassificationNode
+from .nodes.iterative_metadata import IterativeMetadataNode
 from .nodes.iterative_planning import IterativePlanningNode
-from .nodes.execution_monitor import ExecutionMonitorNode
+from .nodes.iterative_execution import IterativeExecutionNode
 
 # Import existing components to preserve functionality
 from ..tools.state_manager import StateManager, AnalysisState
@@ -65,16 +64,16 @@ class LangGraphIntegrationOrchestrator:
         self.hybrid_state_manager = HybridStateManager()
         self.streaming_coordinator = StreamingGraphCoordinator(self.hybrid_state_manager)
         self.graph_builder = DatabaseDrivenGraphBuilder(config)
-        self.llm_client = BedrockLangGraphClient(config.get("llm_config"))
+        self.llm_client = get_bedrock_langgraph_client(config.get("llm_config"))
         
         # Initialize tool execution node for database adapter tools
         self.tool_execution_node = ToolExecutionNode(self.settings)
         
-        # Initialize new iterative nodes for Phase 1 implementation
-        self.database_classification_node = DatabaseClassificationNode(config)
-        self.adaptive_metadata_node = AdaptiveMetadataNode(config)
+        # Initialize iterative LangGraph nodes
+        self.classification_node = ClassificationNode(config)
+        self.iterative_metadata_node = IterativeMetadataNode(config)
         self.iterative_planning_node = IterativePlanningNode(config)
-        self.execution_monitor_node = ExecutionMonitorNode(config)
+        self.iterative_execution_node = IterativeExecutionNode(config)
         
         # Integration settings
         self.use_langgraph_for_complex = self.config.get("use_langgraph_for_complex", True)
@@ -142,7 +141,7 @@ class LangGraphIntegrationOrchestrator:
                 self.execution_stats["traditional_executions"] += 1
                 
             elif routing_decision["method"] == "langgraph":
-                result = await self._execute_langgraph_workflow(
+                result = await self._execute_iterative_langgraph_workflow(
                     question,
                     session_id,
                     databases_available,
@@ -150,16 +149,6 @@ class LangGraphIntegrationOrchestrator:
                     stream_callback
                 )
                 self.execution_stats["langgraph_executions"] += 1
-                
-            elif routing_decision["method"] == "iterative":
-                result = await self._execute_iterative_workflow(
-                    question,
-                    session_id,
-                    databases_available,
-                    routing_decision,
-                    stream_callback
-                )
-                self.execution_stats["langgraph_executions"] += 1  # Count as LangGraph execution
                 
             else:  # hybrid
                 result = await self._execute_hybrid_workflow(
@@ -173,13 +162,21 @@ class LangGraphIntegrationOrchestrator:
             
             # Step 3: Add execution metadata
             execution_time = time.time() - start_time
-            result["execution_metadata"] = {
+            
+            # Preserve existing execution metadata from iterative workflow if it exists
+            existing_metadata = result.get("execution_metadata", {})
+            
+            # Create base metadata
+            base_metadata = {
                 "routing_method": routing_decision["method"],
                 "complexity_analysis": routing_decision,
                 "execution_time": execution_time,
                 "session_id": session_id,
                 "timestamp": time.time()
             }
+            
+            # Merge with existing metadata (preserving iterative_features)
+            result["execution_metadata"] = {**base_metadata, **existing_metadata}
             
             # Step 4: Track performance improvements
             await self._track_performance(routing_decision, execution_time, result)
@@ -255,18 +252,10 @@ class LangGraphIntegrationOrchestrator:
             
             if complexity >= 8 or parallelization == "high":
                 return {
-                    "method": "iterative",
-                    "complexity": complexity,
-                    "reason": "High complexity benefits from iterative approach with dynamic refinement",
-                    "confidence": 0.9
-                }
-            
-            if complexity >= 6:
-                return {
                     "method": "langgraph",
                     "complexity": complexity,
-                    "reason": "Medium-high complexity requires advanced orchestration",
-                    "confidence": 0.8
+                    "reason": "High complexity requires advanced orchestration",
+                    "confidence": 0.9
                 }
             
             # Medium complexity - use hybrid approach
@@ -470,6 +459,7 @@ class LangGraphIntegrationOrchestrator:
             
             tool_execution_result = await tool_execution_node.execute_node({
                 "user_query": planning_result.get("user_query", question),
+                "session_id": hybrid_state,  # Use the actual graph session_id for output aggregation
                 **planning_result
             })
             
@@ -520,6 +510,7 @@ class LangGraphIntegrationOrchestrator:
                 
                 return {
                     "workflow": "hybrid",
+                    "session_id": hybrid_state,  # Return the actual graph session_id for CLI export
                     "metadata_collection": metadata_result.get("schema_metadata", {}),
                     "planning_result": planning_result.get("execution_plan", {}),
                     "tool_execution_result": tool_execution_result,
@@ -540,6 +531,7 @@ class LangGraphIntegrationOrchestrator:
                 
                 return {
                     "workflow": "hybrid",
+                    "session_id": hybrid_state,  # Return the actual graph session_id for CLI export
                     "metadata_collection": metadata_result.get("schema_metadata", {}),
                     "planning_result": planning_result.get("execution_plan", {}),
                     "tool_execution_result": tool_execution_result,
@@ -752,9 +744,9 @@ class LangGraphIntegrationOrchestrator:
                 "migration_ready": False,
                 "error": str(e),
                 "recommendation": "Fix integration issues before considering migration"
-            } 
+            }
     
-    async def _execute_iterative_workflow(
+    async def _execute_iterative_langgraph_workflow(
         self,
         question: str,
         session_id: str,
@@ -763,60 +755,171 @@ class LangGraphIntegrationOrchestrator:
         stream_callback: Optional[AsyncIterator] = None
     ) -> Dict[str, Any]:
         """
-        Execute using iterative LangGraph workflow with dynamic refinement.
-        Phase 1 implementation with foundation for future iterations.
+        Execute the iterative LangGraph workflow with connected nodes.
+        
+        This implements the first phase of the iterative approach with:
+        - Classification → Iterative Metadata → Iterative Planning → Execution
         """
-        logger.info("Executing iterative LangGraph workflow (Phase 1)")
+        logger.info(f"🔄 [ITERATIVE_WORKFLOW] Starting iterative LangGraph workflow for session: {session_id}")
+        
+        start_time = time.time()
         
         try:
-            # Use the graph builder to build an iterative workflow graph
-            graph_result = await self.graph_builder.build_optimal_graph(
-                question,
-                databases_available or [],
-                context={
-                    "routing_decision": routing_decision,
-                    "workflow_type": "iterative",
-                    "iterative_features": True
-                },
-                performance_requirements={"optimization_target": "iterative_refinement"}
-            )
-            
-            if "error" in graph_result:
-                logger.error(f"Iterative graph building failed: {graph_result['error']}")
-                return {"error": graph_result["error"], "workflow": "iterative"}
-            
-            # Execute the iterative graph
-            executable_graph = graph_result["executable_graph"]
-            execution_result = await executable_graph(session_id)
-            
-            # Format the result for iterative workflow
-            final_result = {
-                "workflow": "iterative",
-                "phase": "phase_1_foundation",
-                "graph_specification": graph_result["graph_specification"],
-                "execution_result": execution_result,
-                "final_result": execution_result.get("final_state", {}),
-                "node_results": execution_result.get("node_results", {}),
-                "iterative_capabilities": {
-                    "classification_refinement": True,
-                    "adaptive_metadata": True,
-                    "dynamic_planning": True,
-                    "execution_monitoring": True,
-                    "feedback_collection": True,
-                    "future_phase_ready": True
-                },
-                "iterative_metadata": {
-                    "complexity": routing_decision.get("complexity", 8),
-                    "refinement_iterations": 1,  # Phase 1 uses single iteration
-                    "confidence_threshold": 0.8,
-                    "template_used": graph_result.get("graph_specification", {}).get("template_name", "iterative_workflow")
-                }
+            # Initialize state for the iterative workflow
+            state = {
+                "session_id": session_id,
+                "user_query": question,
+                "question": question,  # Backward compatibility
+                "databases_available": databases_available,
+                "routing_decision": routing_decision,
+                "workflow_type": "iterative_langgraph",
+                "start_time": start_time
             }
             
-            logger.info(f"Iterative workflow Phase 1 complete with graph template: {final_result['iterative_metadata']['template_used']}")
+            # Phase 1: Classification
+            logger.info("🔄 [ITERATIVE_WORKFLOW] Phase 1: Classification")
+            if stream_callback:
+                async for chunk in self.classification_node.stream(state):
+                    if stream_callback:
+                        await stream_callback(chunk)
+                    if chunk.get("is_final", False):
+                        state.update(chunk.get("state_update", {}))
+                        break
+            else:
+                state = await self.classification_node(state)
             
-            return final_result
+            logger.info(f"🔄 [ITERATIVE_WORKFLOW] Classification completed: {len(state.get('databases_identified', []))} databases identified")
+            
+            # Phase 2: Iterative Metadata Collection
+            logger.info("🔄 [ITERATIVE_WORKFLOW] Phase 2: Iterative Metadata Collection")
+            if stream_callback:
+                async for chunk in self.iterative_metadata_node.stream(state):
+                    if stream_callback:
+                        await stream_callback(chunk)
+                    if chunk.get("is_final", False):
+                        state.update(chunk.get("state_update", {}))
+                        break
+            else:
+                state = await self.iterative_metadata_node(state)
+            
+            logger.info(f"🔄 [ITERATIVE_WORKFLOW] Metadata collection completed: {len(state.get('available_tables', []))} tables available")
+            
+            # Phase 3: Iterative Planning
+            logger.info("🔄 [ITERATIVE_WORKFLOW] Phase 3: Iterative Planning")
+            if stream_callback:
+                async for chunk in self.iterative_planning_node.stream(state):
+                    if stream_callback:
+                        await stream_callback(chunk)
+                    if chunk.get("is_final", False):
+                        state.update(chunk.get("state_update", {}))
+                        break
+            else:
+                state = await self.iterative_planning_node(state)
+            
+            logger.info(f"🔄 [ITERATIVE_WORKFLOW] Planning completed: {state.get('execution_plan', {}).get('execution_strategy', 'unknown')} strategy")
+            
+            # Phase 4: Execution (using iterative execution node)
+            logger.info("🔄 [ITERATIVE_WORKFLOW] Phase 4: Execution")
+            if stream_callback:
+                async for chunk in self.iterative_execution_node.stream(state):
+                    if stream_callback:
+                        await stream_callback(chunk)
+                    if chunk.get("is_final", False):
+                        state.update(chunk.get("state_update", {}))
+                        break
+            else:
+                state = await self.iterative_execution_node(state)
+            
+            # Prepare final result
+            execution_time = time.time() - start_time
+            
+            # Use output aggregator to create unified result
+            from .output_aggregator import get_output_integrator
+            
+            output_integrator = get_output_integrator()
+            
+            try:
+                # Get unified result from output aggregator
+                unified_result = await output_integrator.finalize_workflow_outputs(session_id)
+                
+                logger.info(f"🔄 [ITERATIVE_WORKFLOW] Using output aggregator unified result")
+                
+                # If aggregator has comprehensive data, use it
+                if unified_result and "rows" in unified_result and not unified_result.get("error"):
+                    result = unified_result
+                else:
+                    # Fallback to manual construction
+                    logger.warning(f"🔄 [ITERATIVE_WORKFLOW] Output aggregator result incomplete, using fallback")
+                    result = {
+                        "rows": state.get("results", []),
+                        "sql": state.get("generated_sql", "-- Iterative LangGraph Query"),
+                        "analysis": state.get("analysis"),
+                        "success": state.get("execution_completed", False),
+                        "session_id": session_id,
+                        "execution_metadata": {
+                            "workflow_type": "iterative_langgraph",
+                            "execution_time": execution_time,
+                            "phases_completed": [
+                                "classification",
+                                "iterative_metadata",
+                                "iterative_planning", 
+                                "execution"
+                            ],
+                            "databases_used": state.get("databases_identified", []),
+                            "tables_accessed": len(state.get("available_tables", [])),
+                            "plan_strategy": state.get("execution_plan", {}).get("execution_strategy", "unknown"),
+                            "iterative_features": {
+                                "prevents_reinitialization": True,
+                                "dynamic_metadata_fetching": True,
+                                "adaptive_planning": True
+                            }
+                        },
+                        "plan_info": state.get("execution_plan"),
+                        "execution_summary": {
+                            "workflow": "iterative_langgraph",
+                            "total_time": execution_time,
+                            "classification_sources": state.get("classification_sources", []),
+                            "metadata_collection_method": "iterative_enhanced",
+                            "planning_optimizations": state.get("execution_plan", {}).get("optimizations_applied", [])
+                        }
+                    }
+                    
+            except Exception as e:
+                logger.error(f"🔄 [ITERATIVE_WORKFLOW] Output aggregator failed: {e}")
+                # Complete fallback
+                result = {
+                    "rows": state.get("results", []),
+                    "sql": state.get("generated_sql", "-- Iterative LangGraph Query"),
+                    "analysis": state.get("analysis"),
+                    "success": state.get("execution_completed", False),
+                    "session_id": session_id,
+                    "execution_metadata": {
+                        "workflow_type": "iterative_langgraph",
+                        "execution_time": execution_time,
+                        "output_aggregator_error": str(e)
+                    }
+                }
+            
+            logger.info(f"🔄 [ITERATIVE_WORKFLOW] Iterative workflow completed successfully in {execution_time:.2f}s")
+            logger.info(f"🔄 [ITERATIVE_WORKFLOW] Results: {len(result['rows'])} rows, {len(state.get('databases_identified', []))} databases")
+            
+            return result
             
         except Exception as e:
-            logger.error(f"Iterative workflow failed: {e}")
-            return {"error": str(e), "workflow": "iterative", "phase": "phase_1_error"} 
+            execution_time = time.time() - start_time
+            logger.error(f"🔄 [ITERATIVE_WORKFLOW] Iterative workflow failed after {execution_time:.2f}s: {e}")
+            logger.exception("🔄 [ITERATIVE_WORKFLOW] Full error traceback:")
+            
+            return {
+                "rows": [{"error": f"Iterative workflow failed: {str(e)}"}],
+                "sql": "-- Error in iterative workflow",
+                "analysis": f"❌ **Error**: Iterative LangGraph workflow failed: {str(e)}",
+                "success": False,
+                "session_id": session_id,
+                "execution_metadata": {
+                    "workflow_type": "iterative_langgraph",
+                    "execution_time": execution_time,
+                    "error": str(e),
+                    "failed_at": "iterative_workflow"
+                }
+            } 

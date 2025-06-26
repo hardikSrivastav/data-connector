@@ -2860,11 +2860,21 @@ class FallbackLLMClient(LLMClient):
 
 def get_llm_client() -> LLMClient:
     """
-    Factory function to get the appropriate LLM client based on configuration
+    Factory function to get the appropriate LLM client based on configuration.
+    Uses singleton pattern to avoid repeated expensive initialization.
     
     Returns:
-        An instance of LLMClient
+        A singleton instance of LLMClient
     """
+    global _llm_client
+    
+    # Return existing instance if available
+    if _llm_client is not None:
+        logger.debug("🔄 Returning existing LLM client instance (singleton)")
+        return _llm_client
+    
+    logger.info("🚀 Initializing LLM client singleton...")
+    
     settings = Settings()
     
     # Create a list to hold available clients (in priority order)
@@ -2874,7 +2884,8 @@ def get_llm_client() -> LLMClient:
     if os.environ.get("USE_DUMMY_LLM") == "true":
         response_mode = os.environ.get("DUMMY_RESPONSE_MODE", "success")
         logger.info(f"Using dummy LLM client with mode: {response_mode}")
-        return DummyLLMClient(response_mode=response_mode)
+        _llm_client = DummyLLMClient(response_mode=response_mode)
+        return _llm_client
     
     # PRIORITY 1: Try to initialize Bedrock client first (primary choice)
     try:
@@ -2924,10 +2935,29 @@ def get_llm_client() -> LLMClient:
             model_name = getattr(client, 'model_name', 'unknown')
             logger.info(f"   {priority}: {client_name} ({model_name})")
         
-        return FallbackLLMClient(clients)
+        # Store singleton instance
+        _llm_client = FallbackLLMClient(clients)
+        logger.info("💾 LLM client singleton stored successfully")
+        return _llm_client
     else:
         logger.error("💥 No valid LLM clients could be initialized!")
         raise ValueError("No valid LLM clients could be initialized. Check your configuration and ensure Bedrock credentials are properly set.")
+
+def reset_llm_client():
+    """
+    Reset the singleton LLM client instance. Useful for testing or configuration changes.
+    """
+    global _llm_client
+    logger.info("🔄 Resetting LLM client singleton")
+    _llm_client = None
+
+def reset_classification_client():
+    """
+    Reset the singleton classification client instance. Useful for testing or configuration changes.
+    """
+    global _classification_client
+    logger.info("🔄 Resetting classification client singleton")
+    _classification_client = None
 
 class OrchestrationClassificationClient:
     """
@@ -3129,7 +3159,9 @@ Respond with exactly one token: TRIVIAL or DATA_ANALYSIS"""
             }
 
 # Global instance for the classification client
+# Global client instances
 _classification_client = None
+_llm_client = None
 
 def get_classification_client() -> OrchestrationClassificationClient:
     """Get the global classification client instance."""

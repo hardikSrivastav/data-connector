@@ -11,6 +11,7 @@ from bson import json_util
 from urllib.parse import urlparse
 
 from .base import DBAdapter
+from ...langgraph.graphs.bedrock_client import get_bedrock_langgraph_client
 
 # Configure logging
 logger = logging.getLogger(__name__)
@@ -87,12 +88,8 @@ class MongoAdapter(DBAdapter):
         logger.debug(f"LLM conversion kwargs: {list(kwargs.keys())}")
         
         try:
-            # Use Bedrock client for MongoDB query generation
-            from ...langgraph.graphs.bedrock_client import BedrockLangGraphClient
-            from ...config.settings import Settings
-            
-            settings = Settings()
-            bedrock_client = BedrockLangGraphClient(settings)
+            # Use singleton factory instead of direct instantiation
+            bedrock_client = get_bedrock_langgraph_client()
             
             # Get schema metadata if not provided
             schema_chunks = kwargs.get('schema_chunks')

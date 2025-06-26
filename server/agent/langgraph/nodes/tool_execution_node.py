@@ -22,6 +22,7 @@ import traceback
 from ...tools.registry import ToolRegistry, ToolCall, ExecutionResult
 from ...config.settings import Settings
 from ..graphs.bedrock_client import BedrockLangGraphClient as BedrockLLMClient
+from ..output_aggregator import get_output_integrator
 
 # Configure logging
 logger = logging.getLogger(__name__)
@@ -58,7 +59,10 @@ class ToolExecutionNode:
         self.tool_registry = ToolRegistry(settings)
         self.llm_client = BedrockLLMClient(settings)
         
-        logger.info("ToolExecutionNode initialized with real Bedrock client")
+        # Initialize output aggregator integration
+        self.output_integrator = get_output_integrator()
+        
+        logger.info("ToolExecutionNode initialized with real Bedrock client and output aggregator")
     
     async def _ensure_tools_registered(self):
         """Ensure tools are registered in the registry."""
@@ -237,12 +241,17 @@ class ToolExecutionNode:
         Main execution method for the tool node.
         
         Args:
-            input_data: Input containing user_query and other parameters
+            input_data: Input containing user_query, session_id and other parameters
             
         Returns:
             Dictionary containing execution results and metadata
         """
         logger.info(f"ToolExecutionNode.execute_node called with query: {input_data.get('user_query', 'N/A')[:100]}...")
+        
+        # Extract session_id for output aggregation
+        session_id = input_data.get("session_id")
+        if not session_id:
+            logger.warning("No session_id provided to ToolExecutionNode, output aggregation will be limited")
         
         # Ensure tools are registered before proceeding
         await self._ensure_tools_registered()
@@ -257,7 +266,8 @@ class ToolExecutionNode:
             "errors": [],
             "metadata": {
                 "start_time": time.time(),
-                "input_data": input_data
+                "input_data": input_data,
+                "session_id": session_id
             }
         }
         
@@ -298,6 +308,14 @@ class ToolExecutionNode:
             is_successful = success_rate >= 0.5 and successful_tools > 0
             
             logger.info(f"Tool execution summary: {successful_tools}/{total_tools} tools successful ({success_rate:.1%})")
+            
+            # Capture outputs for output aggregator if session_id is available
+            if session_id:
+                try:
+                    await self._capture_tool_execution_outputs(session_id, state)
+                    logger.info(f"🔄 [OUTPUT_AGGREGATOR] Captured tool execution outputs for session {session_id}")
+                except Exception as e:
+                    logger.warning(f"🔄 [OUTPUT_AGGREGATOR] Failed to capture outputs: {e}")
             
             return {
                 "response": final_response,
@@ -1140,4 +1158,142 @@ Write in a professional but accessible tone, as if explaining to a business stak
     def set_schema_metadata(self, schema_metadata: Dict[str, Any]):
         """Store schema metadata for use in parameter generation."""
         self._current_schema_metadata = schema_metadata
-        logger.info(f"🔧 DEBUG: Stored schema metadata: {schema_metadata}") 
+        logger.info(f"🔧 DEBUG: Stored schema metadata: {schema_metadata}")
+    
+    async def _capture_tool_execution_outputs(self, session_id: str, state: ToolExecutionState):
+        """
+        Capture all tool execution outputs for the output aggregator.
+        
+        Args:
+            session_id: Session ID for output aggregation
+            state: Current execution state containing results
+        """
+        try:
+            aggregator = self.output_integrator.get_aggregator(session_id)
+            
+            # Capture execution plan with actual operations
+            if state.get("execution_plan"):
+                plan = state["execution_plan"]
+                
+                # Enhance the plan with actual operations from steps
+                operations = []
+                for step in plan.get("steps", []):
+                    operations.append({
+                        "operation_id": step.get("step_number", 0),
+                        "tool_id": step.get("tool_id", "unknown"),
+                        "parameters": step.get("parameters", {}),
+                        "description": step.get("description", ""),
+                        "depends_on": step.get("depends_on", [])
+                    })
+                
+                enhanced_plan = {
+                    **plan,
+                    "operations": operations,
+                    "strategy": plan.get("strategy", "llm_generated"),
+                    "success_rate": state["metadata"].get("success_rate", 0)
+                }
+                
+                aggregator.capture_execution_plan(
+                    plan=enhanced_plan,
+                    node_id="tool_execution_node",
+                    plan_source="llm_generated"
+                )
+                logger.debug(f"🔄 [OUTPUT_AGGREGATOR] Captured execution plan with {len(operations)} operations")
+            
+            # Create a mapping of tool call IDs to parameters
+            tool_call_params = {}
+            for tool_call in state.get("tool_calls", []):
+                tool_call_params[tool_call.call_id] = {
+                    "tool_id": tool_call.tool_id,
+                    "parameters": tool_call.parameters,
+                    "context": tool_call.context
+                }
+            
+            # Capture individual tool executions with proper parameter mapping
+            for result in state.get("execution_results", []):
+                # Get tool execution details
+                tool_id = result.tool_id if hasattr(result, 'tool_id') else "unknown"
+                call_id = result.call_id if hasattr(result, 'call_id') else f"call_{tool_id}_{int(time.time())}"
+                
+                # Get parameters from the original tool call
+                parameters = {}
+                if call_id in tool_call_params:
+                    parameters = tool_call_params[call_id]["parameters"]
+                
+                # Extract raw data if available
+                raw_data = []
+                if result.success and result.result:
+                    if isinstance(result.result, list):
+                        raw_data = result.result
+                    elif isinstance(result.result, dict):
+                        raw_data = [result.result] 
+                
+                # Capture tool execution
+                aggregator.capture_tool_execution(
+                    tool_id=tool_id,
+                    call_id=call_id,
+                    parameters=parameters,
+                    result=result.result,
+                    success=result.success,
+                    execution_time_ms=result.metadata.get("execution_time", 0) * 1000 if result.metadata else 0,
+                    error_message=result.error if hasattr(result, 'error') else None,
+                    node_id="tool_execution_node"
+                )
+                
+                # Capture raw data if available
+                if raw_data:
+                    # Determine source based on tool_id
+                    source = "unknown"
+                    if "mongo" in tool_id.lower():
+                        source = "mongodb"
+                    elif "postgres" in tool_id.lower():
+                        source = "postgresql"
+                    elif "shopify" in tool_id.lower():
+                        source = "shopify"
+                    elif "ga4" in tool_id.lower():
+                        source = "ga4"
+                    elif "qdrant" in tool_id.lower():
+                        source = "qdrant"
+                    elif "slack" in tool_id.lower():
+                        source = "slack"
+                    
+                    aggregator.capture_raw_data(
+                        source=source,
+                        rows=raw_data,
+                        query=parameters.get("query"),
+                        node_id="tool_execution_node",
+                        tool_id=tool_id
+                    )
+                    logger.debug(f"🔄 [OUTPUT_AGGREGATOR] Captured raw data from {source}: {len(raw_data)} rows")
+                
+                logger.debug(f"🔄 [OUTPUT_AGGREGATOR] Captured tool execution: {tool_id}, success={result.success}")
+            
+            # Capture final synthesis
+            synthesis_response = state["metadata"].get("synthesis_response")
+            if synthesis_response:
+                aggregator.capture_final_synthesis(
+                    response_text=synthesis_response,
+                    sources_used=state.get("selected_tools", []),
+                    node_id="tool_execution_node",
+                    synthesis_method="llm_based"
+                )
+                logger.debug(f"🔄 [OUTPUT_AGGREGATOR] Captured final synthesis")
+            
+            # Capture performance metrics
+            metrics = {
+                "total_duration_ms": state["metadata"].get("total_execution_time", 0) * 1000,
+                "operations_executed": len(state.get("execution_results", [])),
+                "operations_successful": sum(1 for r in state.get("execution_results", []) if r.success),
+                "tool_success_rate": state["metadata"].get("success_rate", 0)
+            }
+            
+            aggregator.capture_performance_metrics(
+                metrics=metrics,
+                node_id="tool_execution_node"
+            )
+            logger.debug(f"🔄 [OUTPUT_AGGREGATOR] Captured performance metrics")
+            
+        except Exception as e:
+            logger.error(f"🔄 [OUTPUT_AGGREGATOR] Failed to capture tool execution outputs: {e}")
+            import traceback
+            logger.error(traceback.format_exc()) 

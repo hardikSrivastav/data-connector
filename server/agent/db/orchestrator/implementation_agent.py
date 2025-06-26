@@ -23,6 +23,7 @@ from ..adapters.base import DBAdapter
 from .result_aggregator import ResultAggregator, JoinType, AggregationFunction
 from .plans.base import QueryPlan, Operation, OperationStatus
 from ...langgraph.parallelism import AdaptiveParallelismManager, Operation as ParallelismOperation, OperationComplexity
+from ...langgraph.graphs.bedrock_client import get_bedrock_langgraph_client
 
 # LangGraph integration imports
 try:
@@ -115,7 +116,7 @@ class ImplementationAgent:
         
         # LangGraph integration
         self.langgraph_enabled = self.config.get("langgraph_enabled", False) and LANGGRAPH_AVAILABLE
-        self.bedrock_client = None
+        self.bedrock_client = get_bedrock_langgraph_client(self.config.get("llm_config"))
         
         if self.langgraph_enabled:
             # Lazy load Bedrock client to avoid circular imports
@@ -943,30 +944,6 @@ class ImplementationAgent:
         self._adapter_cache.clear()
         
         logger.info("Implementation agent closed")
-    
-    async def _get_bedrock_client(self):
-        """Lazy load Bedrock client to avoid circular imports."""
-        if self.bedrock_client is None and self.langgraph_enabled:
-            try:
-                from ...langgraph.graphs.bedrock_client import BedrockLangGraphClient
-                self.bedrock_client = BedrockLangGraphClient(self.config.get("llm_config"))
-                logger.info("✅ Bedrock client initialized successfully")
-            except Exception as e:
-                logger.warning(f"Failed to initialize Bedrock client: {e}")
-                # Create a mock client for testing
-                self.bedrock_client = self._create_mock_bedrock_client()
-        return self.bedrock_client
-    
-    def _create_mock_bedrock_client(self):
-        """Create a mock Bedrock client for testing purposes."""
-        class MockBedrockClient:
-            async def optimize_graph_execution(self, original_plan, performance_data):
-                return {"optimized_plan": original_plan}
-            
-            async def analyze_graph_results(self, execution_results, original_question):
-                return {"analysis": "mock_analysis", "insights": ["mock_insight"]}
-        
-        return MockBedrockClient()
     
     async def execute_plan_langgraph(
         self,

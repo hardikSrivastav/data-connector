@@ -14,6 +14,7 @@ from decimal import Decimal
 from .base import DBAdapter
 from ..connection_utils import execute_query, test_conn, create_connection_pool
 from ..introspect import get_schema_metadata
+from ...langgraph.graphs.bedrock_client import get_bedrock_langgraph_client
 
 # Configure logging
 logger = logging.getLogger(__name__)
@@ -56,12 +57,8 @@ class PostgresAdapter(DBAdapter):
         logger.debug(f"LLM conversion kwargs: {list(kwargs.keys())}")
         
         try:
-            # Use Bedrock client for SQL generation
-            from ...langgraph.graphs.bedrock_client import BedrockLangGraphClient
-            from ...config.settings import Settings
-            
-            settings = Settings()
-            bedrock_client = BedrockLangGraphClient(settings)
+            # Use singleton factory instead of direct instantiation
+            bedrock_client = get_bedrock_langgraph_client()
             
             # Get schema metadata if not provided
             schema_chunks = kwargs.get('schema_chunks')

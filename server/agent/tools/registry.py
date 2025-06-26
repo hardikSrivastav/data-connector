@@ -25,7 +25,7 @@ from enum import Enum
 import traceback
 
 from ..config.settings import Settings
-from ..langgraph.graphs.bedrock_client import BedrockLangGraphClient
+from ..langgraph.graphs.bedrock_client import get_bedrock_langgraph_client
 from ..db.adapters import ADAPTER_REGISTRY
 
 # Configure comprehensive logging
@@ -126,7 +126,7 @@ class DynamicToolRegistry:
         self.usage_analytics: Dict[str, ToolUsageAnalytics] = {}
         self.execution_history: List[ToolExecutionMetrics] = []
         self.performance_cache: Dict[str, List[float]] = {}
-        self.llm_client: Optional[BedrockLangGraphClient] = None
+        self.llm_client = None
         self.settings = Settings()
         
         # Tool discovery and registration
@@ -148,7 +148,7 @@ class DynamicToolRegistry:
     def _initialize_llm_client(self) -> None:
         """Initialize Bedrock LLM client as primary choice."""
         try:
-            self.llm_client = BedrockLangGraphClient()
+            self.llm_client = get_bedrock_langgraph_client()
             logger.info(f"Initialized Bedrock LLM client successfully. Functional: {self.llm_client.is_functional}")
             
             if self.llm_client.is_functional:
