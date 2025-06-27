@@ -27,7 +27,7 @@ from ..db.execute import get_query_engine, process_ai_query
 # Import cross-database components
 from ..db.classifier import DatabaseClassifier
 from ..db.orchestrator.cross_db_agent import CrossDatabaseAgent
-from ..tools.state_manager import StateManager, get_state_manager
+from ..tools.state_manager import StateManager, AnalysisState
 from ..langgraph.integration import LangGraphIntegrationOrchestrator
 from ..langgraph.compat import GraphState
 
@@ -50,7 +50,12 @@ os.makedirs(LOG_DIR, exist_ok=True)
 def create_endpoint_logger(endpoint_name: str) -> logging.Logger:
     """Create a dedicated logger for an endpoint with its own file"""
     endpoint_logger = logging.getLogger(f"endpoint.{endpoint_name}")
-    endpoint_logger.setLevel(logging.INFO)
+    
+    # Set DEBUG level for LangGraph to capture detailed streaming events
+    if endpoint_name == "langgraph":
+        endpoint_logger.setLevel(logging.DEBUG)
+    else:
+        endpoint_logger.setLevel(logging.INFO)
     
     # Remove existing handlers to avoid duplicates
     for handler in endpoint_logger.handlers[:]:
@@ -59,7 +64,12 @@ def create_endpoint_logger(endpoint_name: str) -> logging.Logger:
     # Create file handler
     log_file = os.path.join(LOG_DIR, f"{endpoint_name}.log")
     file_handler = logging.FileHandler(log_file)
-    file_handler.setLevel(logging.INFO)
+    
+    # Set DEBUG level for LangGraph file handler to capture detailed streaming events
+    if endpoint_name == "langgraph":
+        file_handler.setLevel(logging.DEBUG)
+    else:
+        file_handler.setLevel(logging.INFO)
     
     # Create formatter
     formatter = logging.Formatter(
@@ -2600,211 +2610,387 @@ async def classify_orchestration_operation(request: OrchestrationClassifyRequest
             operation_type=operation_type
         )
 
+# Add new request/response models after the existing TrivialHealthResponse class
 class LangGraphQueryRequest(BaseModel):
-    """Request model for LangGraph queries."""
     question: str
-    analyze: bool = False
-    optimize: bool = False
     force_langgraph: bool = False
+    show_routing: bool = False
+    verbose: bool = False
+    show_outputs: bool = False
+    show_timeline: bool = False
+    export_analysis: Optional[str] = None
     save_session: bool = True
-    databases_available: Optional[List[str]] = None
+    stream_output: bool = True
 
-# LangGraph streaming endpoint
-@router.post("/langgraph/stream")
-async def langgraph_query_stream(request: LangGraphQueryRequest, http_request: Request):
-    """
-    Streaming version of the LangGraph query endpoint using Server-Sent Events
+class LangGraphQueryResponse(BaseModel):
+    success: bool
+    workflow: str
+    question: str
+    session_id: str
+    execution_metadata: Dict[str, Any]
+    routing_decision: Optional[Dict[str, Any]] = None
+    node_results: Optional[Dict[str, Any]] = None
+    final_result: Optional[Dict[str, Any]] = None
+    operation_results: Optional[Dict[str, Any]] = None
+    visualization_data: Optional[Dict[str, Any]] = None
+    performance_metrics: Optional[Dict[str, Any]] = None
+    error_message: Optional[str] = None
+
+# Global orchestrator instance to avoid re-initialization (same as cross_db.py)
+_global_langgraph_orchestrator = None
+
+def get_langgraph_orchestrator():
+    """Get or create the global LangGraph orchestrator instance"""
+    global _global_langgraph_orchestrator
     
-    Args:
-        request: LangGraphQueryRequest containing the question and options
-        http_request: HTTP request for user authentication
+    if _global_langgraph_orchestrator is None:
+        from ..config.settings import Settings
+        settings = Settings()
         
-    Returns:
-        StreamingResponse with Server-Sent Events
-    """
-    start_time = time.time()
+        config = {
+            "use_langgraph_for_complex": True,
+            "complexity_threshold": 3,  # Lower threshold for testing
+            "preserve_trivial_routing": True,
+            "llm_config": {
+                "primary_provider": "bedrock",
+                "fallbacks": ["anthropic", "openai"]
+            }
+        }
+        _global_langgraph_orchestrator = LangGraphIntegrationOrchestrator(config)
+        langgraph_logger.info("🔧 Initialized global LangGraph orchestrator")
     
+    return _global_langgraph_orchestrator
+
+@router.post("/langgraph/stream")
+async def langgraph_stream(request: LangGraphQueryRequest, http_request: Request):
+    """
+    LangGraph orchestration endpoint with streaming Server-Sent Events
+    
+    Implements the same logic as the langgraph command from cross_db.py CLI
+    but as a streaming API endpoint for real-time updates.
+    """
     # Get current user for audit and isolation
-    try:
-        current_user = await get_current_user_from_request(http_request)
-    except Exception as e:
-        langgraph_logger.error(f"❌ Authentication failed: {str(e)}")
-        return StreamingResponse(
-            [create_stream_event(
-                "error",
-                str(uuid.uuid4()),
-                error_code="AUTH_FAILED",
-                message="Authentication failed",
-                recoverable=False
-            )],
-            media_type="text/event-stream"
-        )
+    current_user = await get_current_user_from_request(http_request)
     
     request_data = {
         "endpoint": "/langgraph/stream",
         "user": current_user,
         "question": request.question,
-        "analyze": request.analyze,
-        "optimize": request.optimize,
+        "analyze": True,
+        "optimize": False,
         "force_langgraph": request.force_langgraph,
-        "databases_available": request.databases_available
+        "databases_available": None
     }
     
-    langgraph_logger.info(f"🌊 API ENDPOINT: /langgraph/stream - Starting streaming LangGraph query")
-    langgraph_logger.info(f"📥 Request details: {json.dumps(request_data, indent=2)}")
+    start_time = time.time()
+    
+    langgraph_logger.info(f"🚀 [LANGGRAPH CLI LOGIC] Starting LangGraph execution for session: {str(uuid.uuid4())}")
+    langgraph_logger.info(f"📋 [LANGGRAPH CLI LOGIC] Question: '{request.question}'")
+    langgraph_logger.info(f"⚙️ [LANGGRAPH CLI LOGIC] Settings - analyze: True, force_langgraph: {request.force_langgraph}")
     
     async def generate_stream():
         session_id = str(uuid.uuid4())
         
         try:
-            # Initialize LangGraph orchestrator
-            orchestrator = LangGraphIntegrationOrchestrator()
+            # Initialize components
+            langgraph_logger.info("🔧 [CLI LOGIC] Initializing components...")
+            orchestrator = get_langgraph_orchestrator()
+            langgraph_logger.info("✅ [CLI LOGIC] Global orchestrator retrieved")
             
-            # Create stream queue for async communication
-            stream_queue = asyncio.Queue()
+            yield create_stream_event("status", session_id, message="Starting LangGraph query execution...")
             
-            # Create stream callback
-            async def stream_callback(event: Dict[str, Any]):
-                event_type = event.get("type", "status")
-                
-                # Map LangGraph event types to our standard event types
-                if event_type == "node_start":
-                    await stream_queue.put(create_stream_event(
-                        "executing",
-                        session_id,
-                        node=event.get("node_id"),
-                        step=event.get("step", 1),
-                        total=event.get("total_steps", 1),
-                        message=f"Executing {event.get('node_id')}..."
-                    ))
-                elif event_type == "node_complete":
-                    state = event.get("state", {})
-                    if isinstance(state, GraphState):
-                        state = state.to_dict()
-                    
-                    # Handle different node types
-                    if "classification" in event.get("node_id", ""):
-                        await stream_queue.put(create_stream_event(
-                            "databases_selected",
-                            session_id,
-                            databases=state.get("databases_identified", []),
-                            reasoning=state.get("classification_reasoning", "")
-                        ))
-                    elif "planning" in event.get("node_id", ""):
-                        await stream_queue.put(create_stream_event(
-                            "plan_validated",
-                            session_id,
-                            operations=len(state.get("selected_tools", [])),
-                            estimated_time=state.get("estimated_time", "30s")
-                        ))
-                    elif "execution" in event.get("node_id", ""):
-                        await stream_queue.put(create_stream_event(
-                            "query_executing",
-                            session_id,
-                            database=state.get("current_database", "unknown"),
-                            progress=state.get("progress_percentage", 0)
-                        ))
-                        
-                        if state.get("partial_results"):
-                            await stream_queue.put(create_stream_event(
-                                "partial_results",
-                                session_id,
-                                database=state.get("current_database", "unknown"),
-                                rows_count=len(state.get("partial_results", []))
-                            ))
-                    elif "visualization" in event.get("node_id", ""):
-                        await stream_queue.put(create_stream_event(
-                            "visualization_progress",
-                            session_id,
-                            chart_type=state.get("selected_chart_type"),
-                            progress=state.get("progress_percentage", 0)
-                        ))
-                elif event_type == "error":
-                    await stream_queue.put(create_stream_event(
-                        "error",
-                        session_id,
-                        error_code=event.get("error_code", "NODE_ERROR"),
-                        message=event.get("error_message", str(event.get("error", "Unknown error"))),
-                        recoverable=event.get("recoverable", True)
-                    ))
+            yield create_stream_event("status", session_id, message="🚀 LangGraph Query Execution")
+            yield create_stream_event("status", session_id, message=f"Question: {request.question}")
+            yield create_stream_event("status", session_id, message=f"Session ID: {session_id[:8]}...")
             
-            # Start query processing task
-            process_task = asyncio.create_task(orchestrator.process_query(
+            # Processing with LangGraph orchestration
+            yield create_stream_event("status", session_id, message="Processing with LangGraph orchestration...")
+            
+            # Process query - let LangGraph determine optimal routing and databases
+            # Add progress update before long-running operation
+            yield create_stream_event("progress", session_id,
+                message="Executing LangGraph query...",
+                progress=20,
+                status="executing"
+            )
+            
+            result = await orchestrator.process_query(
                 question=request.question,
                 session_id=session_id,
-                databases_available=request.databases_available,
-                force_langgraph=request.force_langgraph,
-                stream_callback=stream_callback
-            ))
+                databases_available=None,  # Let it auto-detect
+                force_langgraph=request.force_langgraph
+            )
             
-            # Stream events from queue while processing
-            while True:
-                try:
-                    # Get next event with timeout
-                    event = await asyncio.wait_for(stream_queue.get(), timeout=1.0)
-                    yield event
-                    stream_queue.task_done()
-                except asyncio.TimeoutError:
-                    # Check if processing is complete
-                    if process_task.done():
-                        break
-                    continue
-                except Exception as e:
-                    langgraph_logger.error(f"❌ Error in stream processing: {str(e)}")
-                    yield create_stream_event(
-                        "error",
-                        session_id,
-                        error_code="STREAM_PROCESSING_ERROR",
-                        message=str(e),
-                        recoverable=False
+            # Add progress update after execution
+            yield create_stream_event("progress", session_id,
+                message="LangGraph execution completed, processing results...",
+                progress=80,
+                status="processing"
+            )
+            
+            # CRITICAL: Extract the actual session ID used by the workflow execution
+            # The workflow may have created internal sessions we need to track
+            actual_session_id = result.get("session_id", session_id)
+            if actual_session_id != session_id:
+                langgraph_logger.info(f"🔧 Using workflow session ID: {actual_session_id[:8]}...")
+                session_id = actual_session_id
+                yield create_stream_event("session_updated", session_id, new_session_id=actual_session_id)
+            
+            # Display routing information if requested
+            execution_metadata = result.get("execution_metadata", {})
+            routing_method = execution_metadata.get("routing_method", "unknown")
+            complexity_analysis = execution_metadata.get("complexity_analysis", {})
+            
+            if request.show_routing or request.verbose:
+                yield create_stream_event("routing_decision", session_id, 
+                    routing_method=routing_method,
+                    complexity=complexity_analysis.get('complexity', 'unknown'),
+                    reason=complexity_analysis.get('reason', 'No reason provided'),
+                    confidence=complexity_analysis.get('confidence', 'unknown')
+                )
+            
+            # Check for errors
+            if "error" in result:
+                error_msg = result['error']
+                langgraph_logger.error(f"❌ [CLI LOGIC] LangGraph execution failed: {error_msg}")
+                
+                # Show additional error details if available
+                if request.verbose and "execution_metadata" in result:
+                    error_details = result["execution_metadata"].get("error_details")
+                    if error_details:
+                        langgraph_logger.error(f"❌ [CLI LOGIC] Error details: {error_details}")
+                
+                yield create_stream_event("error", session_id,
+                    error_code="LANGGRAPH_EXECUTION_FAILED",
+                    message=error_msg,
+                    recoverable=False
+                )
+                yield create_stream_event("complete", session_id, success=False, error=error_msg)
+                return
+            
+            # Success - display results based on workflow type
+            workflow = result.get("workflow", "unknown")
+            execution_time = execution_metadata.get("execution_time", 0)
+            
+            yield create_stream_event("execution_success", session_id,
+                workflow=workflow,
+                execution_time=execution_time
+            )
+            
+            # Check for and display visualization data first
+            visualization_data = result.get("visualization_data")
+            if visualization_data and visualization_data.get("visualization_created"):
+                chart_type = visualization_data.get("performance_metrics", {}).get("chart_type", "unknown")
+                dataset_size = visualization_data.get("dataset_info", {}).get("size", 0)
+                
+                yield create_stream_event("visualization_created", session_id,
+                    chart_type=chart_type,
+                    dataset_size=dataset_size,
+                    intent=visualization_data.get('visualization_intent', 'N/A')
+                )
+                
+                # Show chart configuration summary
+                chart_config = visualization_data.get("chart_config", {})
+                if chart_config:
+                    yield create_stream_event("chart_config", session_id,
+                        type=chart_config.get('type', 'unknown'),
+                        data_points=len(chart_config.get('data', [])),
+                        title=chart_config.get('layout', {}).get('title', 'N/A')
                     )
-                    break
             
-            # Get final result
-            result = await process_task
+            # Display results based on workflow type
+            if workflow == "traditional":
+                # Traditional workflow results
+                final_result = result.get("final_result", {})
+                operation_results = result.get("operation_results", {})
+                
+                if request.verbose:
+                    yield create_stream_event("operation_results", session_id,
+                        operations={op_id: {"status": "✅" if "error" not in op_result else "❌", 
+                                           "rows": len(op_result.get('data', []))}
+                                   for op_id, op_result in operation_results.items()}
+                    )
+                
+                # Display final formatted result
+                if "formatted_result" in final_result:
+                    yield create_stream_event("formatted_result", session_id,
+                        result=final_result["formatted_result"]
+                    )
+                elif "data" in final_result and final_result["data"]:
+                    yield create_stream_event("tabular_results", session_id,
+                        data=final_result["data"][:100]  # Limit for streaming
+                    )
+                else:
+                    yield create_stream_event("no_results", session_id, message="No results to display")
+            
+            elif workflow == "langgraph":
+                # LangGraph workflow results
+                node_results = result.get("node_results", {})
+                final_state = result.get("final_result", {})
+                
+                if request.verbose:
+                    yield create_stream_event("node_results", session_id,
+                        nodes={node_id: {"status": "✅" if "error" not in node_result else "❌"}
+                               for node_id, node_result in node_results.items()}
+                    )
+                
+                # Display final results from graph state
+                if "operation_results" in final_state:
+                    operation_results = final_state["operation_results"]
+                    
+                    # Try to extract and display data
+                    all_data = []
+                    for op_result in operation_results.values():
+                        if isinstance(op_result, dict) and "data" in op_result:
+                            all_data.extend(op_result["data"])
+                    
+                    if all_data:
+                        yield create_stream_event("tabular_results", session_id,
+                            data=all_data[:100]  # Limit for streaming
+                        )
+                    else:
+                        yield create_stream_event("no_results", session_id, 
+                            message="No tabular results to display",
+                            final_state_keys=list(final_state.keys())
+                        )
+            
+            elif workflow == "hybrid":
+                # Hybrid workflow results
+                final_result = result.get("final_result", {})
+                operation_results = result.get("operation_results", {})
+                hybrid_advantages = result.get("hybrid_advantages", [])
+                
+                if request.verbose:
+                    yield create_stream_event("hybrid_advantages", session_id,
+                        advantages=hybrid_advantages
+                    )
+                
+                # Display results similar to traditional but with hybrid enhancements
+                if "formatted_result" in final_result:
+                    yield create_stream_event("formatted_result", session_id,
+                        result=final_result["formatted_result"]
+                    )
+                elif operation_results:
+                    # Extract data from operation results
+                    all_data = []
+                    for op_result in operation_results.values():
+                        if isinstance(op_result, dict) and "data" in op_result:
+                            all_data.extend(op_result["data"])
+                    
+                    if all_data:
+                        yield create_stream_event("tabular_results", session_id,
+                            data=all_data[:100]  # Limit for streaming
+                        )
+                    else:
+                        yield create_stream_event("no_results", session_id, message="No results to display")
+            
+            # Show comprehensive output breakdown if requested
+            if request.show_outputs or request.show_timeline:
+                try:
+                    from ..langgraph.output_aggregator import get_output_integrator
+                    
+                    output_integrator = get_output_integrator()
+                    aggregator = output_integrator.get_aggregator(session_id)
+                    
+                    # Show output breakdown
+                    if request.show_outputs:
+                        export_data = aggregator.export_for_analysis()
+                        yield create_stream_event("output_analysis", session_id,
+                            comprehensive_analysis=export_data
+                        )
+                    
+                    # Show timeline
+                    if request.show_timeline:
+                        timeline = aggregator.get_workflow_timeline()
+                        yield create_stream_event("workflow_timeline", session_id,
+                            timeline=timeline
+                        )
+                        
+                except Exception as e:
+                    yield create_stream_event("warning", session_id,
+                        message=f"Could not access output aggregator: {e}"
+                    )
+            
+            # Show performance statistics if available
+            if request.verbose:
+                integration_status = orchestrator.get_integration_status()
+                exec_stats = integration_status.get("execution_statistics", {})
+                
+                yield create_stream_event("performance_stats", session_id,
+                    traditional_executions=exec_stats.get('traditional_executions', 0),
+                    langgraph_executions=exec_stats.get('langgraph_executions', 0),
+                    hybrid_executions=exec_stats.get('hybrid_executions', 0)
+                )
+            
+            # Save session if requested
+            if request.save_session:
+                # Use existing state manager to save session details
+                state_manager = StateManager()
+                session_state = AnalysisState(
+                    session_id=session_id,
+                    user_question=request.question
+                )
+                
+                # Add execution metadata as insights
+                session_state.add_insight("execution", "LangGraph execution", {
+                    "langgraph_execution": True,
+                    "workflow_type": workflow,
+                    "routing_method": execution_metadata.get("routing_method"),
+                    "execution_time": execution_time
+                })
+                
+                # Set final result
+                if "final_result" in result:
+                    session_state.set_final_result(
+                        result["final_result"],
+                        result.get("final_result", {}).get("formatted_result", str(result.get("final_result", {})))
+                    )
+                
+                await state_manager.update_state(session_state)
+                yield create_stream_event("session_saved", session_id,
+                    message=f"Session saved with ID: {session_id}"
+                )
+            
+            # Final progress update before completion
+            yield create_stream_event("progress", session_id,
+                message="Analysis complete, finalizing results...",
+                progress=100,
+                status="finalizing"
+            )
+            
+            # Complete
+            total_time = time.time() - start_time
+            yield create_stream_event("complete", session_id,
+                success=True,
+                total_time=total_time,
+                workflow=workflow,
+                results=result.get("final_result", {})
+            )
+            
+            # Log completion
             duration = time.time() - start_time
-            
-            # Log successful completion
             log_request_response(langgraph_logger, "/langgraph/stream", request_data, {
                 "success": True,
-                "workflow": result.get("workflow", "langgraph"),
-                "execution_time": duration,
-                "session_id": session_id
+                "workflow": workflow,
+                "execution_time": execution_time
             }, duration)
             
-            # Stream final result
-            yield create_stream_event(
-                "complete",
-                session_id,
-                success=True,
-                total_time=duration,
-                results={
-                    "workflow": result.get("workflow", "langgraph"),
-                    "final_result": result.get("final_result", {}),
-                    "execution_metadata": result.get("execution_metadata", {}),
-                    "graph_specification": result.get("graph_specification", {}),
-                    "node_results": result.get("node_results", {})
-                }
-            )
-            
         except Exception as e:
-            duration = time.time() - start_time
-            error_msg = f"LangGraph streaming failed: {str(e)}"
+            error_time = time.time() - start_time
+            error_msg = str(e)
             
-            langgraph_logger.error(f"❌ {error_msg}")
-            langgraph_logger.error(f"❌ Exception details: {traceback.format_exc()}")
+            langgraph_logger.error(f"❌ [CLI LOGIC] LangGraph execution failed: {error_msg}")
+            langgraph_logger.error(f"❌ [CLI LOGIC] Exception details: {traceback.format_exc()}")
             
-            # Log error
-            log_request_response(langgraph_logger, "/langgraph/stream", request_data, {}, duration, error_msg)
-            
-            yield create_stream_event(
-                "error",
-                session_id,
+            yield create_stream_event("error", session_id,
                 error_code="LANGGRAPH_STREAMING_FAILED",
-                message=str(e),
+                message=error_msg,
                 recoverable=False
             )
-            yield create_stream_event("complete", session_id, success=False, error=str(e))
+            yield create_stream_event("complete", session_id, success=False, error=error_msg)
+            
+            # Log error
+            log_request_response(langgraph_logger, "/langgraph/stream", request_data, {}, error_time, error_msg)
     
     return StreamingResponse(
         generate_stream(),
@@ -2816,3 +3002,4 @@ async def langgraph_query_stream(request: LangGraphQueryRequest, http_request: R
             "Access-Control-Allow-Headers": "Cache-Control"
         }
     )
+
