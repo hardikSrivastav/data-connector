@@ -1,7 +1,7 @@
 from fastapi import APIRouter, HTTPException, Depends, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
-from typing import List, Dict, Any, Optional, AsyncIterator
+from typing import List, Dict, Any, Optional, AsyncIterator, Union
 import asyncpg
 import logging
 import re
@@ -27,7 +27,9 @@ from ..db.execute import get_query_engine, process_ai_query
 # Import cross-database components
 from ..db.classifier import DatabaseClassifier
 from ..db.orchestrator.cross_db_agent import CrossDatabaseAgent
-from ..tools.state_manager import StateManager
+from ..tools.state_manager import StateManager, get_state_manager
+from ..langgraph.integration import LangGraphIntegrationOrchestrator
+from ..langgraph.compat import GraphState
 
 # Import database availability service
 from ..services.database_availability import get_availability_service, DatabaseStatus
@@ -84,6 +86,7 @@ database_logger = create_endpoint_logger("database")
 visualization_logger = create_endpoint_logger("visualization")
 orchestration_logger = create_endpoint_logger("orchestration")
 stream_logger = create_endpoint_logger("streaming")
+langgraph_logger = create_endpoint_logger("langgraph")
 
 # Helper function to log request/response
 def log_request_response(endpoint_logger: logging.Logger, endpoint: str, request_data: dict, response_data: dict, duration: float, error: str = None):
@@ -2596,3 +2599,220 @@ async def classify_orchestration_operation(request: OrchestrationClassifyRequest
             estimated_time=3000 if is_data_analysis else 500,
             operation_type=operation_type
         )
+
+class LangGraphQueryRequest(BaseModel):
+    """Request model for LangGraph queries."""
+    question: str
+    analyze: bool = False
+    optimize: bool = False
+    force_langgraph: bool = False
+    save_session: bool = True
+    databases_available: Optional[List[str]] = None
+
+# LangGraph streaming endpoint
+@router.post("/langgraph/stream")
+async def langgraph_query_stream(request: LangGraphQueryRequest, http_request: Request):
+    """
+    Streaming version of the LangGraph query endpoint using Server-Sent Events
+    
+    Args:
+        request: LangGraphQueryRequest containing the question and options
+        http_request: HTTP request for user authentication
+        
+    Returns:
+        StreamingResponse with Server-Sent Events
+    """
+    start_time = time.time()
+    
+    # Get current user for audit and isolation
+    try:
+        current_user = await get_current_user_from_request(http_request)
+    except Exception as e:
+        langgraph_logger.error(f"❌ Authentication failed: {str(e)}")
+        return StreamingResponse(
+            [create_stream_event(
+                "error",
+                str(uuid.uuid4()),
+                error_code="AUTH_FAILED",
+                message="Authentication failed",
+                recoverable=False
+            )],
+            media_type="text/event-stream"
+        )
+    
+    request_data = {
+        "endpoint": "/langgraph/stream",
+        "user": current_user,
+        "question": request.question,
+        "analyze": request.analyze,
+        "optimize": request.optimize,
+        "force_langgraph": request.force_langgraph,
+        "databases_available": request.databases_available
+    }
+    
+    langgraph_logger.info(f"🌊 API ENDPOINT: /langgraph/stream - Starting streaming LangGraph query")
+    langgraph_logger.info(f"📥 Request details: {json.dumps(request_data, indent=2)}")
+    
+    async def generate_stream():
+        session_id = str(uuid.uuid4())
+        
+        try:
+            # Initialize LangGraph orchestrator
+            orchestrator = LangGraphIntegrationOrchestrator()
+            
+            # Create stream queue for async communication
+            stream_queue = asyncio.Queue()
+            
+            # Create stream callback
+            async def stream_callback(event: Dict[str, Any]):
+                event_type = event.get("type", "status")
+                
+                # Map LangGraph event types to our standard event types
+                if event_type == "node_start":
+                    await stream_queue.put(create_stream_event(
+                        "executing",
+                        session_id,
+                        node=event.get("node_id"),
+                        step=event.get("step", 1),
+                        total=event.get("total_steps", 1),
+                        message=f"Executing {event.get('node_id')}..."
+                    ))
+                elif event_type == "node_complete":
+                    state = event.get("state", {})
+                    if isinstance(state, GraphState):
+                        state = state.to_dict()
+                    
+                    # Handle different node types
+                    if "classification" in event.get("node_id", ""):
+                        await stream_queue.put(create_stream_event(
+                            "databases_selected",
+                            session_id,
+                            databases=state.get("databases_identified", []),
+                            reasoning=state.get("classification_reasoning", "")
+                        ))
+                    elif "planning" in event.get("node_id", ""):
+                        await stream_queue.put(create_stream_event(
+                            "plan_validated",
+                            session_id,
+                            operations=len(state.get("selected_tools", [])),
+                            estimated_time=state.get("estimated_time", "30s")
+                        ))
+                    elif "execution" in event.get("node_id", ""):
+                        await stream_queue.put(create_stream_event(
+                            "query_executing",
+                            session_id,
+                            database=state.get("current_database", "unknown"),
+                            progress=state.get("progress_percentage", 0)
+                        ))
+                        
+                        if state.get("partial_results"):
+                            await stream_queue.put(create_stream_event(
+                                "partial_results",
+                                session_id,
+                                database=state.get("current_database", "unknown"),
+                                rows_count=len(state.get("partial_results", []))
+                            ))
+                    elif "visualization" in event.get("node_id", ""):
+                        await stream_queue.put(create_stream_event(
+                            "visualization_progress",
+                            session_id,
+                            chart_type=state.get("selected_chart_type"),
+                            progress=state.get("progress_percentage", 0)
+                        ))
+                elif event_type == "error":
+                    await stream_queue.put(create_stream_event(
+                        "error",
+                        session_id,
+                        error_code=event.get("error_code", "NODE_ERROR"),
+                        message=event.get("error_message", str(event.get("error", "Unknown error"))),
+                        recoverable=event.get("recoverable", True)
+                    ))
+            
+            # Start query processing task
+            process_task = asyncio.create_task(orchestrator.process_query(
+                question=request.question,
+                session_id=session_id,
+                databases_available=request.databases_available,
+                force_langgraph=request.force_langgraph,
+                stream_callback=stream_callback
+            ))
+            
+            # Stream events from queue while processing
+            while True:
+                try:
+                    # Get next event with timeout
+                    event = await asyncio.wait_for(stream_queue.get(), timeout=1.0)
+                    yield event
+                    stream_queue.task_done()
+                except asyncio.TimeoutError:
+                    # Check if processing is complete
+                    if process_task.done():
+                        break
+                    continue
+                except Exception as e:
+                    langgraph_logger.error(f"❌ Error in stream processing: {str(e)}")
+                    yield create_stream_event(
+                        "error",
+                        session_id,
+                        error_code="STREAM_PROCESSING_ERROR",
+                        message=str(e),
+                        recoverable=False
+                    )
+                    break
+            
+            # Get final result
+            result = await process_task
+            duration = time.time() - start_time
+            
+            # Log successful completion
+            log_request_response(langgraph_logger, "/langgraph/stream", request_data, {
+                "success": True,
+                "workflow": result.get("workflow", "langgraph"),
+                "execution_time": duration,
+                "session_id": session_id
+            }, duration)
+            
+            # Stream final result
+            yield create_stream_event(
+                "complete",
+                session_id,
+                success=True,
+                total_time=duration,
+                results={
+                    "workflow": result.get("workflow", "langgraph"),
+                    "final_result": result.get("final_result", {}),
+                    "execution_metadata": result.get("execution_metadata", {}),
+                    "graph_specification": result.get("graph_specification", {}),
+                    "node_results": result.get("node_results", {})
+                }
+            )
+            
+        except Exception as e:
+            duration = time.time() - start_time
+            error_msg = f"LangGraph streaming failed: {str(e)}"
+            
+            langgraph_logger.error(f"❌ {error_msg}")
+            langgraph_logger.error(f"❌ Exception details: {traceback.format_exc()}")
+            
+            # Log error
+            log_request_response(langgraph_logger, "/langgraph/stream", request_data, {}, duration, error_msg)
+            
+            yield create_stream_event(
+                "error",
+                session_id,
+                error_code="LANGGRAPH_STREAMING_FAILED",
+                message=str(e),
+                recoverable=False
+            )
+            yield create_stream_event("complete", session_id, success=False, error=str(e))
+    
+    return StreamingResponse(
+        generate_stream(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "Access-Control-Allow-Origin": "*",
+            "Access-Control-Allow-Headers": "Cache-Control"
+        }
+    )

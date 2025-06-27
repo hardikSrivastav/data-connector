@@ -1,5 +1,10 @@
-from ..output_aggregator import get_output_integrator
+import logging
+from datetime import datetime
 from typing import Dict, List, Any, Optional, AsyncIterator
+from ..output_aggregator import get_output_integrator
+from ..compat import NodeType
+
+logger = logging.getLogger(__name__)
 
 class StreamingNodeBase:
     """
@@ -8,7 +13,7 @@ class StreamingNodeBase:
     
     def __init__(self, node_id: str):
         self.node_id = node_id
-        self.node_type = NodeType.PROCESSING
+        self.node_type = NodeType.EXECUTION
         self.stream_capable = True
         
         # Add output integration

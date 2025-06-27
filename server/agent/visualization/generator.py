@@ -57,11 +57,11 @@ class PlotlyConfigGenerator:
             
             # Apply common optimizations
             chart_logger.info(f"[{session_id}] Step 2: Applying common optimizations...")
-            config = self._apply_common_optimizations(config, dataset, session_id)
+            config = self._apply_common_optimizations(config, dataset)
             
             # Apply custom styling
             chart_logger.info(f"[{session_id}] Step 3: Applying custom styling...")
-            config = self._apply_custom_styling(config, customizations, session_id)
+            config = self._apply_custom_styling(config, customizations)
             
             generation_time = time.time() - start_time
             chart_logger.info(f"[{session_id}] Plotly config generation completed in {generation_time:.2f}s")
@@ -395,6 +395,59 @@ class PlotlyConfigGenerator:
             layout=layout,
             config=config,
             type='box_plot'
+        )
+
+    async def _generate_heatmap_config(self, dataset: VisualizationDataset,
+                                     recommendation: ChartRecommendation,
+                                     customizations: Dict[str, Any],
+                                     session_id: str = None) -> PlotlyConfig:
+        """Generate heatmap configuration"""
+        
+        data_mapping = recommendation.data_mapping
+        df = dataset.data
+        
+        # For heatmap, we need numeric columns
+        import numpy as np
+        numeric_cols = df.select_dtypes(include=[np.number]).columns.tolist()
+        
+        if len(numeric_cols) < 2:
+            # Fallback to bar chart if not enough numeric data
+            chart_logger.warning(f"Not enough numeric columns for heatmap, falling back to bar chart")
+            return await self._generate_bar_config(dataset, recommendation, customizations)
+        
+        # Use correlation matrix for heatmap
+        corr_matrix = df[numeric_cols].corr()
+        
+        trace = {
+            'z': corr_matrix.values.tolist(),
+            'x': corr_matrix.columns.tolist(),
+            'y': corr_matrix.index.tolist(),
+            'type': 'heatmap',
+            'colorscale': 'RdBu',
+            'zmid': 0,
+            'showscale': True,
+            'hovertemplate': '<b>%{x}</b> vs <b>%{y}</b><br>Correlation: %{z:.2f}<extra></extra>'
+        }
+        
+        layout = {
+            'title': customizations.get('title', 'Correlation Heatmap'),
+            'xaxis': {'title': 'Variables', 'side': 'bottom'},
+            'yaxis': {'title': 'Variables'},
+            'height': max(400, len(numeric_cols) * 40),
+            'width': max(400, len(numeric_cols) * 40)
+        }
+        
+        config = {
+            'responsive': True,
+            'displayModeBar': True,
+            'modeBarButtonsToRemove': ['pan2d', 'lasso2d']
+        }
+        
+        return PlotlyConfig(
+            data=[trace],
+            layout=layout,
+            config=config,
+            type='heatmap'
         )
     
     def _apply_common_optimizations(self, config: PlotlyConfig, dataset: VisualizationDataset) -> PlotlyConfig:

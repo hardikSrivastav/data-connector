@@ -457,10 +457,11 @@ class WorkflowOutputAggregator:
             if execution_summary["total_tools_executed"] > 0 else 1.0
         )
         
+        # More flexible success criteria for LangGraph workflows
         overall_success = (
             len(all_rows) > 0 and  # We got data
-            tool_success_rate >= 0.5 and  # At least 50% tool success
-            final_synthesis is not None  # We have a final response
+            tool_success_rate >= 0.5  # At least 50% tool success
+            # Note: final_synthesis is optional for data-focused workflows
         )
         
         # Build unified result

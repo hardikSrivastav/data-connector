@@ -22,6 +22,7 @@ from .nodes.classification import ClassificationNode
 from .nodes.iterative_metadata import IterativeMetadataNode
 from .nodes.iterative_planning import IterativePlanningNode
 from .nodes.iterative_execution import IterativeExecutionNode
+from .nodes.visualization_node import VisualizationNode
 
 # Import existing components to preserve functionality
 from ..tools.state_manager import StateManager, AnalysisState
@@ -74,6 +75,7 @@ class LangGraphIntegrationOrchestrator:
         self.iterative_metadata_node = IterativeMetadataNode(config)
         self.iterative_planning_node = IterativePlanningNode(config)
         self.iterative_execution_node = IterativeExecutionNode(config)
+        self.visualization_node = VisualizationNode(config)
         
         # Integration settings
         self.use_langgraph_for_complex = self.config.get("use_langgraph_for_complex", True)
@@ -830,6 +832,22 @@ class LangGraphIntegrationOrchestrator:
             else:
                 state = await self.iterative_execution_node(state)
             
+            # Phase 5: Visualization (intelligent chart generation based on results)
+            logger.info("🔄 [ITERATIVE_WORKFLOW] Phase 5: Visualization Analysis")
+            if stream_callback:
+                async for chunk in self.visualization_node.stream(state):
+                    if stream_callback:
+                        await stream_callback(chunk)
+                    if chunk.get("is_final", False):
+                        state.update(chunk.get("state_update", {}))
+                        break
+            else:
+                state = await self.visualization_node(state)
+            
+            visualization_completed = state.get("visualization_completed", False)
+            visualization_created = state.get("visualization_data", {}).get("visualization_created", False)
+            logger.info(f"🔄 [ITERATIVE_WORKFLOW] Visualization phase completed: {visualization_completed}, chart created: {visualization_created}")
+            
             # Prepare final result
             execution_time = time.time() - start_time
             
@@ -847,6 +865,9 @@ class LangGraphIntegrationOrchestrator:
                 # If aggregator has comprehensive data, use it
                 if unified_result and "rows" in unified_result and not unified_result.get("error"):
                     result = unified_result
+                    # Add visualization data if available
+                    if state.get("visualization_data"):
+                        result["visualization_data"] = state["visualization_data"]
                 else:
                     # Fallback to manual construction
                     logger.warning(f"🔄 [ITERATIVE_WORKFLOW] Output aggregator result incomplete, using fallback")
@@ -863,7 +884,8 @@ class LangGraphIntegrationOrchestrator:
                                 "classification",
                                 "iterative_metadata",
                                 "iterative_planning", 
-                                "execution"
+                                "execution",
+                                "visualization"
                             ],
                             "databases_used": state.get("databases_identified", []),
                             "tables_accessed": len(state.get("available_tables", [])),
@@ -883,6 +905,10 @@ class LangGraphIntegrationOrchestrator:
                             "planning_optimizations": state.get("execution_plan", {}).get("optimizations_applied", [])
                         }
                     }
+                    
+                    # Add visualization data if available
+                    if state.get("visualization_data"):
+                        result["visualization_data"] = state["visualization_data"]
                     
             except Exception as e:
                 logger.error(f"🔄 [ITERATIVE_WORKFLOW] Output aggregator failed: {e}")

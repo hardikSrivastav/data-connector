@@ -983,6 +983,25 @@ def langgraph(
                         import traceback
                         console.print(traceback.format_exc())
             
+            # Check for and display visualization data first
+            visualization_data = result.get("visualization_data")
+            if visualization_data and visualization_data.get("visualization_created"):
+                console.print(f"\n[bold green]🎨 Visualization Created[/bold green]")
+                chart_type = visualization_data.get("performance_metrics", {}).get("chart_type", "unknown")
+                dataset_size = visualization_data.get("dataset_info", {}).get("size", 0)
+                console.print(f"Chart type: [cyan]{chart_type}[/cyan]")
+                console.print(f"Dataset: [yellow]{dataset_size} rows[/yellow]")
+                console.print(f"Intent: [dim]{visualization_data.get('visualization_intent', 'N/A')}[/dim]")
+                
+                # Show chart configuration summary
+                chart_config = visualization_data.get("chart_config", {})
+                if chart_config:
+                    console.print(f"\n[bold]Chart Configuration:[/bold]")
+                    console.print(f"• Type: {chart_config.get('type', 'unknown')}")
+                    console.print(f"• Data points: {len(chart_config.get('data', []))}")
+                    if 'layout' in chart_config and 'title' in chart_config['layout']:
+                        console.print(f"• Title: {chart_config['layout']['title']}")
+            
             # Display results based on workflow type
             if workflow == "traditional":
                 # Traditional workflow results
@@ -1125,6 +1144,8 @@ def langgraph_short(
     """Execute a query using LangGraph orchestration (short alias for 'langgraph')"""
     # Call the main langgraph function with the same parameters
     langgraph(question, force_langgraph, show_routing, verbose, show_outputs, show_timeline, export_analysis, save_session, stream_output)
+
+
 
 
 @app.command(name="bedrock-status")

@@ -682,6 +682,40 @@ class IterativeExecutionNode(StreamingNodeBase):
         """Finalize the execution and prepare final results."""
         logger.info("⚡ [ITERATIVE_EXECUTION] Finalizing execution")
         
+        # Integrate with output aggregator
+        try:
+            from ..output_aggregator import get_output_integrator
+            output_integrator = get_output_integrator()
+            aggregator = output_integrator.get_aggregator(session_id)
+            
+            # Capture raw data results
+            if aggregated_results["combined_results"]:
+                aggregator.capture_raw_data(
+                    source="iterative_execution",
+                    rows=aggregated_results["combined_results"],
+                    query="Iterative LangGraph execution",
+                    node_id="iterative_execution",
+                    execution_time_ms=performance_analysis.get("total_execution_time", 0) * 1000
+                )
+            
+            # Capture tool executions for each step
+            for step_name, step_details in aggregated_results.get("step_summary", {}).items():
+                aggregator.capture_tool_execution(
+                    tool_id=step_name,
+                    call_id=f"{execution_id}_{step_name}",
+                    parameters={"operation": step_details.get("operation", "unknown")},
+                    result=step_details.get("rows_returned", 0),
+                    success=step_details.get("success", False),
+                    execution_time_ms=step_details.get("execution_time", 0) * 1000,
+                    error_message=None,
+                    node_id="iterative_execution"
+                )
+            
+            logger.info(f"⚡ [ITERATIVE_EXECUTION] Integrated {len(aggregated_results['combined_results'])} rows and {len(aggregated_results.get('step_summary', {}))} tool executions with output aggregator")
+            
+        except Exception as e:
+            logger.warning(f"⚡ [ITERATIVE_EXECUTION] Failed to integrate with output aggregator: {e}")
+        
         final_result = {
             "execution_id": execution_id,
             "session_id": session_id,
