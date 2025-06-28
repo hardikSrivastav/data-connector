@@ -401,7 +401,159 @@ export const CanvasBlock = ({
                 </div>
               )}
 
-              {/* AI Reasoning Chain - Show if available */}
+              {/* Captured Execution Data - Show detailed execution info */}
+          {block.properties?.canvasData?.capturedExecutionData && (() => {
+            const execData = block.properties.canvasData.capturedExecutionData;
+            
+            return (
+              <div className="space-y-4">
+                {/* Execution Summary */}
+                {execData.executionSummary && Object.keys(execData.executionSummary).length > 0 && (
+                  <div className="bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-700 rounded-lg p-4">
+                    <div className="flex items-center gap-2 text-green-700 dark:text-green-300 font-medium mb-3">
+                      <span className="text-lg">⚡</span>
+                      <span>Execution Summary</span>
+                    </div>
+                    <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-sm">
+                      {execData.executionSummary.total_sql_queries > 0 && (
+                        <div className="bg-white dark:bg-gray-800 rounded p-2 text-center">
+                          <div className="font-semibold text-blue-600 dark:text-blue-400">
+                            {execData.executionSummary.total_sql_queries}
+                          </div>
+                          <div className="text-xs text-gray-600 dark:text-gray-400">SQL Queries</div>
+                        </div>
+                      )}
+                      {execData.executionSummary.total_tool_executions > 0 && (
+                        <div className="bg-white dark:bg-gray-800 rounded p-2 text-center">
+                          <div className="font-semibold text-purple-600 dark:text-purple-400">
+                            {execData.executionSummary.successful_tools}/{execData.executionSummary.total_tool_executions}
+                          </div>
+                          <div className="text-xs text-gray-600 dark:text-gray-400">Tools Success</div>
+                        </div>
+                      )}
+                      {execData.executionSummary.total_execution_time > 0 && (
+                        <div className="bg-white dark:bg-gray-800 rounded p-2 text-center">
+                          <div className="font-semibold text-orange-600 dark:text-orange-400">
+                            {(execData.executionSummary.total_execution_time / 1000).toFixed(2)}s
+                          </div>
+                          <div className="text-xs text-gray-600 dark:text-gray-400">Total Time</div>
+                        </div>
+                      )}
+                      {execData.executionSummary.databases_accessed?.length > 0 && (
+                        <div className="bg-white dark:bg-gray-800 rounded p-2 text-center">
+                          <div className="font-semibold text-teal-600 dark:text-teal-400">
+                            {execData.executionSummary.databases_accessed.length}
+                          </div>
+                          <div className="text-xs text-gray-600 dark:text-gray-400">Databases</div>
+                        </div>
+                      )}
+                    </div>
+                    {execData.executionSummary.databases_accessed?.length > 0 && (
+                      <div className="mt-3 text-sm text-gray-600 dark:text-gray-400">
+                        <span className="font-medium">Accessed:</span> {execData.executionSummary.databases_accessed.join(', ')}
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* SQL Queries Executed */}
+                {execData.sqlQueries && execData.sqlQueries.length > 0 && (
+                  <div className="bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-700 rounded-lg p-4">
+                    <div className="flex items-center gap-2 text-blue-700 dark:text-blue-300 font-medium mb-3">
+                      <span className="text-lg">🔍</span>
+                      <span>SQL Queries Executed ({execData.sqlQueries.length})</span>
+                    </div>
+                    <div className="space-y-3">
+                      {execData.sqlQueries.slice(0, 3).map((query, index) => (
+                        <div key={index} className="bg-white dark:bg-gray-800 rounded p-3 border border-blue-100 dark:border-blue-800">
+                          <div className="flex items-center justify-between mb-2">
+                            <span className="text-xs font-medium text-blue-600 dark:text-blue-400">
+                              Query #{query.queryNumber} • {query.source}
+                            </span>
+                            <div className="flex items-center gap-3 text-xs text-gray-500">
+                              <span>{query.rowsReturned.toLocaleString()} rows</span>
+                              <span>{query.executionTimeMs.toFixed(1)}ms</span>
+                            </div>
+                          </div>
+                          <code className="text-xs bg-gray-100 dark:bg-gray-700 p-2 rounded block overflow-x-auto">
+                            {query.query.length > 100 ? query.query.substring(0, 100) + '...' : query.query}
+                          </code>
+                        </div>
+                      ))}
+                      {execData.sqlQueries.length > 3 && (
+                        <div className="text-xs text-blue-600 dark:text-blue-400 text-center">
+                          +{execData.sqlQueries.length - 3} more queries (view in full canvas)
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
+
+                {/* Tool Executions */}
+                {execData.toolExecutions && execData.toolExecutions.length > 0 && (
+                  <div className="bg-purple-50 dark:bg-purple-900/20 border border-purple-200 dark:border-purple-700 rounded-lg p-4">
+                    <div className="flex items-center gap-2 text-purple-700 dark:text-purple-300 font-medium mb-3">
+                      <span className="text-lg">🔧</span>
+                      <span>Tool Executions ({execData.toolExecutions.length})</span>
+                    </div>
+                    <div className="space-y-2">
+                      {execData.toolExecutions.slice(0, 4).map((tool, index) => (
+                        <div key={index} className="bg-white dark:bg-gray-800 rounded p-3 border border-purple-100 dark:border-purple-800">
+                          <div className="flex items-center justify-between">
+                            <div className="flex items-center gap-2">
+                              <span className={`w-2 h-2 rounded-full ${tool.success ? 'bg-green-500' : 'bg-red-500'}`}></span>
+                              <span className="text-sm font-medium text-gray-900 dark:text-gray-100">
+                                {tool.toolId.split('.').pop()}
+                              </span>
+                            </div>
+                            <span className="text-xs text-gray-500">
+                              {tool.executionTimeMs.toFixed(1)}ms
+                            </span>
+                          </div>
+                          {tool.resultPreview && (
+                            <div className="mt-2 text-xs text-gray-600 dark:text-gray-400">
+                              {tool.resultPreview.length > 80 ? tool.resultPreview.substring(0, 80) + '...' : tool.resultPreview}
+                            </div>
+                          )}
+                        </div>
+                      ))}
+                      {execData.toolExecutions.length > 4 && (
+                        <div className="text-xs text-purple-600 dark:text-purple-400 text-center">
+                          +{execData.toolExecutions.length - 4} more tools (view in full canvas)
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
+
+                {/* Schema Data */}
+                {execData.schemaData && execData.schemaData.length > 0 && (
+                  <div className="bg-teal-50 dark:bg-teal-900/20 border border-teal-200 dark:border-teal-700 rounded-lg p-4">
+                    <div className="flex items-center gap-2 text-teal-700 dark:text-teal-300 font-medium mb-3">
+                      <span className="text-lg">📋</span>
+                      <span>Database Schema Access</span>
+                    </div>
+                    <div className="space-y-2">
+                      {execData.schemaData.map((schema, index) => (
+                        <div key={index} className="bg-white dark:bg-gray-800 rounded p-3 border border-teal-100 dark:border-teal-800">
+                          <div className="flex items-center justify-between">
+                            <span className="text-sm font-medium text-gray-900 dark:text-gray-100">
+                              {schema.source}
+                            </span>
+                            <span className="text-xs text-gray-500">
+                              {schema.tablesFound} tables
+                            </span>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            );
+          })()}
+
+          {/* AI Reasoning Chain - Show if available */}
               {block.properties?.canvasData?.reasoningChain && (() => {
                 const reasoningChain = block.properties.canvasData.reasoningChain as any;
                 

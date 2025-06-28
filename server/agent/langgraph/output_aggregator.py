@@ -16,6 +16,7 @@ This enables full observability and auditability of the entire workflow.
 import logging
 import json
 import time
+import os
 from typing import Dict, List, Any, Optional, Union, AsyncIterator
 from datetime import datetime, timezone
 from dataclasses import dataclass, field, asdict
@@ -26,6 +27,9 @@ from .state import LangGraphState
 from ..tools.state_manager import StateManager, AnalysisState
 
 logger = logging.getLogger(__name__)
+
+# Constants for file storage
+AGGREGATOR_DATA_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data", "aggregator")
 
 class OutputType(Enum):
     """Types of outputs we can capture from the workflow."""
@@ -136,7 +140,102 @@ class WorkflowOutputAggregator:
             "version": "1.0.0"
         }
         
+        # ✅ ENHANCEMENT: Load existing data if available
+        self._load_from_disk()
+        
         logger.info(f"🔄 [OUTPUT_AGGREGATOR] Initialized for session: {session_id}")
+    
+    def _get_aggregator_file_path(self) -> str:
+        """Get the file path for storing aggregator data."""
+        # Ensure aggregator directory exists
+        os.makedirs(AGGREGATOR_DATA_DIR, exist_ok=True)
+        return os.path.join(AGGREGATOR_DATA_DIR, f"{self.session_id}_aggregator.json")
+    
+    def _save_to_disk(self):
+        """Save aggregator data to disk for persistence."""
+        logger.info(f"🔧 [DEBUG_SAVE] _save_to_disk() called for session {self.session_id} with {len(self.outputs)} outputs")
+        
+        try:
+            file_path = self._get_aggregator_file_path()
+            logger.info(f"🔧 [DEBUG_SAVE] File path: {file_path}")
+            
+            # Convert outputs to serializable format
+            serializable_data = {
+                "session_id": self.session_id,
+                "workflow_metadata": self.workflow_metadata,
+                "start_time": self.start_time,
+                "finalized": self.finalized,
+                "outputs": [
+                    {
+                        "output_id": output.output_id,
+                        "output_type": output.output_type.value,
+                        "timestamp": output.timestamp.isoformat(),
+                        "session_id": output.session_id,
+                        "node_id": output.node_id,
+                        "content": output.content,
+                        "metadata": output.metadata,
+                        "size_bytes": output.size_bytes,
+                        "processing_time_ms": output.processing_time_ms
+                    }
+                    for output in self.outputs
+                ],
+                "saved_at": datetime.now(timezone.utc).isoformat()
+            }
+            
+            logger.info(f"🔧 [DEBUG_SAVE] Serializable data created, outputs count: {len(serializable_data['outputs'])}")
+            
+            with open(file_path, 'w') as f:
+                json.dump(serializable_data, f, indent=2, default=str)
+            
+            import os
+            file_size = os.path.getsize(file_path) if os.path.exists(file_path) else 0
+            logger.info(f"🔧 [DEBUG_SAVE] ✅ Successfully saved {len(self.outputs)} outputs to {file_path} ({file_size} bytes)")
+            
+        except Exception as e:
+            logger.error(f"🔧 [DEBUG_SAVE] ❌ Failed to save to disk for session {self.session_id}: {e}")
+            import traceback
+            logger.error(f"🔧 [DEBUG_SAVE] Full traceback: {traceback.format_exc()}")
+    
+    def _load_from_disk(self):
+        """Load aggregator data from disk if it exists."""
+        try:
+            file_path = self._get_aggregator_file_path()
+            
+            if not os.path.exists(file_path):
+                return  # No existing data to load
+            
+            with open(file_path, 'r') as f:
+                data = json.load(f)
+            
+            # Restore metadata
+            self.workflow_metadata = data.get("workflow_metadata", self.workflow_metadata)
+            self.start_time = data.get("start_time", self.start_time)
+            self.finalized = data.get("finalized", False)
+            
+            # Restore outputs
+            for output_data in data.get("outputs", []):
+                output = WorkflowOutput(
+                    output_id=output_data["output_id"],
+                    output_type=OutputType(output_data["output_type"]),
+                    timestamp=datetime.fromisoformat(output_data["timestamp"]),
+                    session_id=output_data["session_id"],
+                    node_id=output_data["node_id"],
+                    content=output_data["content"],
+                    metadata=output_data["metadata"],
+                    size_bytes=output_data["size_bytes"],
+                    processing_time_ms=output_data["processing_time_ms"]
+                )
+                self._store_output_memory_only(output)
+            
+            logger.info(f"🔄 [OUTPUT_AGGREGATOR] Loaded {len(self.outputs)} outputs from disk for session {self.session_id}")
+            
+        except Exception as e:
+            logger.warning(f"🔄 [OUTPUT_AGGREGATOR] Failed to load from disk: {e}")
+    
+    def _store_output_memory_only(self, output: WorkflowOutput):
+        """Store output in memory without triggering disk save (used during loading)."""
+        self.outputs.append(output)
+        self.output_index[output.output_type].append(output)
     
     def capture_raw_data(
         self,
@@ -339,9 +438,35 @@ class WorkflowOutputAggregator:
         return output.output_id
     
     def _store_output(self, output: WorkflowOutput):
-        """Store output in both main list and type-indexed collections."""
+        """Store output in both main list and type-indexed collections, then save to disk."""
+        logger.info(f"🔧 [DEBUG_SAVE] _store_output called for session {self.session_id}, output_type: {output.output_type.value}")
+        logger.info(f"🔧 [DEBUG_SAVE] Output content preview: {str(output.content)[:100]}...")
+        
         self.outputs.append(output)
         self.output_index[output.output_type].append(output)
+        
+        logger.info(f"🔧 [DEBUG_SAVE] Added to memory, total outputs: {len(self.outputs)}")
+        
+        # ✅ ENHANCEMENT: Auto-save to disk after every capture
+        logger.info(f"🔧 [DEBUG_SAVE] About to call _save_to_disk() for session {self.session_id}")
+        self._save_to_disk()
+        logger.info(f"🔧 [DEBUG_SAVE] _save_to_disk() completed for session {self.session_id}")
+    
+    def finalize_aggregator(self):
+        """Mark aggregator as finalized and save final state."""
+        self.finalized = True
+        self._save_to_disk()
+        logger.info(f"🔄 [OUTPUT_AGGREGATOR] Finalized session {self.session_id}")
+    
+    def cleanup_disk_storage(self):
+        """Remove disk storage for this session (cleanup method)."""
+        try:
+            file_path = self._get_aggregator_file_path()
+            if os.path.exists(file_path):
+                os.remove(file_path)
+                logger.info(f"🔄 [OUTPUT_AGGREGATOR] Cleaned up disk storage for session {self.session_id}")
+        except Exception as e:
+            logger.warning(f"🔄 [OUTPUT_AGGREGATOR] Failed to cleanup disk storage: {e}")
     
     # === AGGREGATION AND RETRIEVAL METHODS ===
     
@@ -552,6 +677,127 @@ class WorkflowOutputAggregator:
             "unified_result": self.create_unified_result()
         }
 
+    def create_api_response(self) -> Dict[str, Any]:
+        """
+        Create an API-ready response format with structured data
+        for both local file saving and inline API mechanisms.
+        """
+        
+        # Get all structured outputs
+        raw_data = self.get_all_raw_data()
+        execution_plans = self.get_all_execution_plans()
+        tool_executions = self.get_all_tool_executions()
+        final_synthesis = self.get_final_synthesis()
+        performance = self.get_performance_summary()
+        
+        # Create API-friendly data structure
+        api_response = {
+            # Core data for API consumers
+            "data": {
+                "rows": [],
+                "sources": [],
+                "total_rows": 0
+            },
+            
+            # Execution plans as JSON objects
+            "execution_plans": [],
+            
+            # Tool results with success status
+            "tool_results": [],
+            
+            # Performance metrics
+            "performance": {
+                "total_duration_ms": (time.time() - self.start_time) * 1000,
+                "success_rate": 0.0,
+                "operations_count": 0
+            },
+            
+            # Final analysis/synthesis
+            "analysis": None,
+            
+            # Session metadata
+            "session_info": {
+                "session_id": self.session_id,
+                "outputs_captured": len(self.outputs),
+                "workflow_type": self.workflow_metadata.get("workflow_type", "unknown"),
+                "created_at": self.workflow_metadata.get("created_at")
+            },
+            
+            # Mechanism indicators
+            "available_mechanisms": {
+                "local_file_export": True,
+                "inline_api_data": True
+            }
+        }
+        
+        # Aggregate raw data from all sources
+        for data_output in raw_data:
+            api_response["data"]["rows"].extend(data_output.rows)
+            api_response["data"]["sources"].append({
+                "source": data_output.source,
+                "row_count": data_output.row_count,
+                "query": data_output.query,
+                "execution_time_ms": data_output.execution_time_ms
+            })
+        
+        api_response["data"]["total_rows"] = len(api_response["data"]["rows"])
+        
+        # Structure execution plans
+        for plan in execution_plans:
+            api_response["execution_plans"].append({
+                "plan_id": plan.plan_id,
+                "strategy": plan.strategy,
+                "operations": plan.operations,
+                "dependencies": plan.dependencies,
+                "estimated_duration_ms": plan.estimated_duration_ms,
+                "actual_duration_ms": plan.actual_duration_ms,
+                "success_rate": plan.success_rate
+            })
+        
+        # Structure tool results
+        successful_tools = 0
+        for tool in tool_executions:
+            if tool.success:
+                successful_tools += 1
+            
+            api_response["tool_results"].append({
+                "tool_id": tool.tool_id,
+                "call_id": tool.call_id,
+                "parameters": tool.parameters,
+                "result": tool.result,
+                "success": tool.success,
+                "error_message": tool.error_message,
+                "execution_time_ms": tool.execution_time_ms
+            })
+        
+        # Calculate performance metrics
+        api_response["performance"]["operations_count"] = len(tool_executions)
+        if len(tool_executions) > 0:
+            api_response["performance"]["success_rate"] = successful_tools / len(tool_executions)
+        
+        # Add performance details if available
+        if performance:
+            api_response["performance"].update({
+                "database_query_time": performance.database_query_time,
+                "llm_processing_time": performance.llm_processing_time,
+                "operations_executed": performance.operations_executed,
+                "operations_successful": performance.operations_successful
+            })
+        
+        # Add final synthesis
+        if final_synthesis:
+            api_response["analysis"] = {
+                "response_text": final_synthesis.response_text,
+                "confidence_score": final_synthesis.confidence_score,
+                "sources_used": final_synthesis.sources_used,
+                "synthesis_method": final_synthesis.synthesis_method
+            }
+        
+        logger.info(f"🔄 [OUTPUT_AGGREGATOR] Created API response: {api_response['data']['total_rows']} rows, "
+                   f"{len(api_response['execution_plans'])} plans, {len(api_response['tool_results'])} tools")
+        
+        return api_response
+
 class LangGraphOutputIntegrator:
     """
     Integration layer that connects the output aggregator with existing
@@ -667,6 +913,9 @@ class LangGraphOutputIntegrator:
         # Create unified result
         unified_result = aggregator.create_unified_result()
         
+        # ✅ ENHANCEMENT: Finalize aggregator and save to disk
+        aggregator.finalize_aggregator()
+        
         # Integrate with legacy state management
         try:
             analysis_state = await self.state_manager.get_state(session_id)
@@ -683,8 +932,7 @@ class LangGraphOutputIntegrator:
         
         # DON'T clean up aggregator immediately - let CLI export access it
         # Mark as finalized instead
-        aggregator.finalized = True
-        logger.info(f"🔄 [OUTPUT_AGGREGATOR] Session {session_id} finalized, keeping aggregator for export")
+        logger.info(f"🔄 [OUTPUT_AGGREGATOR] Session {session_id} finalized with persistence, keeping aggregator for export")
         
         return unified_result
 

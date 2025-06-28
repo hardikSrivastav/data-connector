@@ -867,6 +867,179 @@ def display_workflow_timeline(aggregator):
     
     console.print(f"[dim]Event distribution: {dict(event_types)}[/dim]")
 
+def display_captured_data(session_id):
+    """Display captured SQL queries, tool executions, and raw data from a session"""
+    
+    # Try to read the aggregator file directly
+    aggregator_file = f"../data/aggregator/{session_id}_aggregator.json"
+    
+    try:
+        import json
+        with open(aggregator_file, 'r') as f:
+            data = json.load(f)
+    except FileNotFoundError:
+        console.print(f"[yellow]No captured data found for session {session_id}[/yellow]")
+        console.print(f"[dim]Expected file: {aggregator_file}[/dim]")
+        return
+    except Exception as e:
+        console.print(f"[red]Error reading captured data: {e}[/red]")
+        return
+    
+    # Display summary
+    console.print(f"\n[bold yellow]🔍 CAPTURED DATA SUMMARY[/bold yellow]")
+    console.print(f"Session ID: [cyan]{session_id}[/cyan]")
+    console.print(f"Total Outputs: [green]{len(data['outputs'])}[/green]")
+    
+    # Extract and display SQL queries
+    sql_queries = []
+    tool_executions = []
+    raw_data_entries = []
+    schema_data = []
+    
+    for output in data['outputs']:
+        if output['output_type'] == 'tool_execution':
+            tool_executions.append(output)
+        elif output['output_type'] == 'raw_data':
+            raw_data_entries.append(output)
+            # Check if this raw data contains a SQL query
+            if output['content'].get('query'):
+                sql_queries.append(output)
+            elif not output['content'].get('query'):  # Schema data
+                schema_data.append(output)
+    
+    # Display SQL Queries
+    if sql_queries:
+        console.print(f"\n[bold green]🔍 SQL QUERIES EXECUTED ({len(sql_queries)}):[/bold green]")
+        for i, query_data in enumerate(sql_queries, 1):
+            content = query_data['content']
+            console.print(f"\n[cyan]{i}. Query:[/cyan] [bold]{content['query']}[/bold]")
+            console.print(f"   Source: [yellow]{content['source']}[/yellow]")
+            console.print(f"   Rows returned: [green]{len(content['rows'])}[/green]")
+            
+            # Display actual data
+            if content['rows']:
+                console.print(f"   Result: [white]{content['rows']}[/white]")
+    
+    # Display Tool Executions
+    if tool_executions:
+        console.print(f"\n[bold blue]⚙️ TOOL EXECUTIONS ({len(tool_executions)}):[/bold blue]")
+        
+        # Create table for tool executions
+        tool_table = Table()
+        tool_table.add_column("Tool", style="cyan")
+        tool_table.add_column("Status", style="green")
+        tool_table.add_column("Time", style="yellow")
+        tool_table.add_column("SQL Query", style="white")
+        tool_table.add_column("Result Preview", style="dim")
+        
+        for tool_exec in tool_executions:
+            content = tool_exec['content']
+            
+            # Status with emoji
+            status = "✅ Success" if content['success'] else "❌ Failed"
+            
+            # Extract SQL query if present
+            sql_query = ""
+            if 'query' in content.get('parameters', {}):
+                sql_query = content['parameters']['query']
+                if len(sql_query) > 50:
+                    sql_query = sql_query[:47] + "..."
+            
+            # Result preview
+            result = content.get('result', '')
+            if isinstance(result, list) and result:
+                if len(result) == 1 and isinstance(result[0], dict):
+                    # Single result dict, show its values
+                    result_preview = str(list(result[0].values())[:2])
+                else:
+                    result_preview = f"[{len(result)} items]"
+            elif isinstance(result, bool):
+                result_preview = str(result)
+            else:
+                result_preview = str(result)[:30] + "..." if len(str(result)) > 30 else str(result)
+            
+            tool_table.add_row(
+                content['tool_id'],
+                status,
+                f"{content['execution_time_ms']:.1f}ms",
+                sql_query,
+                result_preview
+            )
+        
+        console.print(tool_table)
+    
+    # Display Database Schema Found
+    if schema_data:
+        console.print(f"\n[bold magenta]📊 DATABASE SCHEMA DISCOVERED ({len(schema_data)}):[/bold magenta]")
+        for schema_entry in schema_data:
+            content = schema_entry['content']
+            console.print(f"Source: [cyan]{content['source']}[/cyan]")
+            console.print(f"Tables/Collections: [green]{len(content['rows'])}[/green]")
+            
+            # Show first few tables
+            for i, table_info in enumerate(content['rows'][:3]):
+                table_id = table_info.get('id', 'unknown')
+                console.print(f"  {i+1}. [yellow]{table_id}[/yellow]")
+                
+                # Extract table details
+                table_content = table_info.get('content', '')
+                lines = table_content.split('\n')
+                for line in lines[:2]:  # First 2 lines usually have table name and row count
+                    if line.strip() and 'TABLE:' in line:
+                        console.print(f"     {line.strip()}")
+                    elif line.strip() and 'ROW COUNT:' in line:
+                        console.print(f"     {line.strip()}")
+            
+            if len(content['rows']) > 3:
+                console.print(f"  ... and [dim]{len(content['rows']) - 3} more tables[/dim]")
+    
+    # Display Execution Plans
+    execution_plans = [o for o in data['outputs'] if o['output_type'] == 'execution_plan']
+    if execution_plans:
+        console.print(f"\n[bold cyan]📋 EXECUTION PLANS ({len(execution_plans)}):[/bold cyan]")
+        for i, plan_output in enumerate(execution_plans, 1):
+            plan = plan_output['content']
+            console.print(f"\n[cyan]{i}. Plan ID:[/cyan] {plan['plan_id']}")
+            console.print(f"   Strategy: [yellow]{plan['strategy']}[/yellow]")
+            console.print(f"   Operations: [green]{len(plan['operations'])}[/green]")
+            
+            for j, op in enumerate(plan['operations'], 1):
+                console.print(f"     {j}. [white]{op['tool_id']}[/white] - {op['description']}")
+                if op.get('parameters'):
+                    params = op['parameters']
+                    if 'query' in params:
+                        console.print(f"        SQL: [dim]{params['query']}[/dim]")
+    
+    # Display Final Synthesis
+    final_synthesis = [o for o in data['outputs'] if o['output_type'] == 'final_synthesis']
+    if final_synthesis:
+        synthesis = final_synthesis[0]['content']
+        console.print(f"\n[bold green]📝 FINAL ANALYSIS:[/bold green]")
+        console.print(f"Length: [yellow]{len(synthesis['response_text'])} characters[/yellow]")
+        
+        # Show first few lines of the analysis
+        lines = synthesis['response_text'].split('\n')
+        for line in lines[:8]:  # First 8 lines
+            if line.strip():
+                console.print(f"   {line}")
+        
+        if len(lines) > 8:
+            console.print(f"   [dim]... ({len(lines) - 8} more lines)[/dim]")
+    
+    # Show file info
+    try:
+        file_size = os.path.getsize(aggregator_file)
+        if file_size < 1024:
+            size_str = f"{file_size}B"
+        elif file_size < 1024 * 1024:
+            size_str = f"{file_size/1024:.1f}KB"
+        else:
+            size_str = f"{file_size/(1024*1024):.1f}MB"
+        
+        console.print(f"\n[dim]📁 Captured data file: {aggregator_file} ({size_str})[/dim]")
+    except:
+        pass
+
 @app.command()
 def langgraph(
     question: str = typer.Argument(..., help="Natural language question to execute using LangGraph orchestration"),
@@ -875,6 +1048,7 @@ def langgraph(
     verbose: bool = typer.Option(False, "--verbose", "-v", help="Show detailed execution information"),
     show_outputs: bool = typer.Option(False, "--show-outputs", "-o", help="Show comprehensive output breakdown"),
     show_timeline: bool = typer.Option(False, "--show-timeline", "-t", help="Show workflow execution timeline"),
+    show_captured_data: bool = typer.Option(False, "--show-captured-data", "-c", help="Show captured SQL queries, tool executions, and raw data"),
     export_analysis: Optional[str] = typer.Option(None, "--export", "-e", help="Export full analysis to JSON file"),
     save_session: bool = typer.Option(True, "--save-session/--no-save", help="Save session to disk"),
     stream_output: bool = typer.Option(True, "--stream/--no-stream", help="Enable streaming output")
@@ -953,12 +1127,16 @@ def langgraph(
             console.print(f"Execution time: {execution_time:.2f} seconds")
             
             # Show comprehensive output breakdown if requested
-            if show_outputs or show_timeline or export_analysis:
+            if show_outputs or show_timeline or show_captured_data or export_analysis:
                 from agent.langgraph.output_aggregator import get_output_integrator
                 
                 try:
                     output_integrator = get_output_integrator()
                     aggregator = output_integrator.get_aggregator(session_id)
+                    
+                    # Show captured data (SQL queries, tool executions, raw data)
+                    if show_captured_data:
+                        display_captured_data(session_id)
                     
                     # Show output breakdown
                     if show_outputs:
@@ -982,6 +1160,11 @@ def langgraph(
                     if verbose:
                         import traceback
                         console.print(traceback.format_exc())
+                    
+                    # Fallback: try to show captured data directly even if aggregator fails
+                    if show_captured_data:
+                        console.print(f"\n[yellow]Trying direct file access for captured data...[/yellow]")
+                        display_captured_data(session_id)
             
             # Check for and display visualization data first
             visualization_data = result.get("visualization_data")
@@ -1137,13 +1320,14 @@ def langgraph_short(
     verbose: bool = typer.Option(False, "--verbose", "-v", help="Show detailed execution information"),
     show_outputs: bool = typer.Option(False, "--show-outputs", "-o", help="Show comprehensive output breakdown"),
     show_timeline: bool = typer.Option(False, "--show-timeline", "-t", help="Show workflow execution timeline"),
+    show_captured_data: bool = typer.Option(False, "--show-captured-data", "-c", help="Show captured SQL queries, tool executions, and raw data"),
     export_analysis: Optional[str] = typer.Option(None, "--export", "-e", help="Export full analysis to JSON file"),
     save_session: bool = typer.Option(True, "--save-session/--no-save", help="Save session to disk"),
     stream_output: bool = typer.Option(True, "--stream/--no-stream", help="Enable streaming output")
 ):
     """Execute a query using LangGraph orchestration (short alias for 'langgraph')"""
     # Call the main langgraph function with the same parameters
-    langgraph(question, force_langgraph, show_routing, verbose, show_outputs, show_timeline, export_analysis, save_session, stream_output)
+    langgraph(question, force_langgraph, show_routing, verbose, show_outputs, show_timeline, show_captured_data, export_analysis, save_session, stream_output)
 
 
 

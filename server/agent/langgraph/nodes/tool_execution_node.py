@@ -10,6 +10,7 @@ import logging
 import json
 import time
 import asyncio
+import traceback
 from typing import Any, Dict, List, Optional, TypedDict
 try:
     from typing import Annotated
@@ -17,7 +18,6 @@ except ImportError:
     # Python 3.8 compatibility
     from typing_extensions import Annotated
 from datetime import datetime
-import traceback
 
 from ...tools.registry import ToolRegistry, ToolCall, ExecutionResult
 from ...config.settings import Settings
@@ -482,15 +482,15 @@ class ToolExecutionNode:
         Returns:
             Updated state with execution results
         """
-        logger.info("Executing tools based on execution plan")
-        
-        execution_plan = state.get("execution_plan", {})
-        if not execution_plan or "steps" not in execution_plan:
-            logger.error("No execution plan found or plan has no steps")
-            state["errors"].append("No execution plan available")
-            return state
+        logger.info(f"Executing tools for query: {state['user_query'][:50]}...")
         
         try:
+            execution_plan = state.get("execution_plan", {})
+            if not execution_plan or not execution_plan.get("steps"):
+                logger.error("No execution plan or steps found")
+                state["errors"].append("No execution plan available")
+                return state
+            
             # Create tool calls from execution plan
             tool_calls = self._create_tool_calls_from_plan(execution_plan, state["user_query"])
             
@@ -583,6 +583,17 @@ class ToolExecutionNode:
             
             logger.info(f"Tool execution completed: {successful_count}/{total_count} tools successful ({successful_count/total_count*100:.1f}%)")
             
+            # ✅ CRITICAL FIX: Capture tool execution outputs for output aggregator
+            session_id = state.get("metadata", {}).get("session_id")
+            if session_id:
+                try:
+                    await self._capture_tool_execution_outputs(session_id, state)
+                    logger.info(f"🔄 [OUTPUT_AGGREGATOR] Successfully captured tool execution outputs for session {session_id[:8]}...")
+                except Exception as e:
+                    logger.error(f"🔄 [OUTPUT_AGGREGATOR] Failed to capture outputs: {e}")
+            else:
+                logger.warning("🔄 [OUTPUT_AGGREGATOR] No session ID found in state metadata, skipping output capture")
+            
             return state
             
         except Exception as e:
@@ -637,6 +648,22 @@ class ToolExecutionNode:
             # Update state
             state["metadata"]["final_response"] = final_response
             state["metadata"]["synthesis_response"] = synthesis_response
+            
+            # ✅ ENHANCEMENT: Capture final synthesis in output aggregator
+            session_id = state.get("metadata", {}).get("session_id")
+            if session_id:
+                try:
+                    aggregator = self.output_integrator.get_aggregator(session_id)
+                    aggregator.capture_final_synthesis(
+                        response_text=synthesis_response,
+                        sources_used=state.get("selected_tools", []),
+                        node_id="tool_execution_node",
+                        synthesis_method="llm_based",
+                        confidence_score=0.8  # Default confidence
+                    )
+                    logger.info(f"🔄 [OUTPUT_AGGREGATOR] Captured final synthesis for session {session_id[:8]}...")
+                except Exception as e:
+                    logger.warning(f"🔄 [OUTPUT_AGGREGATOR] Failed to capture final synthesis: {e}")
             
             logger.info("Result synthesis completed")
             return state
@@ -1160,6 +1187,63 @@ Write in a professional but accessible tone, as if explaining to a business stak
         self._current_schema_metadata = schema_metadata
         logger.info(f"🔧 DEBUG: Stored schema metadata: {schema_metadata}")
     
+    async def verify_output_integration(self, session_id: str) -> Dict[str, Any]:
+        """
+        Verify that the output aggregator integration is working properly.
+        
+        Args:
+            session_id: Session ID to verify
+            
+        Returns:
+            Dictionary with verification results
+        """
+        try:
+            aggregator = self.output_integrator.get_aggregator(session_id)
+            
+            # Check what data has been captured
+            raw_data = aggregator.get_all_raw_data()
+            tool_executions = aggregator.get_all_tool_executions()
+            execution_plans = aggregator.get_all_execution_plans()
+            final_synthesis = aggregator.get_final_synthesis()
+            performance_summary = aggregator.get_performance_summary()
+            
+            verification_result = {
+                "session_id": session_id,
+                "integration_status": "verified",
+                "data_captured": {
+                    "raw_data_entries": len(raw_data),
+                    "tool_executions": len(tool_executions),
+                    "execution_plans": len(execution_plans),
+                    "has_final_synthesis": final_synthesis is not None,
+                    "has_performance_data": performance_summary is not None
+                },
+                "verification_time": datetime.now().isoformat()
+            }
+            
+            # Log detailed information
+            logger.info(f"🔄 [OUTPUT_AGGREGATOR] Verification for session {session_id}:")
+            logger.info(f"  - Raw data entries: {len(raw_data)}")
+            logger.info(f"  - Tool executions: {len(tool_executions)}")
+            logger.info(f"  - Execution plans: {len(execution_plans)}")
+            logger.info(f"  - Final synthesis: {'✅' if final_synthesis else '❌'}")
+            logger.info(f"  - Performance data: {'✅' if performance_summary else '❌'}")
+            
+            # Show sample SQL queries if available
+            for i, data in enumerate(raw_data[:3]):  # Show first 3
+                if data.query:
+                    logger.info(f"  - SQL Query {i+1}: {data.query[:100]}...")
+            
+            return verification_result
+            
+        except Exception as e:
+            logger.error(f"🔄 [OUTPUT_AGGREGATOR] Verification failed: {e}")
+            return {
+                "session_id": session_id,
+                "integration_status": "failed",
+                "error": str(e),
+                "verification_time": datetime.now().isoformat()
+            }
+    
     async def _capture_tool_execution_outputs(self, session_id: str, state: ToolExecutionState):
         """
         Capture all tool execution outputs for the output aggregator.
@@ -1220,13 +1304,29 @@ Write in a professional but accessible tone, as if explaining to a business stak
                 if call_id in tool_call_params:
                     parameters = tool_call_params[call_id]["parameters"]
                 
+                # ✅ ENHANCEMENT: Extract and log actual SQL queries for better debugging
+                actual_sql = None
+                if "query" in parameters:
+                    if isinstance(parameters["query"], str):
+                        actual_sql = parameters["query"]
+                    elif isinstance(parameters["query"], dict):
+                        # Handle MongoDB-style queries
+                        actual_sql = json.dumps(parameters["query"], indent=2)
+                
+                # Log the actual SQL/query being executed
+                if actual_sql:
+                    logger.info(f"🔍 [SQL_CAPTURE] Tool {tool_id} executing query: {actual_sql[:200]}...")
+                
                 # Extract raw data if available
                 raw_data = []
                 if result.success and result.result:
                     if isinstance(result.result, list):
                         raw_data = result.result
                     elif isinstance(result.result, dict):
-                        raw_data = [result.result] 
+                        raw_data = [result.result]
+                    
+                    # Log raw data summary
+                    logger.info(f"🔍 [DATA_CAPTURE] Tool {tool_id} returned {len(raw_data)} rows of data")
                 
                 # Capture tool execution
                 aggregator.capture_tool_execution(
@@ -1260,11 +1360,12 @@ Write in a professional but accessible tone, as if explaining to a business stak
                     aggregator.capture_raw_data(
                         source=source,
                         rows=raw_data,
-                        query=parameters.get("query"),
+                        query=actual_sql,  # ✅ Use the extracted SQL query
                         node_id="tool_execution_node",
-                        tool_id=tool_id
+                        tool_id=tool_id,
+                        execution_time_ms=result.metadata.get("execution_time", 0) * 1000 if result.metadata else 0
                     )
-                    logger.debug(f"🔄 [OUTPUT_AGGREGATOR] Captured raw data from {source}: {len(raw_data)} rows")
+                    logger.info(f"🔄 [OUTPUT_AGGREGATOR] Captured raw data from {source}: {len(raw_data)} rows with SQL: {actual_sql[:50] if actual_sql else 'N/A'}...")
                 
                 logger.debug(f"🔄 [OUTPUT_AGGREGATOR] Captured tool execution: {tool_id}, success={result.success}")
             

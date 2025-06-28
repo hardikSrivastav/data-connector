@@ -2618,9 +2618,11 @@ class LangGraphQueryRequest(BaseModel):
     verbose: bool = False
     show_outputs: bool = False
     show_timeline: bool = False
+    show_captured_data: bool = False  # NEW: Show captured SQL queries and tool executions
     export_analysis: Optional[str] = None
     save_session: bool = True
     stream_output: bool = True
+    include_aggregated_data: bool = False  # NEW: Control inline data return
 
 class LangGraphQueryResponse(BaseModel):
     success: bool
@@ -2668,6 +2670,24 @@ async def langgraph_stream(request: LangGraphQueryRequest, http_request: Request
     
     Implements the exact same LangGraph logic as the CLI langgraph command,
     but as a streaming API endpoint for real-time updates.
+    
+    Data Export Mechanisms:
+    1. Local file saving: Use export_analysis="/path/to/file.json" 
+       - Saves complete workflow data to local file system
+       - Same as CLI --export-analysis flag
+    
+    2. Inline API data: Use include_aggregated_data=true
+       - Streams structured data directly in API response
+       - Events: api_structured_data, api_execution_plans, api_tool_results, api_complete_response
+       - Perfect for programmatic API consumption
+    
+    Example usage:
+    {
+        "question": "how many products and orders do i have in mongo",
+        "include_aggregated_data": true,
+        "export_analysis": "/tmp/analysis.json",
+        "save_session": true
+    }
     """
     # Get current user for audit and isolation
     current_user = await get_current_user_from_request(http_request)
@@ -2780,12 +2800,174 @@ async def langgraph_stream(request: LangGraphQueryRequest, http_request: Request
             langgraph_logger.info(f"✅ [CLI LOGIC] Execution successful: {workflow} workflow, {execution_time:.2f}s")
             
             # Show comprehensive output breakdown if requested (EXACT CLI LOGIC)
-            if request.show_outputs or request.show_timeline or request.export_analysis:
+            if request.show_outputs or request.show_timeline or request.export_analysis or request.include_aggregated_data or request.show_captured_data:
                 try:
                     from ..langgraph.output_aggregator import get_output_integrator
                     
                     output_integrator = get_output_integrator()
                     aggregator = output_integrator.get_aggregator(session_id)
+                    
+                    # ✅ NEW: Show captured data if requested (EXACT CLI LOGIC)
+                    if request.show_captured_data:
+                        yield create_stream_event("captured_data_start", session_id,
+                            message="🔍 CAPTURED DATA SUMMARY"
+                        )
+                        
+                        # Get all captured data (same as CLI)
+                        raw_data = aggregator.get_all_raw_data()
+                        tool_executions = aggregator.get_all_tool_executions() 
+                        execution_plans = aggregator.get_all_execution_plans()
+                        final_synthesis = aggregator.get_final_synthesis()
+                        
+                        yield create_stream_event("captured_data_counts", session_id,
+                            total_outputs=len(aggregator.outputs),
+                            raw_data_count=len(raw_data),
+                            tool_executions_count=len(tool_executions),
+                            execution_plans_count=len(execution_plans),
+                            has_final_synthesis=final_synthesis is not None
+                        )
+                        
+                        # 🔍 SQL QUERIES EXECUTED (same as CLI)
+                        yield create_stream_event("sql_queries_section", session_id,
+                            message="🔍 SQL QUERIES EXECUTED:"
+                        )
+                        
+                        sql_queries = [rd for rd in raw_data if rd.query]
+                        if sql_queries:
+                            for i, rd in enumerate(sql_queries, 1):
+                                yield create_stream_event("sql_query_captured", session_id,
+                                    query_number=i,
+                                    query=rd.query,
+                                    source=rd.source,
+                                    rows_returned=rd.row_count,
+                                    execution_time_ms=rd.execution_time_ms
+                                )
+                        else:
+                            yield create_stream_event("no_sql_queries", session_id,
+                                message="  No SQL queries found in captured data"
+                            )
+                        
+                        # 🔧 TOOL EXECUTIONS (same as CLI)
+                        yield create_stream_event("tool_executions_section", session_id,
+                            message="🔧 TOOL EXECUTIONS:"
+                        )
+                        
+                        if tool_executions:
+                            for i, tool in enumerate(tool_executions, 1):
+                                yield create_stream_event("tool_execution_captured", session_id,
+                                    execution_number=i,
+                                    tool_id=tool.tool_id,
+                                    success="✅ Success" if tool.success else "❌ Failed",
+                                    execution_time_ms=tool.execution_time_ms,
+                                    call_id=tool.call_id,
+                                    parameters=tool.parameters if tool.parameters else {},
+                                    result_preview=str(tool.result)[:100] + "..." if tool.result and len(str(tool.result)) > 100 else str(tool.result) if tool.result else "No result",
+                                    error_message=tool.error_message
+                                )
+                        else:
+                            yield create_stream_event("no_tool_executions", session_id,
+                                message="  No tool executions found in captured data"
+                            )
+                        
+                        # 📊 RAW SCHEMA DATA (same as CLI)
+                        yield create_stream_event("raw_schema_section", session_id,
+                            message="📊 RAW DATABASE SCHEMA CAPTURED:"
+                        )
+                        
+                        schema_data = [rd for rd in raw_data if not rd.query]  # Schema data doesn't have queries
+                        if schema_data:
+                            for rd in schema_data:
+                                # Safely get source with fallback
+                                source = getattr(rd, 'source', None) or 'unknown'
+                                table_count = rd.row_count if rd.row_count else len(rd.rows) if rd.rows else 0
+                                
+                                # Safely extract content preview
+                                content_preview = "No content preview"
+                                try:
+                                    if rd.rows and len(rd.rows) > 0:
+                                        if isinstance(rd.rows[0], dict) and "content" in rd.rows[0]:
+                                            content_preview = str(rd.rows[0]["content"])[:200] + "..."
+                                        elif hasattr(rd.rows[0], 'content'):
+                                            content_preview = str(rd.rows[0].content)[:200] + "..."
+                                        else:
+                                            content_preview = str(rd.rows[0])[:100] + "..."
+                                except (AttributeError, IndexError, KeyError) as e:
+                                    content_preview = f"Content extraction error: {str(e)[:50]}"
+                                
+                                yield create_stream_event("schema_data_captured", session_id,
+                                    source=source,
+                                    tables_found=table_count,
+                                    sample_content=content_preview
+                                )
+                        else:
+                            yield create_stream_event("no_schema_data", session_id,
+                                message="  No raw schema data found"
+                            )
+                        
+                        # 📋 FINAL SYNTHESIS (same as CLI)
+                        if final_synthesis:
+                            # Access the response_text attribute of FinalSynthesisOutput object
+                            synthesis_text = final_synthesis.response_text if hasattr(final_synthesis, 'response_text') else str(final_synthesis)
+                            yield create_stream_event("final_synthesis_section", session_id,
+                                message="📋 FINAL SYNTHESIS:",
+                                synthesis_preview=synthesis_text[:500] + "..." if len(synthesis_text) > 500 else synthesis_text
+                            )
+                        else:
+                            yield create_stream_event("no_final_synthesis", session_id,
+                                message="📋 No final synthesis available"
+                            )
+                    
+                    # ✅ CRITICAL ENHANCEMENT: Verify and log captured SQL queries and tool execution data
+                    yield create_stream_event("data_verification", session_id,
+                        message="🔍 Verifying captured SQL queries and tool execution data..."
+                    )
+                    
+                    # Get captured data for verification  
+                    raw_data = aggregator.get_all_raw_data()
+                    tool_executions = aggregator.get_all_tool_executions()
+                    execution_plans = aggregator.get_all_execution_plans()
+                    
+                    # Stream SQL queries that were captured
+                    if raw_data:
+                        yield create_stream_event("sql_queries_captured", session_id,
+                            message=f"📊 Captured {len(raw_data)} SQL queries/operations:",
+                            sql_count=len(raw_data)
+                        )
+                        
+                        for i, data in enumerate(raw_data):
+                            if data.query:
+                                yield create_stream_event("sql_query_detail", session_id,
+                                    query_index=i+1,
+                                    source=data.source,
+                                    sql=data.query,
+                                    row_count=data.row_count,
+                                    execution_time_ms=data.execution_time_ms
+                                )
+                    else:
+                        yield create_stream_event("sql_queries_warning", session_id,
+                            message="⚠️ No SQL queries were captured - this may indicate an integration issue"
+                        )
+                    
+                    # Stream tool execution details
+                    if tool_executions:
+                        yield create_stream_event("tool_executions_captured", session_id,
+                            message=f"🔧 Captured {len(tool_executions)} tool executions:",
+                            tool_count=len(tool_executions)
+                        )
+                        
+                        for i, tool in enumerate(tool_executions):
+                            yield create_stream_event("tool_execution_detail", session_id,
+                                execution_index=i+1,
+                                tool_id=tool.tool_id,
+                                success=tool.success,
+                                parameters=tool.parameters,
+                                execution_time_ms=tool.execution_time_ms,
+                                error_message=tool.error_message if tool.error_message else None
+                            )
+                    else:
+                        yield create_stream_event("tool_executions_warning", session_id,
+                            message="⚠️ No tool executions were captured - this may indicate an integration issue"
+                        )
                     
                     # Show output breakdown (same as CLI display_output_breakdown function)
                     if request.show_outputs:
@@ -2794,9 +2976,6 @@ async def langgraph_stream(request: LangGraphQueryRequest, http_request: Request
                         )
                         
                         # Get all different types of outputs (same as CLI)
-                        raw_data = aggregator.get_all_raw_data()
-                        execution_plans = aggregator.get_all_execution_plans()
-                        tool_executions = aggregator.get_all_tool_executions()
                         final_synthesis = aggregator.get_final_synthesis()
                         performance = aggregator.get_performance_summary()
                         
@@ -2806,6 +2985,64 @@ async def langgraph_stream(request: LangGraphQueryRequest, http_request: Request
                             tool_executions_count=len(tool_executions),
                             has_final_synthesis=final_synthesis is not None,
                             has_performance=performance is not None
+                        )
+                    
+                    # NEW: Include aggregated data inline in API response
+                    if request.include_aggregated_data:
+                        yield create_stream_event("aggregated_data_start", session_id,
+                            message="📦 Sending Aggregated Workflow Data"
+                        )
+                        
+                        # Get both unified result and API-ready response
+                        unified_result = aggregator.create_unified_result()
+                        api_response = aggregator.create_api_response()
+                        
+                        # Send structured API data (cleaner format for API consumers)
+                        yield create_stream_event("api_structured_data", session_id,
+                            data=api_response["data"],
+                            mechanism="inline_api"
+                        )
+                        
+                        # Send execution plans as JSON
+                        if api_response["execution_plans"]:
+                            yield create_stream_event("api_execution_plans", session_id,
+                                plans=api_response["execution_plans"],
+                                plan_count=len(api_response["execution_plans"]),
+                                mechanism="inline_api"
+                            )
+                        
+                        # Send tool results with success tracking
+                        if api_response["tool_results"]:
+                            yield create_stream_event("api_tool_results", session_id,
+                                tools=api_response["tool_results"],
+                                tool_count=len(api_response["tool_results"]),
+                                success_rate=api_response["performance"]["success_rate"],
+                                mechanism="inline_api"
+                            )
+                        
+                        # Send performance metrics (API format)
+                        yield create_stream_event("api_performance", session_id,
+                            metrics=api_response["performance"],
+                            mechanism="inline_api"
+                        )
+                        
+                        # Send analysis if available
+                        if api_response["analysis"]:
+                            yield create_stream_event("api_analysis", session_id,
+                                analysis=api_response["analysis"],
+                                mechanism="inline_api"
+                            )
+                        
+                        # Send complete API response (structured for API consumption)
+                        yield create_stream_event("api_complete_response", session_id,
+                            response=api_response,
+                            mechanism="inline_api"
+                        )
+                        
+                        # Send legacy unified result for backward compatibility
+                        yield create_stream_event("unified_result", session_id,
+                            result=unified_result,
+                            mechanism="legacy_format"
                         )
                     
                     # Show timeline (same as CLI display_workflow_timeline function)
@@ -2821,13 +3058,32 @@ async def langgraph_stream(request: LangGraphQueryRequest, http_request: Request
                                 event_count=len(timeline)
                             )
                     
-                    # Export analysis (same as CLI)
+                    # Export analysis (same as CLI - local file saving mechanism)
                     if request.export_analysis:
                         export_data = aggregator.export_for_analysis()
+                        
+                        # Save to local file (existing mechanism)
+                        import json
+                        import os
+                        
+                        # Ensure export directory exists
+                        os.makedirs(os.path.dirname(request.export_analysis), exist_ok=True)
+                        
+                        with open(request.export_analysis, 'w') as f:
+                            json.dump(export_data, f, indent=2, default=str)
+                        
                         yield create_stream_event("analysis_exported", session_id,
                             export_path=request.export_analysis,
-                            data_size=len(str(export_data))
+                            data_size=len(str(export_data)),
+                            mechanism="local_file"
                         )
+                        
+                        # Also send inline if requested
+                        if request.include_aggregated_data:
+                            yield create_stream_event("export_data_inline", session_id,
+                                export_data=export_data,
+                                mechanism="inline_api"
+                            )
                         
                 except Exception as e:
                     yield create_stream_event("warning", session_id,

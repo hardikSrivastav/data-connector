@@ -988,10 +988,13 @@ export const PageEditor = ({
         finalRowCount?: number;
       } = {};
       
-      // Call the streaming agent API
+      // Call the streaming agent API with captured data enabled
       await agentClient.queryStream({
         question: query,
-        analyze: true
+        analyze: true,
+        show_captured_data: true,  // ✅ Enable captured data display
+        verbose: true,             // Also enable verbose output
+        show_outputs: true         // And comprehensive output breakdown
       }, {
         onStatus: (message) => {
           console.log(`📊 Status: ${message}`);
@@ -1553,6 +1556,13 @@ export const PageEditor = ({
       rowsLength: response.rows?.length || 0,
       hasAnalysis: !!response.analysis,
       hasSql: !!response.sql,
+      hasCapturedData: !!(response as any).captured_data,
+      capturedDataStructure: (response as any).captured_data ? {
+        sqlQueries: (response as any).captured_data.sql_queries?.length || 0,
+        toolExecutions: (response as any).captured_data.tool_executions?.length || 0,
+        schemaData: (response as any).captured_data.schema_data?.length || 0,
+        hasFinalSynthesis: !!(response as any).captured_data.final_synthesis
+      } : null,
       firstRowSample: response.rows?.[0] ? Object.keys(response.rows[0]).slice(0, 5) : []
     });
     
@@ -1568,6 +1578,25 @@ export const PageEditor = ({
     if (response.sql) {
       canvasData.sqlQuery = response.sql;
       console.log('🎯 createCanvasPreviewFromResponse: Stored SQL query:', response.sql.substring(0, 100) + '...');
+    }
+
+    // Store captured execution data
+    const capturedData = (response as any).captured_data;
+    if (capturedData) {
+      canvasData.capturedExecutionData = {
+        sqlQueries: capturedData.sql_queries || [],
+        toolExecutions: capturedData.tool_executions || [],
+        schemaData: capturedData.schema_data || [],
+        finalSynthesis: capturedData.final_synthesis || null,
+        executionSummary: capturedData.execution_summary || {}
+      };
+      console.log('🎯 createCanvasPreviewFromResponse: Stored captured execution data:', {
+        sqlQueries: canvasData.capturedExecutionData.sqlQueries.length,
+        toolExecutions: canvasData.capturedExecutionData.toolExecutions.length,
+        schemaData: canvasData.capturedExecutionData.schemaData.length,
+        totalExecutionTime: canvasData.capturedExecutionData.executionSummary.total_execution_time,
+        databasesAccessed: canvasData.capturedExecutionData.executionSummary.databases_accessed?.length || 0
+      });
     }
     
     // Store full data - Handle mixed schemas from cross-database queries
