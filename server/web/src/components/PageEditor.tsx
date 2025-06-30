@@ -539,7 +539,9 @@ export const PageEditor = ({
         id: `block_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
         type: 'text' as const,
         content: '',
-        order: 0
+        order: 0,
+        createdAt: new Date(),
+        updatedAt: new Date()
       };
       updatedBlocks = [newBlock];
       console.log('🚨 No blocks remaining, added default block:', newBlock);
@@ -2156,7 +2158,9 @@ export const PageEditor = ({
         id: `block_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
         type: 'text' as const,
         content: '',
-        order: 0
+        order: 0,
+        createdAt: new Date(),
+        updatedAt: new Date()
       };
       updatedBlocks = [newBlock];
       console.log('🚨 No blocks remaining, added default block:', newBlock);
@@ -2194,25 +2198,87 @@ export const PageEditor = ({
     clearSelection();
     console.log('🚨 clearSelection called');
     
-    console.log('🚨 === STEP 4: DEFERRED STORAGE CLEANUP ===');
+    console.log('🚨 === STEP 4: STORAGE CLEANUP (BATCH) ===');
     
-    // Step 3: Clean up storage (deferred to avoid interfering with UI)
-    console.log('🚨 Scheduling deferred storage cleanup for blocks:', blocksToDelete);
-    setTimeout(() => {
-      console.log('🚨 Starting deferred storage cleanup for blocks:', blocksToDelete);
-      blocksToDelete.forEach((blockId, index) => {
-        console.log(`🚨 [DEFERRED ${index + 1}/${blocksToDelete.length}] Calling onDeleteBlock for: ${blockId}`);
-        
+    // Step 3: Clean up storage in batch to avoid race conditions
+    // For multi-block deletion, we handle storage cleanup differently to avoid racing calls to onDeleteBlock
+    if (blocksToDelete.length === 1) {
+      // Single block deletion - use the existing onDeleteBlock function
+      console.log('🚨 Single block deletion - using onDeleteBlock');
+      const blockId = blocksToDelete[0];
+      setTimeout(() => {
+        console.log(`🚨 [SINGLE] Calling onDeleteBlock for: ${blockId}`);
         try {
           onDeleteBlock(blockId);
-          console.log(`🚨 [DEFERRED ${index + 1}/${blocksToDelete.length}] onDeleteBlock completed for: ${blockId}`);
+          console.log(`🚨 [SINGLE] onDeleteBlock completed for: ${blockId}`);
         } catch (error) {
-          console.error(`🚨 [DEFERRED ${index + 1}/${blocksToDelete.length}] Error in onDeleteBlock for ${blockId}:`, error);
+          console.error(`🚨 [SINGLE] Error in onDeleteBlock for ${blockId}:`, error);
         }
-      });
-      
-      console.log('🚨 === DEFERRED STORAGE CLEANUP COMPLETED ===');
-    }, 50); // Small delay to ensure UI update is processed first
+      }, 50);
+    } else {
+      // Multi-block deletion - handle storage cleanup directly to avoid race conditions
+      console.log('🚨 Multi-block deletion - handling storage cleanup directly');
+      setTimeout(async () => {
+        console.log('🚨 Starting batch storage cleanup for blocks:', blocksToDelete);
+        
+        try {
+          // Use the existing storageManager from the hook
+          if (!storageManager) {
+            throw new Error('StorageManager not available');
+          }
+          
+          // Check for canvas blocks and handle their cleanup
+          const canvasBlocksToCleanup: string[] = [];
+          blocksToDelete.forEach(blockId => {
+            const blockToDelete = page.blocks.find(b => b.id === blockId);
+            if (blockToDelete?.type === 'canvas' && blockToDelete.properties?.canvasPageId) {
+              canvasBlocksToCleanup.push(blockToDelete.properties.canvasPageId);
+            }
+          });
+          
+          // Clean up canvas pages if any
+          if (canvasBlocksToCleanup.length > 0) {
+            console.log('🎨 Cleaning up canvas pages:', canvasBlocksToCleanup);
+            for (const canvasPageId of canvasBlocksToCleanup) {
+              try {
+                await storageManager.deletePage(canvasPageId);
+                console.log('✅ Canvas page deleted from storage:', canvasPageId);
+              } catch (error) {
+                console.warn('⚠️ Failed to delete canvas page from storage:', canvasPageId, error);
+              }
+            }
+          }
+          
+          // Delete blocks from storage in batch
+          console.log(`🚨 Deleting ${blocksToDelete.length} blocks from storage...`);
+          for (const blockId of blocksToDelete) {
+            try {
+              await storageManager.deleteBlock(blockId);
+              console.log(`🚨 [BATCH] Block deleted from storage: ${blockId}`);
+            } catch (error) {
+              console.warn(`🚨 [BATCH] Failed to delete block from storage: ${blockId}`, error);
+            }
+          }
+          
+          console.log('✅ Batch storage cleanup completed');
+        } catch (error) {
+          console.error('❌ Error in batch storage cleanup:', error);
+          // Fallback to individual onDeleteBlock calls if storage manager approach fails
+          console.log('🔄 Falling back to individual onDeleteBlock calls');
+          blocksToDelete.forEach((blockId, index) => {
+            setTimeout(() => {
+              console.log(`🚨 [FALLBACK ${index + 1}/${blocksToDelete.length}] Calling onDeleteBlock for: ${blockId}`);
+              try {
+                onDeleteBlock(blockId);
+                console.log(`🚨 [FALLBACK ${index + 1}/${blocksToDelete.length}] onDeleteBlock completed for: ${blockId}`);
+              } catch (error) {
+                console.error(`🚨 [FALLBACK ${index + 1}/${blocksToDelete.length}] Error in onDeleteBlock for ${blockId}:`, error);
+              }
+            }, index * 50); // Stagger the calls to avoid race conditions
+          });
+        }
+      }, 50);
+    }
     
     // Log final state after a short delay
     setTimeout(() => {
@@ -2222,7 +2288,7 @@ export const PageEditor = ({
       console.log('🚨 === END handleDeleteSelectedWithBlocks ===');
     }, 100);
     
-  }, [page.blocks, loggedOnUpdatePage, onDeleteBlock, clearSelection, selectedBlocks]);
+  }, [page.blocks, loggedOnUpdatePage, onDeleteBlock, clearSelection, selectedBlocks, storageManager]);
 
   // Handle keyboard shortcuts for selection
   useEffect(() => {

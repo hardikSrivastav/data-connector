@@ -19,14 +19,21 @@ import {
   Share,
   Settings,
   Plus,
-  AlertTriangle
+  AlertTriangle,
+  Layout,
+  Type,
+  Table,
+  BarChart2,
+  Code,
+  Quote,
+  Minus,
+  Hash
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { cn } from '@/lib/utils';
-import ReactMarkdown from 'react-markdown';
-import { TableDisplay } from './TableDisplay';
 import { ReasoningChain } from './ReasoningChain';
+import { BlockEditor } from './BlockEditor';
 
 interface CanvasWorkspaceProps {
   page: Page;
@@ -116,6 +123,86 @@ export const CanvasWorkspace = ({
   const [incompleteChains, setIncompleteChains] = useState<Array<{ blockId: string; data: ReasoningChainData }>>();
   const [reasoningChainsLoaded, setReasoningChainsLoaded] = useState<Set<string>>(new Set());
   const [isLoadingReasoningChains, setIsLoadingReasoningChains] = useState(false);
+  const [focusedBlockId, setFocusedBlockId] = useState<string | null>(null);
+  const [showAddBlockMenu, setShowAddBlockMenu] = useState(false);
+
+  // Helper function to filter blocks by view type
+  const getBlocksForView = (view: string) => {
+    const sortedBlocks = [...page.blocks].sort((a, b) => (a.order || 0) - (b.order || 0));
+    
+    switch (view) {
+      case 'analysis':
+        // Show text content, headings, quotes, and analysis-related blocks
+        return sortedBlocks.filter(block => 
+          ['heading1', 'heading2', 'heading3', 'text', 'quote', 'divider', 'code'].includes(block.type)
+        );
+      case 'data':
+        // Show tables, stats, charts, and data-related blocks
+        return sortedBlocks.filter(block => 
+          ['table', 'stats', 'chart', 'graph', 'code', 'divider'].includes(block.type)
+        );
+      case 'history':
+        // Show all blocks in chronological order
+        return sortedBlocks;
+      case 'reasoning':
+        // Show blocks with reasoning chains or AI-related content
+        return sortedBlocks.filter(block => 
+          block.properties?.reasoningChain || 
+          block.properties?.canvasData?.reasoningChain ||
+          ['quote', 'text', 'code'].includes(block.type)
+        );
+      default:
+        return sortedBlocks;
+    }
+  };
+
+  // Helper function to get available block types for each view
+  const getAvailableBlockTypesForView = (view: string): Array<{ type: Block['type']; label: string; icon: any }> => {
+    const allBlockTypes = [
+      { type: 'text' as const, label: 'Text', icon: Type },
+      { type: 'heading1' as const, label: 'Heading 1', icon: Hash },
+      { type: 'heading2' as const, label: 'Heading 2', icon: Hash },
+      { type: 'heading3' as const, label: 'Heading 3', icon: Hash },
+      { type: 'quote' as const, label: 'Quote', icon: Quote },
+      { type: 'code' as const, label: 'Code', icon: Code },
+      { type: 'table' as const, label: 'Table', icon: Table },
+      { type: 'stats' as const, label: 'Stats', icon: BarChart2 },
+      { type: 'divider' as const, label: 'Divider', icon: Minus }
+    ];
+
+    switch (view) {
+      case 'analysis':
+        return allBlockTypes.filter(bt => 
+          ['text', 'heading1', 'heading2', 'heading3', 'quote', 'code', 'divider'].includes(bt.type)
+        );
+      case 'data':
+        return allBlockTypes.filter(bt => 
+          ['table', 'stats', 'code', 'divider'].includes(bt.type)
+        );
+      case 'history':
+        return allBlockTypes;
+      case 'reasoning':
+        return allBlockTypes.filter(bt => 
+          ['text', 'quote', 'code', 'divider'].includes(bt.type)
+        );
+      default:
+        return allBlockTypes;
+    }
+  };
+
+  // Helper function to handle block focus
+  const handleBlockFocus = (blockId: string) => {
+    setFocusedBlockId(blockId);
+  };
+
+  // Helper function to handle adding blocks
+  const handleAddBlockInView = (type: Block['type']) => {
+    if (onAddBlock) {
+      const newBlockId = onAddBlock(undefined, type);
+      setFocusedBlockId(newBlockId);
+      setShowAddBlockMenu(false);
+    }
+  };
 
   // Enhanced initialization to populate with canvas data and load reasoning chains
   useEffect(() => {
@@ -408,43 +495,6 @@ export const CanvasWorkspace = ({
     
     return () => clearTimeout(debounceTimeout);
   }, [page.id, workspace.pages.length, onUpdatePage, reasoningChainsLoaded, isLoadingReasoningChains]); // Removed page.blocks.length dependency
-
-  // Get analysis data from page blocks
-  const getAnalysisData = () => {
-    const headingBlocks = page.blocks.filter(b => b.type.startsWith('heading'));
-    const textBlocks = page.blocks.filter(b => b.type === 'text');
-    const tableBlocks = page.blocks.filter(b => b.type === 'table');
-    const quoteBlocks = page.blocks.filter(b => b.type === 'quote');
-
-    // Get current analysis summary from text blocks
-    const currentAnalysis = textBlocks.length > 0 
-      ? textBlocks[textBlocks.length - 1].content
-      : 'No analysis available yet. Run a query to get started.';
-
-    // Get current data from table blocks
-    const currentTable = tableBlocks.length > 0 
-      ? tableBlocks[tableBlocks.length - 1]
-      : null;
-
-    // Generate stats from blocks
-    const stats = [
-      { label: 'TOTAL BLOCKS', value: page.blocks.length.toString() },
-      { label: 'ANALYSIS SECTIONS', value: headingBlocks.length.toString() },
-      { label: 'DATA TABLES', value: tableBlocks.length.toString() },
-      { label: 'KEY INSIGHTS', value: quoteBlocks.length.toString() },
-      { label: 'REASONING CHAINS', value: reasoningChains.size.toString() }
-    ];
-
-    return {
-      currentAnalysis,
-      currentTable,
-      stats,
-      hasData: tableBlocks.length > 0,
-      analysisHistory: textBlocks
-    };
-  };
-
-  const analysisData = getAnalysisData();
 
   // Enhanced query handler with reasoning chain recovery
   const handleRunNewQuery = async (queryText?: string) => {
@@ -754,166 +804,175 @@ export const CanvasWorkspace = ({
 
         {/* Content */}
         <div className="flex-1 overflow-y-auto p-6">
-          {selectedView === 'analysis' && (
-            <div className="max-w-4xl mx-auto space-y-6">
-              {/* Current Analysis Summary */}
-              <div className="bg-blue-50 dark:bg-blue-900/30 border border-blue-200 dark:border-blue-700 rounded-lg p-6">
-                <div className="flex items-center gap-2 mb-4">
-                  <Eye className="h-5 w-5 text-blue-600 dark:text-blue-400" />
-                  <h2 className="text-lg font-semibold text-blue-900 dark:text-blue-100">Current Analysis</h2>
-                </div>
-                <div className="prose prose-sm max-w-none dark:prose-invert">
-                  <ReactMarkdown>{analysisData.currentAnalysis}</ReactMarkdown>
-                </div>
+          <div className="max-w-6xl mx-auto">
+            {/* View-specific header and add block controls */}
+            <div className="flex items-center justify-between mb-6">
+              <div>
+                <h2 className="text-lg font-semibold text-gray-900 dark:text-gray-100">
+                  {selectedView === 'analysis' && 'Analysis Workspace'}
+                  {selectedView === 'data' && 'Data Workspace'}
+                  {selectedView === 'history' && 'Complete History'}
+                  {selectedView === 'reasoning' && 'AI Reasoning Workspace'}
+                </h2>
+                <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">
+                  {selectedView === 'analysis' && 'Create and organize your analysis content'}
+                  {selectedView === 'data' && 'Work with tables, stats, and data visualizations'}
+                  {selectedView === 'history' && 'View all blocks and content chronologically'}
+                  {selectedView === 'reasoning' && 'Explore AI reasoning chains and thought processes'}
+                </p>
               </div>
-
-              {/* Key Statistics */}
-              <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
-                {analysisData.stats.map((stat, index) => (
-                  <div key={index} className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg p-4 text-center">
-                    <div className="text-xs text-gray-500 dark:text-gray-400 uppercase tracking-wide">{stat.label}</div>
-                    <div className="text-2xl font-bold text-gray-900 dark:text-gray-100 mt-1">{stat.value}</div>
+              
+              {/* Add Block Button */}
+              <div className="relative">
+                <Button 
+                  onClick={() => setShowAddBlockMenu(!showAddBlockMenu)}
+                  size="sm"
+                  className="gap-2"
+                >
+                  <Plus className="h-4 w-4" />
+                  Add Block
+                </Button>
+                
+                {/* Add Block Dropdown */}
+                {showAddBlockMenu && (
+                  <div className="absolute right-0 top-full mt-2 w-56 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg shadow-lg z-50">
+                    <div className="p-2">
+                      <div className="text-xs text-gray-500 dark:text-gray-400 uppercase tracking-wide mb-2 px-2">
+                        Available for {selectedView}
+                      </div>
+                      {getAvailableBlockTypesForView(selectedView).map(({ type, label, icon: Icon }) => (
+                        <button
+                          key={type}
+                          onClick={() => handleAddBlockInView(type)}
+                          className="w-full flex items-center gap-2 px-2 py-2 text-sm text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700 rounded"
+                        >
+                          <Icon className="h-4 w-4" />
+                          {label}
+                        </button>
+                      ))}
+                    </div>
                   </div>
-                ))}
+                )}
               </div>
+            </div>
 
-              {/* Quick Actions */}
-                <div className="bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg p-4">
+            {/* Special handling for reasoning view */}
+            {selectedView === 'reasoning' && (
+              <>
+                {/* Incomplete chains notification */}
+                {incompleteChains && incompleteChains.length > 0 && (
+                  <div className="bg-yellow-50 dark:bg-yellow-900/30 border border-yellow-200 dark:border-yellow-700 rounded-lg p-4 mb-6">
+                    <div className="flex items-center gap-2 mb-2">
+                      <AlertTriangle className="h-5 w-5 text-yellow-600 dark:text-yellow-400" />
+                      <h3 className="font-medium text-yellow-900 dark:text-yellow-100">Incomplete Queries Found</h3>
+                    </div>
+                    <p className="text-sm text-yellow-800 dark:text-yellow-200 mb-3">
+                      {incompleteChains.length} query{incompleteChains.length !== 1 ? 'ies were' : ' was'} interrupted. You can resume or retry them.
+                    </p>
+                  </div>
+                )}
+
+                {/* Reasoning chains display */}
+                {Array.from(reasoningChains.entries()).length > 0 && (
+                  <div className="space-y-4 mb-8">
+                    <h3 className="text-md font-medium text-gray-900 dark:text-gray-100">
+                      AI Reasoning Chains ({reasoningChains.size})
+                    </h3>
+                    {Array.from(reasoningChains.entries()).map(([blockId, reasoningData]) => (
+                      <ReasoningChain
+                        key={blockId}
+                        reasoningData={reasoningData}
+                        title={`Block ${blockId.substring(0, 8)} - AI Reasoning`}
+                        collapsed={false}
+                        showRecoveryOptions={!reasoningData.isComplete}
+                        onResumeQuery={handleResumeQuery}
+                        onRetryQuery={handleRetryQuery}
+                      />
+                    ))}
+                  </div>
+                )}
+              </>
+            )}
+
+            {/* Blocks Content */}
+            <div className="space-y-4">
+              {(() => {
+                const blocksForView = getBlocksForView(selectedView);
+                
+                if (blocksForView.length === 0) {
+                  return (
+                    <div className="text-center py-12">
+                      <Layout className="h-12 w-12 text-gray-400 dark:text-gray-500 mx-auto mb-4" />
+                      <h3 className="text-lg font-medium text-gray-900 dark:text-gray-100 mb-2">
+                        No {selectedView} blocks yet
+                      </h3>
+                      <p className="text-gray-500 dark:text-gray-400 mb-6">
+                        {selectedView === 'analysis' && 'Add text, headings, and quotes to build your analysis'}
+                        {selectedView === 'data' && 'Add tables, stats, and charts to visualize your data'}
+                        {selectedView === 'history' && 'Create some content to see it appear here'}
+                        {selectedView === 'reasoning' && 'Run queries or add blocks to see AI reasoning'}
+                      </p>
+                      <Button onClick={() => setShowAddBlockMenu(true)}>
+                        <Plus className="h-4 w-4 mr-2" />
+                        Add Your First Block
+                      </Button>
+                    </div>
+                  );
+                }
+
+                return blocksForView.map((block) => (
+                  <div key={block.id} className="group">
+                    <BlockEditor
+                      block={block}
+                      onUpdate={(updates) => onUpdateBlock?.(block.id, updates)}
+                      onAddBlock={(type) => onAddBlock?.(block.id, type)}
+                      onDeleteBlock={() => onDeleteBlock?.(block.id)}
+                      onFocus={() => handleBlockFocus(block.id)}
+                      isFocused={focusedBlockId === block.id}
+                      onMoveUp={() => {
+                        // TODO: Implement move up functionality
+                        console.log('Move up block', block.id);
+                      }}
+                      onMoveDown={() => {
+                        // TODO: Implement move down functionality
+                        console.log('Move down block', block.id);
+                      }}
+                                             workspace={workspace}
+                       page={page}
+                       onNavigateToPage={(pageId) => {
+                         // TODO: Implement navigation to specific page
+                         console.log('Navigate to page:', pageId);
+                       }}
+                    />
+                  </div>
+                ));
+              })()}
+            </div>
+
+            {/* Quick Actions for New Query */}
+            {selectedView === 'analysis' && (
+              <div className="mt-8 bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg p-4">
                 <h3 className="font-medium text-gray-900 dark:text-gray-100 mb-3">Quick Actions</h3>
                 <div className="flex gap-2">
                   <Button size="sm" variant="outline" onClick={() => handleRunNewQuery()}>
-                    <Plus className="h-4 w-4 mr-2" />
-                    Add Analysis
+                    <Play className="h-4 w-4 mr-2" />
+                    Run New Query
                   </Button>
                   <Button size="sm" variant="outline">
                     <RotateCcw className="h-4 w-4 mr-2" />
                     Refresh Data
                   </Button>
                 </div>
-                </div>
-            </div>
-          )}
-
-          {selectedView === 'data' && (
-            <div className="max-w-6xl mx-auto">
-              {analysisData.currentTable ? (
-              <TableDisplay
-                headers={analysisData.currentTable.properties?.tableData?.headers || []}
-                rows={analysisData.currentTable.properties?.tableData?.data || []}
-                totalRows={analysisData.currentTable.properties?.tableData?.data?.length || 0}
-                title="Latest Query Results"
-                showControls={true}
-                maxRows={50}
-                onDownload={() => {
-                  console.log('Download CSV');
-                }}
-                onFilter={() => {
-                  console.log('Filter data');
-                }}
-              />
-              ) : (
-                <div className="text-center py-12">
-                  <Database className="h-12 w-12 text-gray-400 dark:text-gray-500 mx-auto mb-4" />
-                  <h3 className="text-lg font-medium text-gray-900 dark:text-gray-100 mb-2">No Data Available</h3>
-                  <p className="text-gray-500 dark:text-gray-400 mb-6">Run a query to see data results here.</p>
-                  <Button onClick={() => handleRunNewQuery()}>
-                    <Play className="h-4 w-4 mr-2" />
-                    Run Query
-                  </Button>
               </div>
-              )}
-            </div>
-          )}
+            )}
+          </div>
 
-          {selectedView === 'history' && (
-            <div className="max-w-4xl mx-auto">
-              <h2 className="text-lg font-semibold text-gray-900 dark:text-gray-100 mb-6">Analysis History</h2>
-              <div className="space-y-4">
-                {analysisData.analysisHistory.length > 0 ? (
-                  analysisData.analysisHistory.map((block, index) => (
-                    <div key={block.id} className="border border-gray-200 dark:border-gray-700 rounded-lg p-6 bg-white dark:bg-gray-800">
-                    <div className="flex items-center justify-between mb-4">
-                      <div className="flex items-center gap-3">
-                          <div className="w-3 h-3 rounded-full bg-blue-500 dark:bg-blue-400" />
-                          <h3 className="font-medium text-gray-900 dark:text-gray-100">Analysis Step {index + 1}</h3>
-                      </div>
-                      <span className="text-sm text-gray-500 dark:text-gray-400">
-                          {new Date().toLocaleString()}
-                      </span>
-                    </div>
-                    
-                      <div className="prose prose-sm max-w-none dark:prose-invert">
-                        <ReactMarkdown>{block.content}</ReactMarkdown>
-                      </div>
-                    </div>
-                  ))
-                ) : (
-                  <div className="text-center py-12">
-                    <Clock className="h-12 w-12 text-gray-400 dark:text-gray-500 mx-auto mb-4" />
-                    <h3 className="text-lg font-medium text-gray-900 dark:text-gray-100 mb-2">No Analysis History</h3>
-                    <p className="text-gray-500 dark:text-gray-400 mb-6">Your analysis steps will appear here as you work.</p>
-                    <Button onClick={() => handleRunNewQuery()}>
-                      <Play className="h-4 w-4 mr-2" />
-                      Start Analysis
-                    </Button>
-                  </div>
-                )}
-              </div>
-            </div>
-          )}
-
-          {selectedView === 'reasoning' && (
-            <div className="max-w-4xl mx-auto space-y-6">
-              <div className="flex items-center justify-between">
-                <h2 className="text-lg font-semibold text-gray-900 dark:text-gray-100">AI Reasoning Chains</h2>
-                <div className="text-sm text-gray-500 dark:text-gray-400">
-                  {reasoningChains.size} total chain{reasoningChains.size !== 1 ? 's' : ''}
-                </div>
-              </div>
-              
-              {/* Incomplete chains notification */}
-              {incompleteChains && incompleteChains.length > 0 && (
-                <div className="bg-yellow-50 dark:bg-yellow-900/30 border border-yellow-200 dark:border-yellow-700 rounded-lg p-4">
-                  <div className="flex items-center gap-2 mb-2">
-                    <AlertTriangle className="h-5 w-5 text-yellow-600 dark:text-yellow-400" />
-                    <h3 className="font-medium text-yellow-900 dark:text-yellow-100">Incomplete Queries Found</h3>
-                  </div>
-                  <p className="text-sm text-yellow-800 dark:text-yellow-200 mb-3">
-                    {incompleteChains.length} query{incompleteChains.length !== 1 ? 'ies were' : ' was'} interrupted. You can resume or retry them.
-                  </p>
-                </div>
-              )}
-
-              {/* Reasoning chains display */}
-              {Array.from(reasoningChains.entries()).length > 0 ? (
-                <div className="space-y-4">
-                  {Array.from(reasoningChains.entries()).map(([blockId, reasoningData]) => (
-                      <ReasoningChain
-                      key={blockId}
-                      reasoningData={reasoningData}
-                      title={`Block ${blockId.substring(0, 8)} - AI Reasoning`}
-                        collapsed={false}
-                      showRecoveryOptions={!reasoningData.isComplete}
-                      onResumeQuery={handleResumeQuery}
-                      onRetryQuery={handleRetryQuery}
-                    />
-                  ))}
-                        </div>
-              ) : (
-                    <div className="text-center py-12">
-                      <GitBranch className="h-12 w-12 text-gray-400 dark:text-gray-500 mx-auto mb-4" />
-                      <h3 className="text-lg font-medium text-gray-900 dark:text-gray-100 mb-2">No AI Reasoning Available</h3>
-                      <p className="text-gray-500 dark:text-gray-400 mb-6">
-                        The AI reasoning chain will appear here after running queries. 
-                        This shows how the AI thinks through problems step by step.
-                      </p>
-                  <Button onClick={() => handleRunNewQuery()}>
-                        <Play className="h-4 w-4 mr-2" />
-                        Run Query to See Reasoning
-                      </Button>
-                    </div>
-              )}
-            </div>
+          {/* Click outside to close add block menu */}
+          {showAddBlockMenu && (
+            <div
+              className="fixed inset-0 z-40"
+              onClick={() => setShowAddBlockMenu(false)}
+            />
           )}
         </div>
       </div>
