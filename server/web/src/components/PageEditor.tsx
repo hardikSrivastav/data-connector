@@ -2206,7 +2206,7 @@ export const PageEditor = ({
       // Single block deletion - use the existing onDeleteBlock function
       console.log('🚨 Single block deletion - using onDeleteBlock');
       const blockId = blocksToDelete[0];
-      setTimeout(() => {
+    setTimeout(() => {
         console.log(`🚨 [SINGLE] Calling onDeleteBlock for: ${blockId}`);
         try {
           onDeleteBlock(blockId);

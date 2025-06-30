@@ -9,12 +9,8 @@ import {
   Database, 
   TrendingUp, 
   Eye, 
-  ChevronRight,
-  ChevronDown,
   Play,
   RotateCcw,
-  Filter,
-  Search,
   Download,
   Share,
   Settings,
@@ -30,7 +26,6 @@ import {
   Hash
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
 import { cn } from '@/lib/utils';
 import { ReasoningChain } from './ReasoningChain';
 import { BlockEditor } from './BlockEditor';
@@ -115,8 +110,7 @@ export const CanvasWorkspace = ({
     apiBaseUrl: import.meta.env.VITE_API_BASE || 'http://localhost:8787'
   });
   
-  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
-  const [searchQuery, setSearchQuery] = useState('');
+  // Remove sidebar state since sidebar is removed
   const [selectedView, setSelectedView] = useState<'analysis' | 'data' | 'history' | 'reasoning'>('analysis');
   const [isQueryRunning, setIsQueryRunning] = useState(false);
   const [reasoningChains, setReasoningChains] = useState<Map<string, ReasoningChainData>>(new Map());
@@ -126,7 +120,7 @@ export const CanvasWorkspace = ({
   const [focusedBlockId, setFocusedBlockId] = useState<string | null>(null);
   const [showAddBlockMenu, setShowAddBlockMenu] = useState(false);
 
-  // Helper function to filter blocks by view type
+  // Helper function to filter blocks by view type for DISPLAY ONLY (not functionality restriction)
   const getBlocksForView = (view: string) => {
     const sortedBlocks = [...page.blocks].sort((a, b) => (a.order || 0) - (b.order || 0));
     
@@ -145,20 +139,19 @@ export const CanvasWorkspace = ({
         // Show all blocks in chronological order
         return sortedBlocks;
       case 'reasoning':
-        // Show blocks with reasoning chains or AI-related content
+        // Show ONLY blocks that actually have reasoning chains or AI-related content
         return sortedBlocks.filter(block => 
           block.properties?.reasoningChain || 
-          block.properties?.canvasData?.reasoningChain ||
-          ['quote', 'text', 'code'].includes(block.type)
+          block.properties?.canvasData?.reasoningChain
         );
       default:
         return sortedBlocks;
     }
   };
 
-  // Helper function to get available block types for each view
-  const getAvailableBlockTypesForView = (view: string): Array<{ type: Block['type']; label: string; icon: any }> => {
-    const allBlockTypes = [
+  // All block types are always available - no view restrictions
+  const getAllAvailableBlockTypes = (): Array<{ type: Block['type']; label: string; icon: any }> => {
+    return [
       { type: 'text' as const, label: 'Text', icon: Type },
       { type: 'heading1' as const, label: 'Heading 1', icon: Hash },
       { type: 'heading2' as const, label: 'Heading 2', icon: Hash },
@@ -169,25 +162,6 @@ export const CanvasWorkspace = ({
       { type: 'stats' as const, label: 'Stats', icon: BarChart2 },
       { type: 'divider' as const, label: 'Divider', icon: Minus }
     ];
-
-    switch (view) {
-      case 'analysis':
-        return allBlockTypes.filter(bt => 
-          ['text', 'heading1', 'heading2', 'heading3', 'quote', 'code', 'divider'].includes(bt.type)
-        );
-      case 'data':
-        return allBlockTypes.filter(bt => 
-          ['table', 'stats', 'code', 'divider'].includes(bt.type)
-        );
-      case 'history':
-        return allBlockTypes;
-      case 'reasoning':
-        return allBlockTypes.filter(bt => 
-          ['text', 'quote', 'code', 'divider'].includes(bt.type)
-        );
-      default:
-        return allBlockTypes;
-    }
   };
 
   // Helper function to handle block focus
@@ -195,8 +169,8 @@ export const CanvasWorkspace = ({
     setFocusedBlockId(blockId);
   };
 
-  // Helper function to handle adding blocks
-  const handleAddBlockInView = (type: Block['type']) => {
+  // Standard block creation - no view restrictions
+  const handleAddBlock = (type: Block['type']) => {
     if (onAddBlock) {
       const newBlockId = onAddBlock(undefined, type);
       setFocusedBlockId(newBlockId);
@@ -556,13 +530,44 @@ export const CanvasWorkspace = ({
       if (response.rows && response.rows.length > 0) {
         console.log('📊 CanvasWorkspace: Converting query results to table...');
         
-        // Convert response data, handling Decimal and other special types
+        // Convert response data, handling MongoDB objects, Decimal and other special types
         const convertValue = (value: any): string => {
           if (value === null || value === undefined) return '';
+          
+          // Handle Decimal objects
           if (typeof value === 'object' && value.constructor && value.constructor.name === 'Decimal') {
             return value.toString();
           }
+          
+          // Handle Date objects
           if (value instanceof Date) return value.toISOString();
+          
+          // Handle MongoDB ObjectId
+          if (typeof value === 'object' && value.constructor && value.constructor.name === 'ObjectId') {
+            return value.toString();
+          }
+          
+          // Handle arrays - show as JSON or comma-separated for simple arrays
+          if (Array.isArray(value)) {
+            if (value.length === 0) return '[]';
+            if (value.every(item => typeof item === 'string' || typeof item === 'number')) {
+              return value.join(', ');
+            }
+            return JSON.stringify(value);
+          }
+          
+          // Handle complex objects (MongoDB documents, nested objects)
+          if (typeof value === 'object' && value !== null) {
+            // For simple key-value objects, show as JSON
+            try {
+              return JSON.stringify(value);
+            } catch (e) {
+              // Fallback if JSON.stringify fails
+              return Object.prototype.toString.call(value);
+            }
+          }
+          
+          // Handle primitives (string, number, boolean)
           return String(value);
         };
         
@@ -629,106 +634,8 @@ export const CanvasWorkspace = ({
   };
 
   return (
-    <div className="flex h-screen bg-white dark:bg-gray-900">
-      {/* Sidebar - Analysis History */}
-      <div className={cn(
-        "border-r border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800 transition-all duration-200",
-        sidebarCollapsed ? "w-12" : "w-80"
-      )}>
-        {/* Sidebar Header */}
-        <div className="p-4 border-b border-gray-200 dark:border-gray-700">
-          <div className="flex items-center justify-between">
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={() => setSidebarCollapsed(!sidebarCollapsed)}
-              className="h-8 w-8 p-0"
-            >
-              {sidebarCollapsed ? <ChevronRight className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
-            </Button>
-            {!sidebarCollapsed && (
-              <div className="flex items-center gap-2">
-                <GitBranch className="h-4 w-4 text-gray-600 dark:text-gray-300" />
-                <span className="font-medium text-sm text-gray-900 dark:text-gray-100">Analysis History</span>
-              </div>
-            )}
-          </div>
-        </div>
-
-        {!sidebarCollapsed && (
-          <>
-            {/* Canvas Info */}
-            <div className="p-4 border-b border-gray-200 dark:border-gray-700">
-              <div className="flex items-center gap-2 mb-2">
-                <BarChart3 className="h-5 w-5 text-blue-600 dark:text-blue-400" />
-                <h2 className="font-semibold text-gray-900 dark:text-gray-100">{page.title}</h2>
-              </div>
-              <div className="text-xs text-gray-500 dark:text-gray-400 space-y-1">
-                <div>Status: <span className="font-medium text-green-600 dark:text-green-400">Ready</span></div>
-                <div>Blocks: {page.blocks.length}</div>
-                <div>Reasoning Chains: {reasoningChains.size}</div>
-                <div>Created: {new Date(page.createdAt).toLocaleDateString()}</div>
-              </div>
-              
-              {/* Incomplete queries alert */}
-              {incompleteChains && incompleteChains.length > 0 && (
-                <div className="mt-3 p-2 bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-700 rounded text-xs">
-                  <div className="flex items-center gap-1 text-yellow-800 dark:text-yellow-200">
-                    <AlertTriangle className="h-3 w-3" />
-                    {incompleteChains.length} incomplete queries found
-                  </div>
-                </div>
-              )}
-            </div>
-
-            {/* Search */}
-            <div className="p-4 border-b border-gray-200 dark:border-gray-700">
-              <div className="relative">
-                <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-gray-400 dark:text-gray-500" />
-                <Input
-                  placeholder="Search analysis..."
-                  value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
-                  className="pl-9 h-8 text-sm"
-                />
-              </div>
-            </div>
-
-            {/* Analysis Sections */}
-            <div className="flex-1 overflow-y-auto">
-              <div className="p-4">
-                <h3 className="text-sm font-medium text-gray-700 dark:text-gray-200 mb-3">Analysis Sections</h3>
-                <div className="space-y-2">
-                  {page.blocks
-                    .filter(block => block.type.startsWith('heading'))
-                    .map((block, index) => (
-                      <div
-                        key={block.id}
-                        className="p-3 rounded-lg border border-gray-200 dark:border-gray-700 hover:border-gray-300 dark:hover:border-gray-600 hover:bg-gray-50 dark:hover:bg-gray-700 cursor-pointer transition-colors"
-                    >
-                      <div className="flex items-center gap-2 mb-1">
-                          <div className="w-2 h-2 rounded-full bg-blue-500 dark:bg-blue-400" />
-                          <span className="text-sm font-medium text-gray-900 dark:text-gray-100">{block.content || `Section ${index + 1}`}</span>
-                      </div>
-                        <div className="text-xs text-gray-500 dark:text-gray-400">
-                          {new Date().toLocaleString()}
-                      </div>
-                      </div>
-                    ))}
-                  
-                  {page.blocks.filter(block => block.type.startsWith('heading')).length === 0 && (
-                    <div className="text-sm text-gray-500 dark:text-gray-400 text-center py-4">
-                      No analysis sections yet. Run a query to get started.
-                    </div>
-                  )}
-                </div>
-              </div>
-            </div>
-          </>
-        )}
-      </div>
-
-      {/* Main Content Area */}
+    <div className="flex h-screen w-full bg-white dark:bg-gray-900">
+      {/* Main Content Area - Full Width */}
       <div className="flex-1 flex flex-col">
         {/* Header */}
         <div className="border-b border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900">
@@ -792,11 +699,15 @@ export const CanvasWorkspace = ({
               >
                 <Icon className="h-4 w-4" />
                 {label}
-                {id === 'reasoning' && incompleteChains && incompleteChains.length > 0 && (
-                  <span className="ml-1 px-1.5 py-0.5 text-xs bg-yellow-500 text-white rounded-full">
-                    {incompleteChains.length}
-                  </span>
-                )}
+                              {/* Show count of relevant blocks for each tab */}
+              <span className="ml-1 px-1.5 py-0.5 text-xs bg-gray-500 text-white rounded-full">
+                {getBlocksForView(id).length}
+              </span>
+              {id === 'reasoning' && incompleteChains && incompleteChains.length > 0 && (
+                <span className="ml-1 px-1.5 py-0.5 text-xs bg-yellow-500 text-white rounded-full">
+                  {incompleteChains.length}
+                </span>
+              )}
               </button>
             ))}
           </div>
@@ -815,10 +726,10 @@ export const CanvasWorkspace = ({
                   {selectedView === 'reasoning' && 'AI Reasoning Workspace'}
                 </h2>
                 <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">
-                  {selectedView === 'analysis' && 'Create and organize your analysis content'}
-                  {selectedView === 'data' && 'Work with tables, stats, and data visualizations'}
-                  {selectedView === 'history' && 'View all blocks and content chronologically'}
-                  {selectedView === 'reasoning' && 'Explore AI reasoning chains and thought processes'}
+                  {selectedView === 'analysis' && 'View and organize your analysis content'}
+                  {selectedView === 'data' && 'View tables, stats, and data visualizations'}
+                  {selectedView === 'history' && 'View all content chronologically'}
+                  {selectedView === 'reasoning' && 'View AI reasoning chains and thought processes'}
                 </p>
               </div>
               
@@ -838,12 +749,12 @@ export const CanvasWorkspace = ({
                   <div className="absolute right-0 top-full mt-2 w-56 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg shadow-lg z-50">
                     <div className="p-2">
                       <div className="text-xs text-gray-500 dark:text-gray-400 uppercase tracking-wide mb-2 px-2">
-                        Available for {selectedView}
+                        Add Block
                       </div>
-                      {getAvailableBlockTypesForView(selectedView).map(({ type, label, icon: Icon }) => (
+                      {getAllAvailableBlockTypes().map(({ type, label, icon: Icon }) => (
                         <button
                           key={type}
-                          onClick={() => handleAddBlockInView(type)}
+                          onClick={() => handleAddBlock(type)}
                           className="w-full flex items-center gap-2 px-2 py-2 text-sm text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700 rounded"
                         >
                           <Icon className="h-4 w-4" />
@@ -856,96 +767,112 @@ export const CanvasWorkspace = ({
               </div>
             </div>
 
-            {/* Special handling for reasoning view */}
-            {selectedView === 'reasoning' && (
-              <>
-                {/* Incomplete chains notification */}
-                {incompleteChains && incompleteChains.length > 0 && (
-                  <div className="bg-yellow-50 dark:bg-yellow-900/30 border border-yellow-200 dark:border-yellow-700 rounded-lg p-4 mb-6">
-                    <div className="flex items-center gap-2 mb-2">
-                      <AlertTriangle className="h-5 w-5 text-yellow-600 dark:text-yellow-400" />
-                      <h3 className="font-medium text-yellow-900 dark:text-yellow-100">Incomplete Queries Found</h3>
-                    </div>
-                    <p className="text-sm text-yellow-800 dark:text-yellow-200 mb-3">
-                      {incompleteChains.length} query{incompleteChains.length !== 1 ? 'ies were' : ' was'} interrupted. You can resume or retry them.
-                    </p>
-                  </div>
-                )}
 
-                {/* Reasoning chains display */}
-                {Array.from(reasoningChains.entries()).length > 0 && (
-                  <div className="space-y-4 mb-8">
-                    <h3 className="text-md font-medium text-gray-900 dark:text-gray-100">
-                      AI Reasoning Chains ({reasoningChains.size})
-                    </h3>
-                    {Array.from(reasoningChains.entries()).map(([blockId, reasoningData]) => (
-                      <ReasoningChain
-                        key={blockId}
-                        reasoningData={reasoningData}
-                        title={`Block ${blockId.substring(0, 8)} - AI Reasoning`}
-                        collapsed={false}
-                        showRecoveryOptions={!reasoningData.isComplete}
-                        onResumeQuery={handleResumeQuery}
-                        onRetryQuery={handleRetryQuery}
-                      />
-                    ))}
-                  </div>
-                )}
-              </>
-            )}
 
             {/* Blocks Content */}
             <div className="space-y-4">
               {(() => {
                 const blocksForView = getBlocksForView(selectedView);
                 
-                if (blocksForView.length === 0) {
+                console.log(`🎯 Rendering ${selectedView} view:`, {
+                  selectedView,
+                  totalBlocks: page.blocks.length,
+                  filteredBlocks: blocksForView.length,
+                  blockTypes: blocksForView.map(b => b.type)
+                });
+                
+                // Special content for reasoning view
+                const reasoningContent = selectedView === 'reasoning' && (
+                  <>
+                    {/* Incomplete chains notification */}
+                    {incompleteChains && incompleteChains.length > 0 && (
+                      <div className="bg-yellow-50 dark:bg-yellow-900/30 border border-yellow-200 dark:border-yellow-700 rounded-lg p-4 mb-6">
+                        <div className="flex items-center gap-2 mb-2">
+                          <AlertTriangle className="h-5 w-5 text-yellow-600 dark:text-yellow-400" />
+                          <h3 className="font-medium text-yellow-900 dark:text-yellow-100">Incomplete Queries Found</h3>
+                        </div>
+                        <p className="text-sm text-yellow-800 dark:text-yellow-200 mb-3">
+                          {incompleteChains.length} query{incompleteChains.length !== 1 ? 'ies were' : ' was'} interrupted. You can resume or retry them.
+                        </p>
+                      </div>
+                    )}
+
+                    {/* Reasoning chains display */}
+                    {Array.from(reasoningChains.entries()).length > 0 && (
+                      <div className="space-y-4 mb-8">
+                        <h3 className="text-md font-medium text-gray-900 dark:text-gray-100">
+                          AI Reasoning Chains ({reasoningChains.size})
+                        </h3>
+                        {Array.from(reasoningChains.entries()).map(([blockId, reasoningData]) => (
+                          <ReasoningChain
+                            key={blockId}
+                            reasoningData={reasoningData}
+                            title={`Block ${blockId.substring(0, 8)} - AI Reasoning`}
+                            collapsed={false}
+                            showRecoveryOptions={!reasoningData.isComplete}
+                            onResumeQuery={handleResumeQuery}
+                            onRetryQuery={handleRetryQuery}
+                          />
+                        ))}
+                      </div>
+                    )}
+                  </>
+                );
+
+                // Show reasoning content first if in reasoning view
+                const contentToRender = [
+                  ...(reasoningContent ? [reasoningContent] : []),
+                  ...blocksForView.map((block) => (
+                    <div key={block.id} className="group">
+                      <BlockEditor
+                        block={block}
+                        onUpdate={(updates) => onUpdateBlock?.(block.id, updates)}
+                        onAddBlock={(type) => onAddBlock?.(block.id, type)}
+                        onDeleteBlock={() => onDeleteBlock?.(block.id)}
+                        onFocus={() => handleBlockFocus(block.id)}
+                        isFocused={focusedBlockId === block.id}
+                        onMoveUp={() => {
+                          // TODO: Implement move up functionality
+                          console.log('Move up block', block.id);
+                        }}
+                        onMoveDown={() => {
+                          // TODO: Implement move down functionality
+                          console.log('Move down block', block.id);
+                        }}
+                        workspace={workspace}
+                        page={page}
+                        onNavigateToPage={(pageId) => {
+                          // TODO: Implement navigation to specific page
+                          console.log('Navigate to page:', pageId);
+                        }}
+                      />
+                    </div>
+                  ))
+                ];
+
+                // Show empty state only if no content at all
+                if (contentToRender.length === 0 || (blocksForView.length === 0 && !reasoningContent)) {
                   return (
                     <div className="text-center py-12">
                       <Layout className="h-12 w-12 text-gray-400 dark:text-gray-500 mx-auto mb-4" />
                       <h3 className="text-lg font-medium text-gray-900 dark:text-gray-100 mb-2">
-                        No {selectedView} blocks yet
+                        No {selectedView} content yet
                       </h3>
                       <p className="text-gray-500 dark:text-gray-400 mb-6">
-                        {selectedView === 'analysis' && 'Add text, headings, and quotes to build your analysis'}
-                        {selectedView === 'data' && 'Add tables, stats, and charts to visualize your data'}
-                        {selectedView === 'history' && 'Create some content to see it appear here'}
-                        {selectedView === 'reasoning' && 'Run queries or add blocks to see AI reasoning'}
+                        {selectedView === 'analysis' && 'This view shows text, headings, quotes, and analysis content'}
+                        {selectedView === 'data' && 'This view shows tables, stats, and data visualizations'}
+                        {selectedView === 'history' && 'This view shows all content chronologically'}
+                        {selectedView === 'reasoning' && 'This view shows AI reasoning and thought processes'}
                       </p>
                       <Button onClick={() => setShowAddBlockMenu(true)}>
                         <Plus className="h-4 w-4 mr-2" />
-                        Add Your First Block
+                        Add Content
                       </Button>
                     </div>
                   );
                 }
 
-                return blocksForView.map((block) => (
-                  <div key={block.id} className="group">
-                    <BlockEditor
-                      block={block}
-                      onUpdate={(updates) => onUpdateBlock?.(block.id, updates)}
-                      onAddBlock={(type) => onAddBlock?.(block.id, type)}
-                      onDeleteBlock={() => onDeleteBlock?.(block.id)}
-                      onFocus={() => handleBlockFocus(block.id)}
-                      isFocused={focusedBlockId === block.id}
-                      onMoveUp={() => {
-                        // TODO: Implement move up functionality
-                        console.log('Move up block', block.id);
-                      }}
-                      onMoveDown={() => {
-                        // TODO: Implement move down functionality
-                        console.log('Move down block', block.id);
-                      }}
-                                             workspace={workspace}
-                       page={page}
-                       onNavigateToPage={(pageId) => {
-                         // TODO: Implement navigation to specific page
-                         console.log('Navigate to page:', pageId);
-                       }}
-                    />
-                  </div>
-                ));
+                return contentToRender;
               })()}
             </div>
 
