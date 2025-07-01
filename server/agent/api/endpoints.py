@@ -98,6 +98,10 @@ orchestration_logger = create_endpoint_logger("orchestration")
 stream_logger = create_endpoint_logger("streaming")
 langgraph_logger = create_endpoint_logger("langgraph")
 
+# ✅ NEW: Create dedicated detailed reasoning logger for LangGraph
+langgraph_reasoning_logger = create_endpoint_logger("langgraph_reasoning")
+langgraph_reasoning_logger.setLevel(logging.DEBUG)  # Capture all detailed events
+
 # Helper function to log request/response
 def log_request_response(endpoint_logger: logging.Logger, endpoint: str, request_data: dict, response_data: dict, duration: float, error: str = None):
     """Log request and response data for an endpoint"""
@@ -2725,14 +2729,16 @@ async def langgraph_stream(request: LangGraphQueryRequest, http_request: Request
             
             langgraph_logger.info(f"🔧 [CLI LOGIC] Using session ID: {session_id[:8]}...")
             
-            # Add progress update before long-running operation
-            yield create_stream_event("progress", session_id,
-                message="Processing with LangGraph orchestration...",
-                progress=20,
-                status="executing"
+            # ✅ CRITICAL FIX: Stream detailed reasoning DURING execution, not after
+            # Get the output aggregator to tap into the same detailed logging as CLI
+            from ..langgraph.output_aggregator import get_output_integrator
+            
+            # Initialize streaming integration
+            yield create_stream_event("detailed_reasoning_start", session_id,
+                message="🔍 STARTING DETAILED REASONING CHAIN"
             )
             
-            # Process query - let LangGraph determine optimal routing and databases (EXACT CLI LOGIC)
+            # Process query with real-time monitoring - let LangGraph determine optimal routing and databases (EXACT CLI LOGIC)
             result = await orchestrator.process_query(
                 question=request.question,
                 session_id=session_id,
@@ -2740,19 +2746,187 @@ async def langgraph_stream(request: LangGraphQueryRequest, http_request: Request
                 force_langgraph=request.force_langgraph
             )
             
+            # ✅ IMMEDIATE DETAILED REASONING: Stream the captured data right after execution
+            try:
+                output_integrator = get_output_integrator()
+                
+                # CRITICAL: Extract the actual session ID used by the workflow execution (EXACT CLI LOGIC)
+                # The workflow may have created internal sessions we need to track
+                actual_session_id = result.get("session_id", session_id)
+                if actual_session_id != session_id:
+                    langgraph_logger.info(f"🔧 Using workflow session ID: {actual_session_id[:8]}...")
+                    session_id = actual_session_id
+                    yield create_stream_event("session_updated", session_id, new_session_id=actual_session_id)
+                
+                aggregator = output_integrator.get_aggregator(session_id)
+                
+                # Enhanced logging for detailed reasoning
+                langgraph_reasoning_logger.info(f"🔍 [REASONING_CHAIN] Starting detailed reasoning analysis for session: {session_id[:8]}...")
+                langgraph_reasoning_logger.info(f"🔍 [REASONING_CHAIN] Question: '{request.question}'")
+                
+                # Stream the same detailed information as CLI
+                yield create_stream_event("detailed_reasoning_start", session_id,
+                    message="🔍 DETAILED REASONING CHAIN"
+                )
+                
+                # 🔍 SQL QUERIES EXECUTED (same as CLI)
+                raw_data = aggregator.get_all_raw_data()
+                langgraph_reasoning_logger.info(f"🔍 [REASONING_CHAIN] Raw data captured: {len(raw_data)} items")
+                
+                if raw_data:
+                    yield create_stream_event("sql_queries_section", session_id,
+                        message="🔍 SQL QUERIES EXECUTED:"
+                    )
+                    
+                    sql_queries = [rd for rd in raw_data if rd.query]
+                    langgraph_reasoning_logger.info(f"🔍 [SQL_QUERIES] Found {len(sql_queries)} SQL queries in captured data")
+                    
+                    for i, rd in enumerate(sql_queries, 1):
+                        langgraph_reasoning_logger.info(f"🔍 [SQL_QUERIES] Query {i}: {rd.source} - {rd.execution_time_ms:.1f}ms, {rd.row_count} rows")
+                        langgraph_reasoning_logger.debug(f"🔍 [SQL_QUERIES] Query {i} text: {rd.query}")
+                        
+                        yield create_stream_event("sql_query_executed", session_id,
+                            query_number=i,
+                            source=rd.source,
+                            query_text=rd.query,
+                            execution_time_ms=rd.execution_time_ms,
+                            rows_returned=rd.row_count,
+                            message=f"  Query {i}: {rd.source} - {rd.execution_time_ms:.1f}ms, {rd.row_count} rows"
+                        )
+                else:
+                    langgraph_reasoning_logger.warning(f"🔍 [SQL_QUERIES] No SQL queries captured for session {session_id[:8]}")
+                    yield create_stream_event("no_sql_queries", session_id,
+                        message="  No SQL queries captured"
+                    )
+                
+                # 🔧 TOOL EXECUTIONS (same as CLI)
+                tool_executions = aggregator.get_all_tool_executions()
+                langgraph_reasoning_logger.info(f"🔧 [TOOL_EXECUTIONS] Found {len(tool_executions)} tool executions")
+                
+                if tool_executions:
+                    yield create_stream_event("tool_executions_section", session_id,
+                        message="🔧 TOOL EXECUTIONS:"
+                    )
+                    
+                    success_count = sum(1 for tool in tool_executions if tool.success)
+                    total_time = sum(tool.execution_time_ms for tool in tool_executions)
+                    langgraph_reasoning_logger.info(f"🔧 [TOOL_EXECUTIONS] Success rate: {success_count}/{len(tool_executions)} ({success_count/len(tool_executions)*100:.1f}%), Total time: {total_time:.1f}ms")
+                    
+                    for i, tool in enumerate(tool_executions, 1):
+                        status_emoji = "✅ Success" if tool.success else "❌ Failed"
+                        langgraph_reasoning_logger.info(f"🔧 [TOOL_EXECUTIONS] Tool {i}: {tool.tool_id} - {status_emoji} ({tool.execution_time_ms:.1f}ms)")
+                        if tool.error_message:
+                            langgraph_reasoning_logger.error(f"🔧 [TOOL_EXECUTIONS] Tool {i} error: {tool.error_message}")
+                        
+                        yield create_stream_event("tool_execution_completed", session_id,
+                            execution_number=i,
+                            tool_id=tool.tool_id,
+                            success=tool.success,
+                            execution_time_ms=tool.execution_time_ms,
+                            call_id=tool.call_id,
+                            error_message=tool.error_message,
+                            message=f"  Tool {i}: {tool.tool_id} - {status_emoji} ({tool.execution_time_ms:.1f}ms)"
+                        )
+                else:
+                    langgraph_reasoning_logger.warning(f"🔧 [TOOL_EXECUTIONS] No tool executions captured for session {session_id[:8]}")
+                    yield create_stream_event("no_tool_executions", session_id,
+                        message="  No tool executions captured"
+                    )
+                
+                # 📊 DATABASE SCHEMA DISCOVERY (same as CLI)
+                schema_data = [rd for rd in raw_data if not rd.query]  # Schema data doesn't have queries
+                if schema_data:
+                    yield create_stream_event("schema_discovery_section", session_id,
+                        message="📊 DATABASE SCHEMA DISCOVERY:"
+                    )
+                    
+                    for rd in schema_data:
+                        source = getattr(rd, 'source', None) or 'unknown'
+                        table_count = rd.row_count if rd.row_count else len(rd.rows) if rd.rows else 0
+                        
+                        # Extract content preview safely
+                        content_preview = "No preview available"
+                        try:
+                            if rd.rows and len(rd.rows) > 0:
+                                if isinstance(rd.rows[0], dict) and "content" in rd.rows[0]:
+                                    content_preview = str(rd.rows[0]["content"])[:200] + "..."
+                                elif hasattr(rd.rows[0], 'content'):
+                                    content_preview = str(rd.rows[0].content)[:200] + "..."
+                                else:
+                                    content_preview = str(rd.rows[0])[:100] + "..."
+                        except (AttributeError, IndexError, KeyError):
+                            content_preview = "Content extraction error"
+                        
+                        yield create_stream_event("schema_discovered", session_id,
+                            source=source,
+                            tables_found=table_count,
+                            content_preview=content_preview,
+                            message=f"  Source {source}: {table_count} tables found"
+                        )
+                else:
+                    yield create_stream_event("no_schema_discovery", session_id,
+                        message="  No schema discovery data captured"
+                    )
+                
+                # 📋 EXECUTION PLAN DETAILS (same as CLI)
+                execution_plans = aggregator.get_all_execution_plans()
+                if execution_plans:
+                    yield create_stream_event("execution_plans_section", session_id,
+                        message="📋 EXECUTION PLAN DETAILS:"
+                    )
+                    
+                    for i, plan in enumerate(execution_plans, 1):
+                        operations_count = len(plan.operations) if hasattr(plan, 'operations') else 0
+                        strategy = getattr(plan, 'strategy', 'unknown')
+                        
+                        yield create_stream_event("execution_plan_detail", session_id,
+                            plan_number=i,
+                            plan_id=plan.plan_id if hasattr(plan, 'plan_id') else 'unknown',
+                            strategy=strategy,
+                            operations_count=operations_count,
+                            message=f"  Plan {i}: {strategy} strategy, {operations_count} operations"
+                        )
+                else:
+                    yield create_stream_event("no_execution_plans", session_id,
+                        message="  No execution plans captured"
+                    )
+                
+                # 📝 FINAL SYNTHESIS ANALYSIS (same as CLI)
+                final_synthesis = aggregator.get_final_synthesis()
+                if final_synthesis:
+                    synthesis_text = final_synthesis.response_text if hasattr(final_synthesis, 'response_text') else str(final_synthesis)
+                    synthesis_length = len(synthesis_text)
+                    confidence = getattr(final_synthesis, 'confidence_score', 0.0)
+                    sources_used = getattr(final_synthesis, 'sources_used', 0)
+                    
+                    yield create_stream_event("final_synthesis_analysis", session_id,
+                        synthesis_length=synthesis_length,
+                        confidence_score=confidence,
+                        sources_used=sources_used,
+                        synthesis_preview=synthesis_text[:500] + "..." if len(synthesis_text) > 500 else synthesis_text,
+                        message=f"📝 FINAL SYNTHESIS: {synthesis_length} chars, confidence: {confidence:.2f}, sources: {sources_used}"
+                    )
+                else:
+                    yield create_stream_event("no_final_synthesis", session_id,
+                        message="📝 No final synthesis available"
+                    )
+                
+                yield create_stream_event("detailed_reasoning_complete", session_id,
+                    message="🔍 Detailed reasoning chain complete"
+                )
+                
+            except Exception as e:
+                yield create_stream_event("reasoning_chain_warning", session_id,
+                    message=f"⚠️ Could not access detailed reasoning chain: {e}"
+                )
+                if request.verbose:
+                    langgraph_logger.warning(f"Reasoning chain access failed: {e}")
+
             yield create_stream_event("progress", session_id,
-                message="LangGraph execution completed, processing results...",
-                progress=80,
-                status="processing"
+                message="Analysis complete, finalizing results...",
+                progress=95,
+                status="finalizing"
             )
-            
-            # CRITICAL: Extract the actual session ID used by the workflow execution (EXACT CLI LOGIC)
-            # The workflow may have created internal sessions we need to track
-            actual_session_id = result.get("session_id", session_id)
-            if actual_session_id != session_id:
-                langgraph_logger.info(f"🔧 Using workflow session ID: {actual_session_id[:8]}...")
-                session_id = actual_session_id
-                yield create_stream_event("session_updated", session_id, new_session_id=actual_session_id)
             
             # Display routing information if requested (EXACT CLI LOGIC)
             execution_metadata = result.get("execution_metadata", {})
@@ -2835,16 +3009,17 @@ async def langgraph_stream(request: LangGraphQueryRequest, http_request: Request
                         sql_queries = [rd for rd in raw_data if rd.query]
                         if sql_queries:
                             for i, rd in enumerate(sql_queries, 1):
-                                yield create_stream_event("sql_query_captured", session_id,
+                                yield create_stream_event("sql_query_executed", session_id,
                                     query_number=i,
-                                    query=rd.query,
                                     source=rd.source,
+                                    query_text=rd.query,
+                                    execution_time_ms=rd.execution_time_ms,
                                     rows_returned=rd.row_count,
-                                    execution_time_ms=rd.execution_time_ms
+                                    message=f"  Query {i}: {rd.source} - {rd.execution_time_ms:.1f}ms, {rd.row_count} rows"
                                 )
                         else:
                             yield create_stream_event("no_sql_queries", session_id,
-                                message="  No SQL queries found in captured data"
+                                message="  No SQL queries captured"
                             )
                         
                         # 🔧 TOOL EXECUTIONS (same as CLI)
@@ -2854,35 +3029,33 @@ async def langgraph_stream(request: LangGraphQueryRequest, http_request: Request
                         
                         if tool_executions:
                             for i, tool in enumerate(tool_executions, 1):
-                                yield create_stream_event("tool_execution_captured", session_id,
+                                yield create_stream_event("tool_execution_completed", session_id,
                                     execution_number=i,
                                     tool_id=tool.tool_id,
-                                    success="✅ Success" if tool.success else "❌ Failed",
+                                    success=tool.success,
                                     execution_time_ms=tool.execution_time_ms,
                                     call_id=tool.call_id,
-                                    parameters=tool.parameters if tool.parameters else {},
-                                    result_preview=str(tool.result)[:100] + "..." if tool.result and len(str(tool.result)) > 100 else str(tool.result) if tool.result else "No result",
-                                    error_message=tool.error_message
+                                    error_message=tool.error_message,
+                                    message=f"  Tool {i}: {tool.tool_id} - {status_emoji} ({tool.execution_time_ms:.1f}ms)"
                                 )
                         else:
                             yield create_stream_event("no_tool_executions", session_id,
-                                message="  No tool executions found in captured data"
+                                message="  No tool executions captured"
                             )
                         
-                        # 📊 RAW SCHEMA DATA (same as CLI)
-                        yield create_stream_event("raw_schema_section", session_id,
-                            message="📊 RAW DATABASE SCHEMA CAPTURED:"
-                        )
-                        
+                        # 📊 DATABASE SCHEMA DISCOVERY (same as CLI)
                         schema_data = [rd for rd in raw_data if not rd.query]  # Schema data doesn't have queries
                         if schema_data:
+                            yield create_stream_event("schema_discovery_section", session_id,
+                                message="📊 DATABASE SCHEMA DISCOVERY:"
+                            )
+                            
                             for rd in schema_data:
-                                # Safely get source with fallback
                                 source = getattr(rd, 'source', None) or 'unknown'
                                 table_count = rd.row_count if rd.row_count else len(rd.rows) if rd.rows else 0
                                 
-                                # Safely extract content preview
-                                content_preview = "No content preview"
+                                # Extract content preview safely
+                                content_preview = "No preview available"
                                 try:
                                     if rd.rows and len(rd.rows) > 0:
                                         if isinstance(rd.rows[0], dict) and "content" in rd.rows[0]:
@@ -2891,30 +3064,65 @@ async def langgraph_stream(request: LangGraphQueryRequest, http_request: Request
                                             content_preview = str(rd.rows[0].content)[:200] + "..."
                                         else:
                                             content_preview = str(rd.rows[0])[:100] + "..."
-                                except (AttributeError, IndexError, KeyError) as e:
-                                    content_preview = f"Content extraction error: {str(e)[:50]}"
+                                except (AttributeError, IndexError, KeyError):
+                                    content_preview = "Content extraction error"
                                 
-                                yield create_stream_event("schema_data_captured", session_id,
+                                yield create_stream_event("schema_discovered", session_id,
                                     source=source,
                                     tables_found=table_count,
-                                    sample_content=content_preview
+                                    content_preview=content_preview,
+                                    message=f"  Source {source}: {table_count} tables found"
                                 )
                         else:
-                            yield create_stream_event("no_schema_data", session_id,
-                                message="  No raw schema data found"
+                            yield create_stream_event("no_schema_discovery", session_id,
+                                message="  No schema discovery data captured"
                             )
                         
-                        # 📋 FINAL SYNTHESIS (same as CLI)
+                        # 📋 EXECUTION PLAN DETAILS (same as CLI)
+                        execution_plans = aggregator.get_all_execution_plans()
+                        if execution_plans:
+                            yield create_stream_event("execution_plans_section", session_id,
+                                message="📋 EXECUTION PLAN DETAILS:"
+                            )
+                            
+                            for i, plan in enumerate(execution_plans, 1):
+                                operations_count = len(plan.operations) if hasattr(plan, 'operations') else 0
+                                strategy = getattr(plan, 'strategy', 'unknown')
+                                
+                                yield create_stream_event("execution_plan_detail", session_id,
+                                    plan_number=i,
+                                    plan_id=plan.plan_id if hasattr(plan, 'plan_id') else 'unknown',
+                                    strategy=strategy,
+                                    operations_count=operations_count,
+                                    message=f"  Plan {i}: {strategy} strategy, {operations_count} operations"
+                                )
+                        else:
+                            yield create_stream_event("no_execution_plans", session_id,
+                                message="  No execution plans captured"
+                            )
+                        
+                        # 📝 FINAL SYNTHESIS ANALYSIS (same as CLI)
+                        final_synthesis = aggregator.get_final_synthesis()
                         if final_synthesis:
-                            # Access the response_text attribute of FinalSynthesisOutput object
                             synthesis_text = final_synthesis.response_text if hasattr(final_synthesis, 'response_text') else str(final_synthesis)
-                            yield create_stream_event("final_synthesis_section", session_id,
-                                message="📋 FINAL SYNTHESIS:",
-                                synthesis_preview=synthesis_text[:500] + "..." if len(synthesis_text) > 500 else synthesis_text
+                            synthesis_length = len(synthesis_text)
+                            confidence = getattr(final_synthesis, 'confidence_score', 0.0)
+                            sources_used = getattr(final_synthesis, 'sources_used', 0)
+                            
+                            yield create_stream_event("final_synthesis_analysis", session_id,
+                                synthesis_length=synthesis_length,
+                                confidence_score=confidence,
+                                sources_used=sources_used,
+                                synthesis_preview=synthesis_text[:500] + "..." if len(synthesis_text) > 500 else synthesis_text,
+                                message=f"📝 FINAL SYNTHESIS: {synthesis_length} chars, confidence: {confidence:.2f}, sources: {sources_used}"
                             )
                         else:
                             yield create_stream_event("no_final_synthesis", session_id,
-                                message="📋 No final synthesis available"
+                                message="📝 No final synthesis available"
+                            )
+                        
+                        yield create_stream_event("detailed_reasoning_complete", session_id,
+                            message="🔍 Detailed reasoning chain complete"
                             )
                     
                     # ✅ CRITICAL ENHANCEMENT: Verify and log captured SQL queries and tool execution data

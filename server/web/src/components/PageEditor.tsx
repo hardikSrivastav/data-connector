@@ -103,7 +103,15 @@ export const PageEditor = ({
     blockId?: string;
     query?: string;
     history: Array<{
-      type: 'status' | 'progress' | 'error' | 'complete' | 'partial_sql' | 'analysis_chunk';
+      type: 'status' | 'progress' | 'error' | 'complete' | 'partial_sql' | 'analysis_chunk' |
+            // ✅ NEW: Add all detailed reasoning event types
+            'detailed_reasoning_start' | 'session_updated' | 
+            'sql_queries_section' | 'sql_query_executed' | 'no_sql_queries' |
+            'tool_executions_section' | 'tool_execution_completed' | 'no_tool_executions' |
+            'schema_discovery_section' | 'schema_discovered' | 'no_schema_discovery' |
+            'execution_plans_section' | 'execution_plan_detail' | 'no_execution_plans' |
+            'final_synthesis_analysis' | 'no_final_synthesis' | 'detailed_reasoning_complete' |
+            'reasoning_chain_warning';
       message: string;
       timestamp: string;
       metadata?: any;
@@ -1183,6 +1191,54 @@ export const PageEditor = ({
             type: 'analysis_chunk',
             message,
             timestamp: new Date().toISOString()
+          });
+        },
+
+        // ✅ NEW: Handle detailed reasoning events from backend
+        onDetailedReasoningEvent: (event) => {
+          console.log(`🧠 PageEditor: Received detailed reasoning event: ${event.type}`, event);
+          
+          // Update streaming state with detailed reasoning event
+          setStreamingState(prev => ({
+            ...prev,
+            status: event.message || `Processing ${event.type}...`,
+            history: [...prev.history, {
+              type: event.type as any, // Cast to allow new event types
+              message: event.message || '',
+              timestamp: event.timestamp,
+              metadata: {
+                // Pass through all the detailed event data
+                query_number: event.query_number,
+                source: event.source,
+                query_text: event.query_text,
+                execution_time_ms: event.execution_time_ms,
+                rows_returned: event.rows_returned,
+                execution_number: event.execution_number,
+                tool_id: event.tool_id,
+                success: event.success,
+                call_id: event.call_id,
+                error_message: event.error_message,
+                tables_found: event.tables_found,
+                content_preview: event.content_preview,
+                plan_number: event.plan_number,
+                plan_id: event.plan_id,
+                strategy: event.strategy,
+                operations_count: event.operations_count,
+                synthesis_length: event.synthesis_length,
+                confidence_score: event.confidence_score,
+                sources_used: event.sources_used,
+                synthesis_preview: event.synthesis_preview,
+                ...event // Include any other fields
+              }
+            }]
+          }));
+
+          // Also add to reasoning chain with more specific typing
+          addReasoningChainEvent(sessionId, {
+            type: 'status' as any, // Map to allowed types for now
+            message: event.message || `${event.type}: Processing...`,
+            timestamp: event.timestamp,
+            metadata: event
           });
         },
         
@@ -3073,7 +3129,7 @@ export const PageEditor = ({
     
     // Start the block processing attempt
     attemptBlockProcessing();
-  }, [page.blocks, page.id, storageManager, loggedOnUpdatePage, setPendingAIUpdate, onAddBlock, onUpdateBlock]);
+  }, [page.blocks, page.id, storageManager, loggedOnUpdatePage, onAddBlock, onUpdateBlock]);
 
   // Generate breadcrumbs from workspace and page data
   const breadcrumbs = [
