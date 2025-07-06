@@ -1,7 +1,10 @@
+const isDevelopment = process.env.NODE_ENV === 'development';
+const isProduction = process.env.NODE_ENV === 'production';
+
 export const siteConfig = {
   name: "Ceneca",
   description: "On-premise AI data-analysis that connects directly to your databases.",
-  url: "https://ceneca.ai",
+  url: isDevelopment ? "http://localhost:3000" : "https://ceneca.ai",
   ogImage: "/og.png",
   links: {
     twitter: "https://twitter.com/ceneca",

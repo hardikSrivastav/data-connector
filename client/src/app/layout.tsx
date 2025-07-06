@@ -61,9 +61,9 @@ export const metadata: Metadata = {
     creator: "@ceneca",
   },
   icons: {
-    icon: '/ceneca-favicon.png',
-    shortcut: '/ceneca-favicon.png',
-    apple: '/ceneca-favicon.png',
+    icon: '/ceneca-light.png',
+    shortcut: '/ceneca-light.png',
+    apple: '/ceneca-light.png',
   },
   manifest: `${siteConfig.url}/site.webmanifest`,
   metadataBase: new URL(siteConfig.url),
