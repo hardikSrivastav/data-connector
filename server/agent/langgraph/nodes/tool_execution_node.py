@@ -123,7 +123,8 @@ class ToolExecutionNode:
         self, 
         parameters: Dict[str, Any], 
         step_outputs: Dict[str, Any], 
-        execution_results: List[Any]
+        execution_results: List[Any],
+        tool_id: str
     ) -> Dict[str, Any]:
         """
         Resolve step dependencies in tool parameters.
@@ -134,6 +135,7 @@ class ToolExecutionNode:
             parameters: Original tool parameters
             step_outputs: Dictionary of step outputs
             execution_results: List of execution results
+            tool_id: The ID of the tool
             
         Returns:
             Parameters with resolved dependencies
@@ -142,6 +144,10 @@ class ToolExecutionNode:
             return parameters
             
         resolved_params = {}
+        
+        logger.info(f"🔧 DEPENDENCY_RESOLUTION: Resolving parameters: {parameters}")
+        logger.info(f"🔧 DEPENDENCY_RESOLUTION: Available step outputs: {list(step_outputs.keys())}")
+        logger.info(f"🔧 DEPENDENCY_RESOLUTION: Execution results count: {len(execution_results)}")
         
         for key, value in parameters.items():
             if isinstance(value, str):
@@ -152,32 +158,141 @@ class ToolExecutionNode:
                         step_num = int(value.split('_')[-1])
                         step_key = f"step_{step_num}"
                         
+                        logger.info(f"🔧 DEPENDENCY_RESOLUTION: Resolving {value} -> {step_key}")
+                        
+                        resolved_value = None
+                        
+                        # First, try to get from step_outputs
                         if step_key in step_outputs:
                             resolved_value = step_outputs[step_key]
-                            logger.info(f"Resolved {value} to actual result: {str(resolved_value)[:100]}...")
-                            resolved_params[key] = resolved_value
+                            logger.info(f"🔧 DEPENDENCY_RESOLUTION: Found in step_outputs: {type(resolved_value)} with length: {len(resolved_value) if isinstance(resolved_value, (list, dict)) else 'N/A'}")
+                            
+                        # Second, try to get from execution_results
                         elif step_num <= len(execution_results):
-                            # Try to get from execution results
                             result = execution_results[step_num - 1]
                             if result.success and result.result:
                                 resolved_value = result.result
-                                logger.info(f"Resolved {value} from execution results: {str(resolved_value)[:100]}...")
-                                resolved_params[key] = resolved_value
+                                logger.info(f"🔧 DEPENDENCY_RESOLUTION: Found in execution_results: {type(resolved_value)} with length: {len(resolved_value) if isinstance(resolved_value, (list, dict)) else 'N/A'}")
                             else:
-                                logger.warning(f"Could not resolve {value}: step failed or no result")
-                                resolved_params[key] = value
+                                logger.warning(f"🔧 DEPENDENCY_RESOLUTION: Step {step_num} failed or has no result: success={result.success if result else 'None'}")
+                                
+                        if resolved_value is not None:
+                            # ✅ ENHANCED: Validate and transform data for specific tool compatibility
+                            if key == "data" and "visualization" in tool_id:
+                                # Special handling for visualization tool data parameter
+                                resolved_value = self._ensure_visualization_data_format(resolved_value)
+                                logger.info(f"🔧 DEPENDENCY_RESOLUTION: Transformed data for visualization: {type(resolved_value)} with {len(resolved_value) if isinstance(resolved_value, list) else 'N/A'} items")
+                            
+                            resolved_params[key] = resolved_value
+                            logger.info(f"🔧 DEPENDENCY_RESOLUTION: Successfully resolved {value} to data type: {type(resolved_value)}")
                         else:
-                            logger.warning(f"Could not resolve {value}: step not found")
-                            resolved_params[key] = value
+                            logger.error(f"🔧 DEPENDENCY_RESOLUTION: Could not resolve {value}: step not found or no result")
+                            # ✅ DEFENSIVE: Don't pass the placeholder string - this was causing the issue
+                            # Instead, pass None or an empty list depending on the parameter
+                            if key == "data":
+                                resolved_params[key] = []
+                                logger.warning(f"🔧 DEPENDENCY_RESOLUTION: Using empty list as fallback for data parameter")
+                            else:
+                                resolved_params[key] = None
+                                logger.warning(f"🔧 DEPENDENCY_RESOLUTION: Using None as fallback for {key} parameter")
+                            
                     except (ValueError, IndexError) as e:
-                        logger.warning(f"Could not parse step reference {value}: {e}")
-                        resolved_params[key] = value
+                        logger.error(f"🔧 DEPENDENCY_RESOLUTION: Could not parse step reference {value}: {e}")
+                        # ✅ DEFENSIVE: Don't pass invalid placeholders
+                        if key == "data":
+                            resolved_params[key] = []
+                        else:
+                            resolved_params[key] = None
                 else:
                     resolved_params[key] = value
             else:
                 resolved_params[key] = value
                 
+        logger.info(f"🔧 DEPENDENCY_RESOLUTION: Final resolved parameters: {list(resolved_params.keys())}")
         return resolved_params
+    
+    def _ensure_visualization_data_format(self, data: Any) -> List[Dict[str, Any]]:
+        """
+        Ensure data is in the correct format for visualization tools.
+        
+        The visualization tool expects List[Dict[str, Any]].
+        This method converts various data formats to the expected format.
+        
+        Args:
+            data: Data in various formats
+            
+        Returns:
+            Data formatted as List[Dict[str, Any]]
+        """
+        logger.info(f"🎨 DATA_FORMAT: Converting data type {type(data)} for visualization")
+        
+        # If already in correct format
+        if isinstance(data, list) and all(isinstance(item, dict) for item in data):
+            logger.info(f"🎨 DATA_FORMAT: Data already in correct format with {len(data)} items")
+            return data
+        
+        # If it's a pandas DataFrame (converted to dict)
+        if isinstance(data, dict) and any(key in data for key in ['data', 'rows', 'results']):
+            # Try to extract the actual data
+            for key in ['data', 'rows', 'results']:
+                if key in data and isinstance(data[key], list):
+                    logger.info(f"🎨 DATA_FORMAT: Extracted data from '{key}' field with {len(data[key])} items")
+                    return data[key]
+        
+        # If it's a single dictionary, wrap it in a list
+        if isinstance(data, dict):
+            logger.info(f"🎨 DATA_FORMAT: Wrapping single dict in list")
+            return [data]
+        
+        # If it's a list of non-dict items, convert to dict format
+        if isinstance(data, list):
+            converted_data = []
+            for i, item in enumerate(data):
+                if isinstance(item, dict):
+                    converted_data.append(item)
+                else:
+                    # Convert to dict with index and value
+                    converted_data.append({"index": i, "value": item})
+            logger.info(f"🎨 DATA_FORMAT: Converted list items to dict format with {len(converted_data)} items")
+            return converted_data
+        
+        # If it's a string (like CSV data), try to parse it
+        if isinstance(data, str):
+            try:
+                import pandas as pd
+                from io import StringIO
+                df = pd.read_csv(StringIO(data))
+                result = df.to_dict('records')
+                logger.info(f"🎨 DATA_FORMAT: Parsed CSV string to {len(result)} records")
+                return result
+            except Exception as e:
+                logger.warning(f"🎨 DATA_FORMAT: Could not parse string as CSV: {e}")
+        
+        # If it's a file path, try to read it
+        if isinstance(data, str) and data.startswith(('/tmp/', '/temp/', 'charts/')):
+            try:
+                import pandas as pd
+                import os
+                if os.path.exists(data):
+                    if data.endswith('.csv'):
+                        df = pd.read_csv(data)
+                        result = df.to_dict('records')
+                        logger.info(f"🎨 DATA_FORMAT: Read CSV file {data} to {len(result)} records")
+                        return result
+                    elif data.endswith('.json'):
+                        df = pd.read_json(data)
+                        result = df.to_dict('records')
+                        logger.info(f"🎨 DATA_FORMAT: Read JSON file {data} to {len(result)} records")
+                        return result
+            except Exception as e:
+                logger.warning(f"🎨 DATA_FORMAT: Could not read file {data}: {e}")
+        
+        # Fallback: create a simple data structure
+        logger.warning(f"🎨 DATA_FORMAT: Using fallback conversion for type {type(data)}")
+        if data is None:
+            return []
+        else:
+            return [{"value": str(data), "type": type(data).__name__}]
     
     def _validate_tool_parameters(self, tool_id: str, parameters: Dict[str, Any]) -> Dict[str, Any]:
         """Validate and enhance tool parameters before execution."""
@@ -492,7 +607,8 @@ class ToolExecutionNode:
                 return state
             
             # Create tool calls from execution plan
-            tool_calls = self._create_tool_calls_from_plan(execution_plan, state["user_query"])
+            session_id = state.get("metadata", {}).get("session_id")
+            tool_calls = self._create_tool_calls_from_plan(execution_plan, state["user_query"], session_id)
             
             logger.info(f"🔧 DEBUG: Created {len(tool_calls)} tool calls from execution plan")
             for i, tool_call in enumerate(tool_calls):
@@ -514,7 +630,8 @@ class ToolExecutionNode:
                     resolved_parameters = self._resolve_step_dependencies(
                         tool_call.parameters, 
                         step_outputs, 
-                        execution_results
+                        execution_results,
+                        tool_call.tool_id
                     )
                     
                     logger.info(f"🔧 DEBUG: Resolved parameters for {tool_call.tool_id}: {resolved_parameters}")
@@ -1113,24 +1230,35 @@ Write in a professional but accessible tone, as if explaining to a business stak
             "execution_notes": "Intelligent fallback execution plan with proper parameters"
         }
     
-    def _create_tool_calls_from_plan(self, execution_plan: Dict, user_query: str) -> List[ToolCall]:
+    def _create_tool_calls_from_plan(self, execution_plan: Dict, user_query: str, session_id: Optional[str] = None) -> List[ToolCall]:
         """Create tool calls from execution plan."""
         tool_calls = []
         
         logger.info(f"🔧 DEBUG: Creating tool calls from execution plan with {len(execution_plan.get('steps', []))} steps")
+        logger.info(f"🔧 DEBUG: Session ID for context injection: {session_id}")
         
         for step in execution_plan.get("steps", []):
             logger.info(f"🔧 DEBUG: Processing step: {step}")
             
+            # Get base parameters
+            parameters = step.get("parameters", {}).copy()
+            
+            # ✅ INJECT SESSION_ID: Add session_id for tools that need it
+            tool_id = step["tool_id"]
+            if session_id and "visualization" in tool_id:
+                parameters["session_id"] = session_id
+                logger.info(f"🔧 SESSION_INJECTION: Injected session_id '{session_id}' into {tool_id} parameters")
+            
             tool_call = ToolCall(
                 call_id=f"call_{int(time.time())}_{step['step_number']}",
-                tool_id=step["tool_id"],
-                parameters=step.get("parameters", {}),
+                tool_id=tool_id,
+                parameters=parameters,
                 context={
                     "user_query": user_query,
                     "step_description": step.get("description", ""),
                     "step_number": step["step_number"],
-                    "depends_on": step.get("depends_on", [])
+                    "depends_on": step.get("depends_on", []),
+                    "session_id": session_id  # Also add to context for reference
                 }
             )
             

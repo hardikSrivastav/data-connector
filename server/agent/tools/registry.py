@@ -1142,7 +1142,7 @@ class ToolRegistry:
     
     async def register_general_tools(self) -> List[Dict[str, Any]]:
         """Register general-purpose tools."""
-        from .general_tools import TextProcessingTools, DataValidationTools, FileSystemTools, UtilityTools
+        from .general_tools import TextProcessingTools, DataValidationTools, FileSystemTools, UtilityTools, VisualizationTools
         
         tools = []
         
@@ -1239,6 +1239,26 @@ class ToolRegistry:
                 "category": ToolCategory.UTILITY.value,
                 "function": UtilityTools.format_timestamp,
                 "parameters": {"timestamp": "any", "format_str": "str"}
+            }
+        ])
+        
+        # Register visualization tools
+        tools.extend([
+            {
+                "tool_id": "visualization.create_visualization",
+                "name": "Create Visualization",
+                "description": "Create intelligent visualizations based on data analysis and chart selection",
+                "category": ToolCategory.VISUALIZATION.value,
+                "function": VisualizationTools.create_visualization,
+                "parameters": {
+                    "data": "list", 
+                    "chart_type": "str", 
+                    "title": "str", 
+                    "user_query": "str",
+                    "session_id": "str",  # NEW: Add session_id parameter for associating saved files
+                    "save_to_file": "bool",
+                    "output_filename": "str"
+                }
             }
         ])
         

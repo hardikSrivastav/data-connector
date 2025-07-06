@@ -104,7 +104,7 @@ class ChartSelectionEngine:
             elif categorical_vars and numeric_vars:
                 compatible.extend(['bar_chart', 'column_chart', 'box_plot'])
             elif len(numeric_vars) >= 2:
-                    compatible.extend(['scatter_plot', 'line_chart'])
+                    compatible.extend(['scatter', 'line_chart'])
         
         # Multi-variable analysis
         elif analysis.dimensionality.variable_count > 2:
@@ -116,7 +116,7 @@ class ChartSelectionEngine:
         
         # Ensure we always have some options
         if not compatible:
-            compatible = ['bar_chart', 'line_chart', 'scatter_plot']
+            compatible = ['bar_chart', 'line_chart', 'scatter']
         
         return compatible
     
@@ -172,7 +172,7 @@ class ChartSelectionEngine:
             score += 0.2
         elif chart_type in ['bar_chart', 'column_chart'] and has_categorical and has_numeric:
             score += 0.2
-        elif chart_type == 'scatter_plot' and len([vt for vt in analysis.variable_types.values() if vt.data_type == "continuous"]) >= 2:
+        elif chart_type == 'scatter' and len([vt for vt in analysis.variable_types.values() if vt.data_type == "continuous"]) >= 2:
             score += 0.2
         elif chart_type in ['pie_chart', 'donut_chart'] and has_categorical and not has_temporal:
             score += 0.1
@@ -185,7 +185,7 @@ class ChartSelectionEngine:
         
         # Style preferences
         if preferences.preferred_style == 'modern':
-            if chart_type in ['area_chart', 'scatter_plot', 'heatmap']:
+            if chart_type in ['area_chart', 'scatter', 'heatmap']:
                 score += 0.05
         elif preferences.preferred_style == 'classic':
             if chart_type in ['bar_chart', 'line_chart', 'pie_chart']:
@@ -220,7 +220,7 @@ class ChartSelectionEngine:
         rationales = {
             'line_chart': "Ideal for showing trends over time or continuous data relationships",
             'bar_chart': "Perfect for comparing categories or discrete values",
-            'scatter_plot': "Best for exploring relationships between two continuous variables",
+            'scatter': "Best for exploring relationships between two continuous variables",
             'pie_chart': "Good for showing proportions of a whole with few categories",
             'area_chart': "Effective for showing cumulative totals over time",
             'histogram': "Ideal for showing distribution of a single continuous variable",
@@ -266,7 +266,7 @@ class ChartSelectionEngine:
         base_times = {
             'bar_chart': 0.1,
             'line_chart': 0.05,
-            'scatter_plot': 0.2,
+            'scatter': 0.2,
             'pie_chart': 0.05,
             'heatmap': 0.3,
             'histogram': 0.1

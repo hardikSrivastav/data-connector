@@ -685,4 +685,231 @@ class UtilityTools:
             
         except Exception as e:
             logger.error(f"Failed to format timestamp: {e}")
-            raise 
+            raise
+
+class VisualizationTools:
+    """Visualization and chart generation tools."""
+    
+    @staticmethod
+    async def create_visualization(
+        data: List[Dict[str, Any]], 
+        chart_type: Optional[str] = None,
+        title: Optional[str] = None,
+        user_query: Optional[str] = None,
+        session_id: Optional[str] = None,
+        save_to_file: bool = True,
+        output_filename: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """
+        Create intelligent visualizations based on data analysis.
+        
+        This tool automatically analyzes the provided data and creates appropriate
+        charts using the existing visualization system. The LLM can call this tool
+        whenever it determines that data would benefit from visualization.
+        
+        Args:
+            data: List of dictionaries containing the data to visualize
+            chart_type: Optional specific chart type to use (scatter, line, bar, pie, histogram, box, heatmap)
+            title: Optional title for the chart
+            user_query: Optional user query context for better chart selection
+            session_id: Optional session ID for associating saved chart files with specific query sessions
+            save_to_file: Whether to save the chart config to a JSON file (default: True)
+            output_filename: Optional filename for the saved JSON file (auto-generated if not provided)
+            
+        Returns:
+            Visualization configuration and metadata
+        """
+        logger.info(f"Creating visualization for {len(data)} data points")
+        logger.info(f"Requested chart type: {chart_type}")
+        logger.info(f"User query context: {user_query}")
+        
+        try:
+            # Import visualization components
+            import pandas as pd
+            from ..visualization.types import VisualizationDataset, UserPreferences
+            from ..visualization.analyzer import DataAnalysisModule
+            from ..visualization.selector import ChartSelectionEngine
+            from ..visualization.generator import PlotlyConfigGenerator
+            from ..llm.client import get_llm_client
+            
+            # Convert data to DataFrame
+            if not data or not isinstance(data, list):
+                return {
+                    "success": False,
+                    "error": "No valid data provided for visualization",
+                    "visualization_created": False
+                }
+            
+            df = pd.DataFrame(data)
+            if df.empty:
+                return {
+                    "success": False,
+                    "error": "Empty dataset provided",
+                    "visualization_created": False
+                }
+            
+            logger.info(f"DataFrame created: {df.shape[0]} rows, {df.shape[1]} columns")
+            logger.info(f"Columns: {list(df.columns)}")
+            
+            # Create visualization dataset
+            dataset = VisualizationDataset(
+                data=df,
+                columns=list(df.columns),
+                metadata={
+                    "source": "tool_call",
+                    "user_query": user_query or "Data visualization requested",
+                    "requested_chart_type": chart_type,
+                    "session_id": session_id
+                },
+                source_info={
+                    "origin": "tool_call",
+                    "data_points": len(df),
+                    "creation_time": f"{pd.Timestamp.now()}"
+                }
+            )
+            
+            # Initialize visualization components
+            llm_client = get_llm_client()
+            data_analyzer = DataAnalysisModule(llm_client)
+            chart_selector = ChartSelectionEngine(llm_client)
+            config_generator = PlotlyConfigGenerator()
+            
+            # Step 1: Analyze the data
+            logger.info("Step 1: Analyzing data characteristics")
+            analysis_result = await data_analyzer.analyze_dataset(
+                dataset,
+                user_query or "Data visualization analysis",
+                "visualization_tool"
+            )
+            
+            # Step 2: Select optimal chart type
+            logger.info("Step 2: Selecting optimal chart type")
+            user_preferences = UserPreferences(
+                preferred_style="modern",
+                performance_priority="medium",
+                interactivity_level="medium"
+            )
+            
+            chart_selection = await chart_selector.select_optimal_chart(
+                analysis_result,
+                user_preferences,
+                "visualization_tool"
+            )
+            
+            selected_chart_type = chart_selection.primary_chart.chart_type
+            logger.info(f"Selected chart type: {selected_chart_type}")
+            
+            # Step 3: Generate chart configuration
+            logger.info("Step 3: Generating chart configuration")
+            chart_config = await config_generator.generate_config(
+                selected_chart_type,
+                dataset,
+                chart_selection.primary_chart,
+                customizations={"title": title} if title else {}
+            )
+            
+            # Step 4: Prepare visualization response
+            visualization_result = {
+                "success": True,
+                "visualization_created": True,
+                "chart_config": {
+                    "data": chart_config.data,
+                    "layout": chart_config.layout,
+                    "config": chart_config.config,
+                    "type": chart_config.type
+                },
+                "dataset_info": {
+                    "size": len(df),
+                    "columns": list(df.columns),
+                    "shape": df.shape
+                },
+                "analysis_summary": {
+                    "chart_type": selected_chart_type,
+                    "data_types": analysis_result.variable_types,
+                    "rationale": chart_selection.rationale
+                },
+                "performance_metrics": {
+                    "chart_type": selected_chart_type,
+                    "data_points": len(df),
+                    "performance_mode": chart_config.performance_mode
+                },
+                "visualization_intent": f"Created {selected_chart_type} visualization for {len(df)} data points"
+            }
+            
+            # Step 5: Save chart config to JSON file if requested
+            if save_to_file:
+                try:
+                    import json
+                    import os
+                    from datetime import datetime
+                    
+                    # Generate filename if not provided
+                    if not output_filename:
+                        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                        safe_chart_type = selected_chart_type.replace(" ", "_").lower()
+                        output_filename = f"chart_config_{safe_chart_type}_{timestamp}.json"
+                    
+                    # Ensure the filename has .json extension
+                    if not output_filename.endswith('.json'):
+                        output_filename += '.json'
+                    
+                    # Create charts directory if it doesn't exist
+                    charts_dir = "charts"
+                    os.makedirs(charts_dir, exist_ok=True)
+                    
+                    # Full path for the output file
+                    file_path = os.path.join(charts_dir, output_filename)
+                    
+                    # Prepare comprehensive data for saving
+                    chart_export_data = {
+                        "metadata": {
+                            "generated_at": datetime.now().isoformat(),
+                            "chart_type": selected_chart_type,
+                            "data_points": len(df),
+                            "user_query": user_query or "Data visualization requested",
+                            "session_id": session_id,
+                            "tool_version": "1.0.0"
+                        },
+                        "chart_config": visualization_result["chart_config"],
+                        "dataset_info": visualization_result["dataset_info"],
+                        "analysis_summary": visualization_result["analysis_summary"],
+                        "raw_data": data  # Include original data for reference
+                    }
+                    
+                    # Save to file
+                    with open(file_path, 'w', encoding='utf-8') as f:
+                        json.dump(chart_export_data, f, indent=2, ensure_ascii=False, default=str)
+                    
+                    # Add file info to result
+                    visualization_result["file_saved"] = True
+                    visualization_result["file_path"] = file_path
+                    visualization_result["file_size_kb"] = round(os.path.getsize(file_path) / 1024, 2)
+                    
+                    logger.info(f"Chart config saved to: {file_path}")
+                    
+                except Exception as save_error:
+                    logger.warning(f"Failed to save chart config to file: {save_error}")
+                    visualization_result["file_saved"] = False
+                    visualization_result["save_error"] = str(save_error)
+            else:
+                visualization_result["file_saved"] = False
+            
+            logger.info(f"Visualization created successfully: {selected_chart_type} chart with {len(df)} data points")
+            return visualization_result
+            
+        except Exception as e:
+            logger.error(f"Failed to create visualization: {e}", exc_info=True)
+            return {
+                "success": False,
+                "error": f"Visualization creation failed: {str(e)}",
+                "visualization_created": False
+            }
+
+# Export all tool classes for registration
+__all__ = [
+    'TextProcessingTools',
+    'DataValidationTools', 
+    'FileSystemTools',
+    'UtilityTools',
+    'VisualizationTools'
+] 

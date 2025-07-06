@@ -76,7 +76,8 @@ class PlotlyConfigGenerator:
     
     async def _generate_scatter_config(self, dataset: VisualizationDataset, 
                                      recommendation: ChartRecommendation,
-                                     customizations: Dict[str, Any]) -> PlotlyConfig:
+                                     customizations: Dict[str, Any],
+                                     session_id: str = None) -> PlotlyConfig:
         """Generate scatter plot configuration"""
         
         data_mapping = recommendation.data_mapping
@@ -150,7 +151,8 @@ class PlotlyConfigGenerator:
     
     async def _generate_line_config(self, dataset: VisualizationDataset,
                                   recommendation: ChartRecommendation,
-                                  customizations: Dict[str, Any]) -> PlotlyConfig:
+                                  customizations: Dict[str, Any],
+                                  session_id: str = None) -> PlotlyConfig:
         """Generate line chart configuration"""
         
         data_mapping = recommendation.data_mapping
@@ -200,7 +202,8 @@ class PlotlyConfigGenerator:
     
     async def _generate_bar_config(self, dataset: VisualizationDataset,
                                  recommendation: ChartRecommendation,
-                                 customizations: Dict[str, Any]) -> PlotlyConfig:
+                                 customizations: Dict[str, Any],
+                                 session_id: str = None) -> PlotlyConfig:
         """Generate bar chart configuration"""
         
         data_mapping = recommendation.data_mapping
@@ -250,7 +253,8 @@ class PlotlyConfigGenerator:
     
     async def _generate_histogram_config(self, dataset: VisualizationDataset,
                                        recommendation: ChartRecommendation,
-                                       customizations: Dict[str, Any]) -> PlotlyConfig:
+                                       customizations: Dict[str, Any],
+                                       session_id: str = None) -> PlotlyConfig:
         """Generate histogram configuration"""
         
         data_mapping = recommendation.data_mapping
@@ -291,7 +295,8 @@ class PlotlyConfigGenerator:
     
     async def _generate_pie_config(self, dataset: VisualizationDataset,
                                  recommendation: ChartRecommendation,
-                                 customizations: Dict[str, Any]) -> PlotlyConfig:
+                                 customizations: Dict[str, Any],
+                                 session_id: str = None) -> PlotlyConfig:
         """Generate pie chart configuration"""
         
         data_mapping = recommendation.data_mapping
@@ -342,7 +347,8 @@ class PlotlyConfigGenerator:
     
     async def _generate_box_config(self, dataset: VisualizationDataset,
                                  recommendation: ChartRecommendation,
-                                 customizations: Dict[str, Any]) -> PlotlyConfig:
+                                 customizations: Dict[str, Any],
+                                 session_id: str = None) -> PlotlyConfig:
         """Generate box plot configuration"""
         
         data_mapping = recommendation.data_mapping

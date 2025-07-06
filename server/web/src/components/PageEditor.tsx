@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { flushSync } from 'react-dom';
-import { Page, Workspace, Block } from '@/types';
+import { Page, Workspace, Block, ReasoningChainEvent } from '@/types';
 import { BlockEditor } from './BlockEditor';
 import { EmojiPicker } from './EmojiPicker';
 import { BottomStatusBar } from './BottomStatusBar';
@@ -37,12 +37,7 @@ interface PageEditorProps {
 }
 
 // Enhanced reasoning chain interface for better typing
-interface ReasoningChainEvent {
-  type: 'status' | 'progress' | 'error' | 'complete' | 'partial_sql' | 'analysis_chunk' | 'classifying' | 'database_selected' | 'schema_loading' | 'query_generating' | 'query_executing' | 'partial_results' | 'planning' | 'aggregating';
-  message: string;
-  timestamp: string;
-  metadata?: any;
-}
+// ✅ Remove local interface - use global ReasoningChainEvent from types/index.ts
 
 interface ReasoningChainData {
   events: ReasoningChainEvent[];
@@ -1198,16 +1193,36 @@ export const PageEditor = ({
         onDetailedReasoningEvent: (event) => {
           console.log(`🧠 PageEditor: Received detailed reasoning event: ${event.type}`, event);
           
-          // Update streaming state with detailed reasoning event
+          // ✅ ENHANCED: Log visualization events with special attention
+          if (['chart_config_json', 'hybrid_chart_config_json', 'visualization_created'].includes(event.type)) {
+            console.log(`🎨 PageEditor: ✅ PROCESSING VISUALIZATION EVENT:`, {
+              type: event.type,
+              sessionId: event.session_id,
+              hasChartConfig: !!event.chart_config,
+              hasMetadata: !!event.metadata,
+              hasMetadataChartConfig: !!event.metadata?.chart_config,
+              eventKeys: Object.keys(event),
+              metadataKeys: event.metadata ? Object.keys(event.metadata) : []
+            });
+          }
+          
+          // ✅ Type guard: Ensure event type is valid before adding to history
+          const eventType = event.type as ReasoningChainEvent['type'];
+          
+          // Update streaming state with detailed reasoning event (use type casting for debugging)
           setStreamingState(prev => ({
             ...prev,
             status: event.message || `Processing ${event.type}...`,
             history: [...prev.history, {
-              type: event.type as any, // Cast to allow new event types
-              message: event.message || '',
+              type: 'status' as any, // Use status type for compatibility
+              message: event.message || `${event.type}: Processing...`,
               timestamp: event.timestamp,
               metadata: {
                 // Pass through all the detailed event data
+                originalEventType: event.type,
+                timestamp: event.timestamp,
+                session_id: event.session_id,
+                message: event.message,
                 query_number: event.query_number,
                 source: event.source,
                 query_text: event.query_text,
@@ -1228,18 +1243,66 @@ export const PageEditor = ({
                 confidence_score: event.confidence_score,
                 sources_used: event.sources_used,
                 synthesis_preview: event.synthesis_preview,
+                // Include visualization-specific fields
+                chart_config: event.chart_config,
+                metadata: event.metadata,
                 ...event // Include any other fields
               }
             }]
           }));
 
-          // Also add to reasoning chain with more specific typing
-          addReasoningChainEvent(sessionId, {
-            type: 'status' as any, // Map to allowed types for now
-            message: event.message || `${event.type}: Processing...`,
-            timestamp: event.timestamp,
-            metadata: event
-          });
+          // ✅ CRITICAL FIX: Preserve original event types for CanvasWorkspace to find them
+          // Special handling for visualization events that CanvasWorkspace needs to detect
+          if (['chart_config_json', 'hybrid_chart_config_json', 'visualization_created', 'visualization_complete'].includes(event.type)) {
+            console.log(`🎨 PageEditor: ✅ ADDING VISUALIZATION EVENT TO REASONING CHAIN:`, {
+              originalType: event.type,
+              sessionId: event.session_id,
+              hasChartConfig: !!event.chart_config,
+              hasMetadata: !!event.metadata,
+              hasMetadataChartConfig: !!event.metadata?.chart_config
+            });
+            
+            // ✅ ENHANCED DEBUG: Log the exact metadata structure being created
+            const metadataToStore = {
+              ...event.metadata, // Include the metadata with chart_config
+              // Also include direct event properties for backwards compatibility
+              chart_config: event.chart_config || event.metadata?.chart_config,
+              chart_type: event.chart_type,
+              dataset_size: event.dataset_size,
+              intent: event.intent,
+              file_path: event.file_path,
+              json_size: event.json_size,
+              originalEventData: event
+            };
+            
+            console.log(`🎨 PageEditor: ✅ METADATA STRUCTURE BEING STORED:`, {
+              metadataKeys: Object.keys(metadataToStore),
+              hasChartConfig: !!metadataToStore.chart_config,
+              chartConfigKeys: metadataToStore.chart_config ? Object.keys(metadataToStore.chart_config) : [],
+              chartConfigPreview: metadataToStore.chart_config ? JSON.stringify(metadataToStore.chart_config).substring(0, 150) + '...' : 'null',
+              originalEventMetadata: event.metadata,
+              directEventChartConfig: event.chart_config
+            });
+            
+            // Add with original type so CanvasWorkspace can find it
+            addReasoningChainEvent(sessionId, {
+              type: event.type as any, // ✅ PRESERVE ORIGINAL TYPE!
+              message: event.message || `${event.type}: Processing...`,
+              timestamp: event.timestamp,
+              metadata: metadataToStore
+            });
+          } else {
+            // For non-visualization events, use status type for compatibility
+            addReasoningChainEvent(sessionId, {
+              type: 'status' as any,
+              message: event.message || `${event.type}: Processing...`,
+              timestamp: event.timestamp,
+              metadata: {
+                originalEventType: event.type,
+                ...event
+              }
+            });
+          }
         },
         
         onPlanning: (step, operationsPlanned) => {
@@ -1293,6 +1356,45 @@ export const PageEditor = ({
           console.log(`🎯 PageEditor: Query completed with sessionId: ${sessionId}`);
           console.log(`🎯 PageEditor: Results:`, results);
           
+          // ✅ ENHANCED DEBUG: Log complete results structure including visualization data
+          console.log(`🎯 PageEditor: ✅ COMPLETE RESULTS DEBUGGING:`);
+          console.log(`🎯   - Results type: ${typeof results}`);
+          console.log(`🎯   - Results keys: ${results ? Object.keys(results) : 'null'}`);
+          console.log(`🎯   - Has rows: ${!!results?.rows} (length: ${results?.rows?.length || 0})`);
+          console.log(`🎯   - Has analysis: ${!!results?.analysis} (length: ${results?.analysis?.length || 0})`);
+          console.log(`🎯   - Has SQL: ${!!results?.sql} (length: ${results?.sql?.length || 0})`);
+          console.log(`🎯   - Has captured data: ${!!results?.captured_data}`);
+          console.log(`🎯   - Has visualization data: ${!!results?.visualization_data} (length: ${results?.visualization_data?.length || 0})`);
+          console.log(`🎯   - Has complete chart config: ${!!results?.complete_chart_config}`);
+          console.log(`🎯   - Has chart JSON file path: ${!!results?.chart_json_file_path}`);
+          
+          // ✅ ENHANCED DEBUG: Detailed visualization data logging
+          if (results?.visualization_data && results.visualization_data.length > 0) {
+            console.log(`🎨 PageEditor: ✅ VISUALIZATION DATA FOUND IN RESULTS!`);
+            console.log(`🎨   - Visualization data length: ${results.visualization_data.length}`);
+            results.visualization_data.forEach((viz, index) => {
+              console.log(`🎨   - [${index}] Type: ${viz.type}, Chart: ${viz.chartType || 'N/A'}`);
+              console.log(`🎨   - [${index}] Has chart config: ${!!viz.chartConfig}`);
+              console.log(`🎨   - [${index}] Keys: ${Object.keys(viz)}`);
+              if (viz.chartConfig) {
+                console.log(`🎨   - [${index}] Chart config keys: ${Object.keys(viz.chartConfig)}`);
+                console.log(`🎨   - [${index}] Chart config preview: ${JSON.stringify(viz.chartConfig).substring(0, 100)}...`);
+              }
+            });
+          } else {
+            console.log(`🎨 PageEditor: ❌ NO VISUALIZATION DATA FOUND IN RESULTS`);
+          }
+          
+          if (results?.complete_chart_config) {
+            console.log(`🎨 PageEditor: ✅ COMPLETE CHART CONFIG FOUND:`);
+            console.log(`🎨   - Config keys: ${Object.keys(results.complete_chart_config)}`);
+            console.log(`🎨   - Config preview: ${JSON.stringify(results.complete_chart_config).substring(0, 200)}...`);
+          }
+          
+          if (results?.chart_json_file_path) {
+            console.log(`🎨 PageEditor: ✅ CHART JSON FILE PATH: ${results.chart_json_file_path}`);
+          }
+          
           // Update reasoning chain as complete
           if (sessionId && activeReasoningChains.has(sessionId)) {
             const reasoningChain = activeReasoningChains.get(sessionId);
@@ -1301,6 +1403,21 @@ export const PageEditor = ({
               reasoningChain.status = 'completed';
               reasoningChain.progress = 1.0;
               reasoningChain.lastUpdated = new Date().toISOString();
+              
+              // ✅ ENHANCED: Add visualization data to reasoning chain
+              if (results?.visualization_data && results.visualization_data.length > 0) {
+                console.log(`🎨 PageEditor: Adding visualization data to reasoning chain`);
+                reasoningChain.events.push({
+                  type: 'visualization_data',
+                  message: `Found ${results.visualization_data.length} visualization events`,
+                  timestamp: new Date().toISOString(),
+                  metadata: {
+                    visualization_data: results.visualization_data,
+                    complete_chart_config: results.complete_chart_config,
+                    chart_json_file_path: results.chart_json_file_path
+                  }
+                } as any);
+              }
               
               // Save completed reasoning chain
               try {
@@ -1346,8 +1463,19 @@ export const PageEditor = ({
               // pageId will be set to Canvas page when it's created
             },
             originalQuery: query,
-            originalPageId: page.id  // Store original page reference
+            originalPageId: page.id,  // Store original page reference
+            // ✅ ENHANCED: Add visualization data to canvas data
+            visualizationData: results?.visualization_data || [],
+            completeChartConfig: results?.complete_chart_config || null,
+            chartJsonFilePath: results?.chart_json_file_path || null
           };
+          
+          console.log(`🎯 PageEditor: Enhanced canvas data with visualization:`, {
+            hasVisualizationData: !!fullCanvasData.visualizationData?.length,
+            visualizationDataLength: fullCanvasData.visualizationData?.length || 0,
+            hasCompleteChartConfig: !!fullCanvasData.completeChartConfig,
+            hasChartJsonFilePath: !!fullCanvasData.chartJsonFilePath
+          });
           
           // Create analysis commit for Canvas system integration
           if (sessionId && extractedCanvasData.fullAnalysis) {

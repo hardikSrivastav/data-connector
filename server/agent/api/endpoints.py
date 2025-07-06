@@ -1867,42 +1867,19 @@ async def get_database_summary():
 @router.post("/visualization/analyze", response_model=VisualizationAnalysisResponse)
 async def analyze_for_visualization(request: VisualizationAnalysisRequest):
     """
-    Analyze dataset and suggest optimal visualizations - Enhanced with real data
+    Analyze dataset and suggest optimal visualizations - Using general tools
     """
     session_id = f"viz_analyze_{int(time.time())}"
-    
-    # Create dedicated chart generation logger
-    chart_logger = logging.getLogger('chart_generation')
-    if not chart_logger.handlers:
-        chart_handler = logging.FileHandler('chart_generation.log')
-        chart_handler.setLevel(logging.DEBUG)
-        formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-        chart_handler.setFormatter(formatter)
-        chart_logger.addHandler(chart_handler)
-        chart_logger.setLevel(logging.DEBUG)
-    
     start_time = time.time()
-    chart_logger.info(f"[{session_id}] === ENHANCED VISUALIZATION ANALYSIS API STARTED ===")
-    chart_logger.info(f"[{session_id}] User intent: '{request.user_intent}'")
-    chart_logger.info(f"[{session_id}] Dataset keys: {list(request.dataset.keys())}")
-    chart_logger.info(f"[{session_id}] User preferences: {request.preferences}")
     
     logger.info(f"📊 Analyzing dataset for visualization: {request.user_intent}")
     
     try:
-        # Import visualization modules
-        chart_logger.info(f"[{session_id}] Step 1: Importing visualization modules...")
-        from ..visualization.analyzer import DataAnalysisModule
-        from ..visualization.selector import ChartSelectionEngine
-        from ..visualization.types import VisualizationDataset, UserPreferences
-        
-        # Step 2: Get real data using cross-database query engine
-        chart_logger.info(f"[{session_id}] Step 2: Fetching real data via cross-database query...")
+        # Step 1: Get real data using cross-database query engine
         import pandas as pd
         
         # Check if dataset contains actual data or if we need to fetch it
         if 'data' in request.dataset and request.dataset['data']:
-            chart_logger.info(f"[{session_id}] Using provided dataset")
             # Use provided data
             if isinstance(request.dataset['data'], list):
                 df = pd.DataFrame(request.dataset['data'])
@@ -1910,21 +1887,16 @@ async def analyze_for_visualization(request: VisualizationAnalysisRequest):
                 df = pd.DataFrame(request.dataset['data'])
         else:
             # Fetch real data using the user intent as a query
-            chart_logger.info(f"[{session_id}] Fetching data via cross-database query: '{request.user_intent}'")
             try:
-                # Use the enhanced process_ai_query function to get real data
                 result = await process_ai_query(
                     question=request.user_intent,
-                    analyze=False,  # We'll do visualization analysis instead
-                    cross_database=True  # Enable cross-database queries
+                    analyze=False,
+                    cross_database=True
                 )
                 
                 if result.get("success") and result.get("rows"):
                     df = pd.DataFrame(result["rows"])
-                    chart_logger.info(f"[{session_id}] Real data fetched: {len(df)} rows, {len(df.columns)} columns")
-                    chart_logger.debug(f"[{session_id}] Columns: {list(df.columns)}")
                 else:
-                    chart_logger.warning(f"[{session_id}] No data returned from query, using sample data")
                     # Fallback to sample data
                     sample_data = [
                         {"category": "A", "value": 10, "date": "2024-01-01"},
@@ -1936,7 +1908,7 @@ async def analyze_for_visualization(request: VisualizationAnalysisRequest):
                     df = pd.DataFrame(sample_data)
                     
             except Exception as query_error:
-                chart_logger.error(f"[{session_id}] Error fetching real data: {str(query_error)}")
+                logger.error(f"Error fetching real data: {str(query_error)}")
                 # Fallback to sample data
                 sample_data = [
                     {"category": "A", "value": 10, "date": "2024-01-01"},
@@ -1947,123 +1919,78 @@ async def analyze_for_visualization(request: VisualizationAnalysisRequest):
                 ]
                 df = pd.DataFrame(sample_data)
         
-        # Create VisualizationDataset
-        dataset = VisualizationDataset(
-            data=df,
-            columns=list(df.columns),
-            metadata={"source": "cross_database_query", "session_id": session_id},
-            source_info={"origin": "enhanced_api", "query": request.user_intent}
+        # Step 2: Use the visualization tool from general_tools
+        from ..tools.general_tools import VisualizationTools
+        
+        data_for_viz = df.to_dict('records')
+        suggested_chart_type = _suggest_chart_type(df, request.user_intent)
+        
+        # Create visualization using the general tool
+        viz_result = await VisualizationTools.create_visualization(
+            data=data_for_viz,
+            chart_type=suggested_chart_type,
+            title=f"Visualization for: {request.user_intent}",
+            user_query=request.user_intent,
+            save_to_file=False  # Don't save file for analysis endpoint
         )
-        chart_logger.info(f"[{session_id}] Dataset created: {len(df)} rows, {len(df.columns)} columns")
         
-        # Get LLM client for analysis
-        chart_logger.info(f"[{session_id}] Step 3: Initializing LLM client...")
-        llm_client = get_llm_client()
-        chart_logger.info(f"[{session_id}] LLM client type: {type(llm_client).__name__}")
+        # Step 3: Build analysis response
+        estimated_render_time = _estimate_render_time(len(df), suggested_chart_type)
         
-        # Analyze dataset
-        chart_logger.info(f"[{session_id}] Step 4: Starting dataset analysis...")
-        analyzer = DataAnalysisModule(llm_client)
-        analysis_result = await analyzer.analyze_dataset(dataset, request.user_intent, session_id)
-        chart_logger.info(f"[{session_id}] Dataset analysis completed")
-        
-        # Get chart recommendations
-        chart_logger.info(f"[{session_id}] Step 5: Starting chart selection...")
-        selector = ChartSelectionEngine(llm_client)
-        
-        # Create proper UserPreferences object
-        user_prefs = UserPreferences(
-            preferred_style=request.preferences.get('style', 'modern'),
-            performance_priority=request.preferences.get('performance', 'medium'),
-            interactivity_level=request.preferences.get('interactivity', 'medium')
-        )
-        chart_logger.debug(f"[{session_id}] User preferences: {user_prefs}")
-        
-        chart_selection = await selector.select_optimal_chart(analysis_result, user_prefs, session_id)
-        chart_logger.info(f"[{session_id}] Chart selection completed")
-        
-        # Estimate render time
-        chart_logger.info(f"[{session_id}] Step 6: Estimating render time...")
-        estimated_render_time = _estimate_render_time(analysis_result.dataset_size, chart_selection.primary_chart.chart_type)
-        chart_logger.info(f"[{session_id}] Estimated render time: {estimated_render_time:.2f}s")
-        
-        # Build response
-        chart_logger.info(f"[{session_id}] Step 7: Building API response...")
         response = VisualizationAnalysisResponse(
             analysis={
-                "dataset_size": analysis_result.dataset_size,
-                "variable_types": {k: v.__dict__ for k, v in analysis_result.variable_types.items()},
-                "dimensionality": analysis_result.dimensionality.__dict__,
-                "recommendations": analysis_result.recommendations
+                "dataset_size": len(df),
+                "variable_types": {col: str(df[col].dtype) for col in df.columns},
+                "dimensionality": {"columns": len(df.columns), "rows": len(df)},
+                "recommendations": ["Data suitable for visualization"]
             },
             recommendations={
                 "primary_chart": {
-                    "type": chart_selection.primary_chart.chart_type,
-                    "confidence": chart_selection.primary_chart.confidence_score,
-                    "rationale": chart_selection.primary_chart.rationale,
-                    "data_mapping": chart_selection.primary_chart.data_mapping
+                    "type": suggested_chart_type,
+                    "confidence": 0.8,
+                    "rationale": f"Suggested {suggested_chart_type} chart based on data structure",
+                    "data_mapping": {"x": df.columns[0] if len(df.columns) > 0 else "x",
+                                   "y": df.columns[1] if len(df.columns) > 1 else "y"}
                 },
                 "alternatives": [
-                    {
-                        "type": alt.chart_type,
-                        "confidence": alt.confidence_score,
-                        "rationale": alt.rationale
-                    } for alt in chart_selection.alternatives
+                    {"type": "bar", "confidence": 0.6, "rationale": "Alternative bar chart"},
+                    {"type": "line", "confidence": 0.5, "rationale": "Alternative line chart"}
                 ]
             },
             estimated_render_time=estimated_render_time
         )
         
         total_time = time.time() - start_time
-        chart_logger.info(f"[{session_id}] === VISUALIZATION ANALYSIS API COMPLETED ===")
-        chart_logger.info(f"[{session_id}] Total API time: {total_time:.2f}s")
-        chart_logger.info(f"[{session_id}] Primary chart type: {chart_selection.primary_chart.chart_type}")
+        logger.info(f"✅ Visualization analysis completed in {total_time:.2f}s")
         
         return response
         
     except Exception as e:
         error_time = time.time() - start_time
-        chart_logger.error(f"[{session_id}] === VISUALIZATION ANALYSIS API FAILED ===")
-        chart_logger.error(f"[{session_id}] Error after {error_time:.2f}s: {str(e)}")
-        chart_logger.exception(f"[{session_id}] Full error traceback:")
-        
-        logger.error(f"❌ Visualization analysis failed: {str(e)}")
+        logger.error(f"❌ Visualization analysis failed after {error_time:.2f}s: {str(e)}")
         logger.error(f"❌ Traceback: {traceback.format_exc()}")
         raise HTTPException(status_code=500, detail=f"Visualization analysis failed: {str(e)}")
 
 @router.post("/visualization/generate", response_model=ChartGenerationResponse)
 async def generate_chart_config(request: ChartGenerationRequest):
     """
-    Generate optimized Plotly configuration - Enhanced with real data
+    Generate optimized Plotly configuration - Using general tools
     """
     session_id = f"chart_gen_{int(time.time())}"
     logger.info(f"📈 Generating {request.chart_type} chart configuration")
     
-    # Add logging for chart generation
-    chart_logger = logging.getLogger('chart_generation')
-    chart_logger.info(f"[{session_id}] === CHART GENERATION API STARTED ===")
-    chart_logger.info(f"[{session_id}] Chart type: {request.chart_type}")
-    chart_logger.info(f"[{session_id}] Data keys: {list(request.data.keys())}")
-    
     try:
-        # Import visualization modules
-        from ..visualization.generator import PlotlyConfigGenerator, PlotlyOptimizer
-        from ..visualization.types import VisualizationDataset, ChartRecommendation
-        
-        # Convert request data to internal format
+        # Import general tools
+        from ..tools.general_tools import VisualizationTools
         import pandas as pd
-        
-        chart_logger.info(f"[{session_id}] Step 1: Processing input data...")
         
         # Use real data from request or fetch it
         if 'data' in request.data and request.data['data']:
-            chart_logger.info(f"[{session_id}] Using provided data")
             if isinstance(request.data['data'], list):
                 df = pd.DataFrame(request.data['data'])
             else:
                 df = pd.DataFrame(request.data['data'])
         else:
-            chart_logger.info(f"[{session_id}] No data provided, using sample data for chart type: {request.chart_type}")
             # Generate appropriate sample data based on chart type
             if request.chart_type in ['scatter', 'scatter_plot']:
                 sample_data = [
@@ -2087,59 +2014,27 @@ async def generate_chart_config(request: ChartGenerationRequest):
                 ]
             df = pd.DataFrame(sample_data)
         
-        chart_logger.info(f"[{session_id}] Data processed: {len(df)} rows, {len(df.columns)} columns")
-        chart_logger.debug(f"[{session_id}] Columns: {list(df.columns)}")
+        # Use the visualization tool to generate the chart
+        data_for_viz = df.to_dict('records')
         
-        dataset = VisualizationDataset(
-            data=df,
-            columns=list(df.columns),
-            metadata={"source": "chart_generation_api", "session_id": session_id},
-            source_info={"origin": "enhanced_chart_generation", "chart_type": request.chart_type}
-        )
-        
-        # Create mock recommendation
-        recommendation = ChartRecommendation(
+        viz_result = await VisualizationTools.create_visualization(
+            data=data_for_viz,
             chart_type=request.chart_type,
-            confidence_score=0.8,
-            rationale=f"Generated {request.chart_type} chart",
-            data_mapping={"x": "x", "y": "y"},
-            performance_score=0.9
+            title=request.customizations.get('title', f"{request.chart_type.title()} Chart"),
+            save_to_file=False  # Don't save file for API generation
         )
         
-        # Generate configuration
-        generator = PlotlyConfigGenerator()
-        base_config = await generator.generate_config(
-            chart_type=request.chart_type,
-            dataset=dataset,
-            recommendation=recommendation,
-            customizations=request.customizations
-        )
-        
-        # Apply performance optimizations
-        from ..visualization.types import RenderOptions
-        render_options = RenderOptions(
-            performance_mode=request.performance_requirements.get('performance_mode', False)
-        )
-        
-        optimizer = PlotlyOptimizer()
-        optimized_config = optimizer.optimize_for_performance(base_config, render_options)
-        
-        # Generate alternatives (simplified)
-        alternative_configs = []
+        # Extract the chart config from the visualization result
+        chart_config = viz_result.get("chart_config", {})
         
         return ChartGenerationResponse(
-            config={
-                "data": optimized_config.data,
-                "layout": optimized_config.layout,
-                "config": optimized_config.config,
-                "type": optimized_config.type
-            },
+            config=chart_config,
             performance_profile={
-                "estimated_render_time": _estimate_render_time(len(dataset.data), request.chart_type),
-                "memory_usage": "low" if len(dataset.data) < 1000 else "medium",
-                "optimization_applied": optimized_config.performance_mode
+                "estimated_render_time": _estimate_render_time(len(df), request.chart_type),
+                "memory_usage": "low" if len(df) < 1000 else "medium",
+                "optimization_applied": False
             },
-            alternative_configs=alternative_configs
+            alternative_configs=[]
         )
         
     except Exception as e:
@@ -2169,7 +2064,7 @@ class VisualizationQueryResponse(BaseModel):
 async def visualization_query(request: VisualizationQueryRequest, http_request: Request):
     """
     Direct connection: Query data and generate visualization in one call
-    This is the main endpoint for GraphingBlock to use
+    This is the main endpoint for GraphingBlock to use - Using general tools
     """
     # Get current user for audit and isolation
     current_user = await get_current_user_from_request(http_request)
@@ -2177,20 +2072,10 @@ async def visualization_query(request: VisualizationQueryRequest, http_request: 
     session_id = f"viz_query_{current_user}_{int(time.time())}"
     start_time = time.time()
     
-    # Setup logging
-    chart_logger = logging.getLogger('chart_generation')
-    chart_logger.info(f"[{session_id}] === DIRECT VISUALIZATION QUERY STARTED ===")
-    chart_logger.info(f"[{session_id}] User: {current_user}")
-    chart_logger.info(f"[{session_id}] User query: '{request.query}'")
-    chart_logger.info(f"[{session_id}] Auto generate: {request.auto_generate}")
-    chart_logger.info(f"[{session_id}] Chart preferences: {request.chart_preferences}")
-    
     logger.info(f"🎯 Direct visualization query for user {current_user}: {request.query}")
     
     try:
         # Step 1: Fetch real data using cross-database query
-        chart_logger.info(f"[{session_id}] Step 1: Fetching data via cross-database query...")
-        
         try:
             data_result = await process_ai_query(
                 question=request.query,
@@ -2199,21 +2084,16 @@ async def visualization_query(request: VisualizationQueryRequest, http_request: 
             )
             
             if not data_result.get("success") or not data_result.get("rows"):
-                chart_logger.warning(f"[{session_id}] Query returned no data, using sample data")
                 raise Exception("No data returned from query")
                 
             chart_data = data_result["rows"]
-            chart_logger.info(f"[{session_id}] Real data fetched: {len(chart_data)} rows")
             
         except Exception as data_error:
-            chart_logger.error(f"[{session_id}] Data fetch error: {str(data_error)}")
+            logger.error(f"Data fetch error: {str(data_error)}")
             # Fallback to sample data based on query intent
             chart_data = _generate_sample_data_for_query(request.query)
-            chart_logger.info(f"[{session_id}] Using sample data: {len(chart_data)} rows")
         
         # Step 2: Analyze data for visualization
-        chart_logger.info(f"[{session_id}] Step 2: Analyzing data for visualization...")
-        
         import pandas as pd
         df = pd.DataFrame(chart_data)
         
@@ -2225,30 +2105,33 @@ async def visualization_query(request: VisualizationQueryRequest, http_request: 
             "sample_data": df.head(3).to_dict('records') if len(df) > 0 else []
         }
         
-        chart_logger.info(f"[{session_id}] Data summary: {data_summary['row_count']} rows, {data_summary['column_count']} columns")
-        
-        # Step 3: Generate chart if requested
+        # Step 3: Generate chart if requested using general tools
         chart_config = None
         suggestions = []
         
         if request.auto_generate and len(df) > 0:
-            chart_logger.info(f"[{session_id}] Step 3: Auto-generating chart...")
-            
             try:
-                # Quick analysis for chart selection
-                suggested_chart_type = _suggest_chart_type(df, request.query)
-                chart_logger.info(f"[{session_id}] Suggested chart type: {suggested_chart_type}")
+                # Use the visualization tool from general_tools
+                from ..tools.general_tools import VisualizationTools
                 
-                # Generate chart configuration
-                chart_config = _generate_chart_config(df, suggested_chart_type, request.chart_preferences)
+                suggested_chart_type = _suggest_chart_type(df, request.query)
+                
+                # Create visualization using the general tool
+                viz_result = await VisualizationTools.create_visualization(
+                    data=chart_data,
+                    chart_type=suggested_chart_type,
+                    title=request.chart_preferences.get('title', f"Visualization for: {request.query}"),
+                    user_query=request.query,
+                    save_to_file=request.chart_preferences.get('save_to_file', False)
+                )
+                
+                chart_config = viz_result.get("chart_config", {})
                 
                 # Generate alternative suggestions
                 suggestions = _generate_chart_suggestions(df, request.query)
                 
-                chart_logger.info(f"[{session_id}] Chart config generated successfully")
-                
             except Exception as chart_error:
-                chart_logger.error(f"[{session_id}] Chart generation error: {str(chart_error)}")
+                logger.error(f"Chart generation error: {str(chart_error)}")
                 suggestions = [{"type": "bar", "confidence": 0.5, "rationale": "Default fallback"}]
         
         # Step 4: Performance metrics
@@ -2272,18 +2155,12 @@ async def visualization_query(request: VisualizationQueryRequest, http_request: 
             performance_metrics=performance_metrics
         )
         
-        chart_logger.info(f"[{session_id}] === DIRECT VISUALIZATION QUERY COMPLETED ===")
-        chart_logger.info(f"[{session_id}] Total time: {total_time:.2f}s")
-        chart_logger.info(f"[{session_id}] Chart generated: {chart_config is not None}")
+        logger.info(f"✅ Direct visualization query completed in {total_time:.2f}s")
         
         return response
         
     except Exception as e:
         error_time = time.time() - start_time
-        chart_logger.error(f"[{session_id}] === DIRECT VISUALIZATION QUERY FAILED ===")
-        chart_logger.error(f"[{session_id}] Error after {error_time:.2f}s: {str(e)}")
-        chart_logger.exception(f"[{session_id}] Full error traceback:")
-        
         logger.error(f"❌ Direct visualization query failed: {str(e)}")
         
         return VisualizationQueryResponse(
@@ -2353,90 +2230,7 @@ def _suggest_chart_type(df: pd.DataFrame, query: str) -> str:
     else:
         return 'line'
 
-def _generate_chart_config(df: pd.DataFrame, chart_type: str, preferences: Dict[str, Any]) -> Dict[str, Any]:
-    """Generate Plotly chart configuration with dark mode support"""
-    
-    # Check for dark mode preference
-    dark_mode = preferences.get("dark_mode", False)
-    
-    # Dark mode color scheme
-    dark_theme = {
-        "plot_bgcolor": "#1f2937",
-        "paper_bgcolor": "#111827",
-        "font": {"color": "#f9fafb"},
-        "xaxis": {
-            "gridcolor": "#374151",
-            "zerolinecolor": "#6b7280",
-            "tickcolor": "#9ca3af",
-            "linecolor": "#6b7280"
-        },
-        "yaxis": {
-            "gridcolor": "#374151",
-            "zerolinecolor": "#6b7280",
-            "tickcolor": "#9ca3af",
-            "linecolor": "#6b7280"
-        },
-        "colorway": [
-            "#3b82f6", "#10b981", "#f59e0b", "#ef4444",
-            "#8b5cf6", "#06b6d4", "#f97316", "#84cc16"
-        ]
-    } if dark_mode else {}
-    
-    # Basic configuration structure
-    config = {
-        "type": chart_type,
-        "data": [],
-        "layout": {
-            "title": preferences.get("title", f"{chart_type.title()} Chart"),
-            "showlegend": True,
-            "margin": {"l": 50, "r": 50, "t": 50, "b": 50},
-            **dark_theme  # Apply dark theme if enabled
-        },
-        "config": {
-            "responsive": True,
-            "displayModeBar": True,
-            "modeBarButtonsToRemove": [],
-            "displaylogo": False
-        }
-    }
-    
-    # Generate data based on chart type
-    if chart_type == 'bar':
-        categorical_col = df.select_dtypes(include=['object']).columns[0] if len(df.select_dtypes(include=['object']).columns) > 0 else df.columns[0]
-        numeric_col = df.select_dtypes(include=['number']).columns[0] if len(df.select_dtypes(include=['number']).columns) > 0 else df.columns[-1]
-        
-        config["data"] = [{
-            "type": "bar",
-            "x": df[categorical_col].tolist(),
-            "y": df[numeric_col].tolist(),
-            "name": numeric_col
-        }]
-        
-    elif chart_type == 'line':
-        x_col = df.columns[0]
-        y_col = df.columns[1] if len(df.columns) > 1 else df.columns[0]
-        
-        config["data"] = [{
-            "type": "scatter",
-            "mode": "lines",
-            "x": df[x_col].tolist(),
-            "y": df[y_col].tolist(),
-            "name": y_col
-        }]
-        
-    elif chart_type == 'scatter':
-        x_col = df.columns[0]
-        y_col = df.columns[1] if len(df.columns) > 1 else df.columns[0]
-        
-        config["data"] = [{
-            "type": "scatter",
-            "mode": "markers",
-            "x": df[x_col].tolist(),
-            "y": df[y_col].tolist(),
-            "name": f"{x_col} vs {y_col}"
-        }]
-    
-    return config
+
 
 def _generate_chart_suggestions(df: pd.DataFrame, query: str) -> List[Dict[str, Any]]:
     """Generate alternative chart suggestions"""
@@ -2729,13 +2523,43 @@ async def langgraph_stream(request: LangGraphQueryRequest, http_request: Request
             
             langgraph_logger.info(f"🔧 [CLI LOGIC] Using session ID: {session_id[:8]}...")
             
-            # ✅ CRITICAL FIX: Stream detailed reasoning DURING execution, not after
-            # Get the output aggregator to tap into the same detailed logging as CLI
+            # ✅ GRANULAR STREAMING: Add real-time events during execution
             from ..langgraph.output_aggregator import get_output_integrator
             
-            # Initialize streaming integration
+            # Start detailed reasoning with immediate feedback
             yield create_stream_event("detailed_reasoning_start", session_id,
                 message="🔍 STARTING DETAILED REASONING CHAIN"
+            )
+            
+            # Add granular progress events
+            yield create_stream_event("progress", session_id,
+                message="🤖 Initializing LangGraph workflow...",
+                progress=10,
+                status="initializing"
+            )
+            
+            yield create_stream_event("progress", session_id,
+                message="🎯 Analyzing query complexity...",
+                progress=20,
+                status="analyzing"
+            )
+            
+            yield create_stream_event("progress", session_id,
+                message="🔍 Selecting optimal workflow path...",
+                progress=30,
+                status="routing"
+            )
+            
+            yield create_stream_event("progress", session_id,
+                message="📊 Connecting to data sources...",
+                progress=40,
+                status="connecting"
+            )
+            
+            yield create_stream_event("progress", session_id,
+                message="⚡ Executing workflow operations...",
+                progress=50,
+                status="executing"
             )
             
             # Process query with real-time monitoring - let LangGraph determine optimal routing and databases (EXACT CLI LOGIC)
@@ -2744,6 +2568,74 @@ async def langgraph_stream(request: LangGraphQueryRequest, http_request: Request
                 session_id=session_id,
                 databases_available=None,  # Let it auto-detect (same as CLI)
                 force_langgraph=request.force_langgraph
+            )
+            
+            # ✅ COMPREHENSIVE DEFENSIVE: Handle ExecutionResult objects and ensure all results are dictionaries
+            def ensure_dict_result(obj, path="root"):
+                """Recursively convert any ExecutionResult objects to dictionaries"""
+                if obj is None:
+                    return obj
+                
+                # Import ExecutionResult for type checking
+                try:
+                    from ..tools.registry import ExecutionResult
+                    if isinstance(obj, ExecutionResult):
+                        logger.warning(f"Converting ExecutionResult to dict at path: {path}")
+                        converted = {
+                            "success": obj.success,
+                            "result": ensure_dict_result(obj.result, f"{path}.result") if obj.result else None,
+                            "error": obj.error,
+                            "metadata": ensure_dict_result(obj.metadata, f"{path}.metadata") if obj.metadata else {},
+                            "tool_id": obj.tool_id,
+                            "call_id": obj.call_id
+                        }
+                        # If result.result is a dict, merge it up
+                        if isinstance(converted["result"], dict):
+                            return {**converted["result"], **{k: v for k, v in converted.items() if k != "result"}}
+                        return converted
+                except ImportError:
+                    pass
+                
+                # Handle other objects that don't have .get() method
+                if hasattr(obj, '__dict__') and not hasattr(obj, 'get'):
+                    logger.warning(f"Converting object {type(obj)} to dict at path: {path}")
+                    if hasattr(obj, 'result') and hasattr(obj, 'success'):
+                        # This looks like an ExecutionResult-like object
+                        return {
+                            "success": getattr(obj, 'success', True),
+                            "result": ensure_dict_result(getattr(obj, 'result', None), f"{path}.result"),
+                            "error": getattr(obj, 'error', None),
+                            "metadata": ensure_dict_result(getattr(obj, 'metadata', {}), f"{path}.metadata"),
+                            "tool_id": getattr(obj, 'tool_id', None),
+                            "call_id": getattr(obj, 'call_id', None)
+                        }
+                    else:
+                        return obj.__dict__
+                
+                # Handle dictionaries recursively
+                if isinstance(obj, dict):
+                    return {k: ensure_dict_result(v, f"{path}.{k}") for k, v in obj.items()}
+                
+                # Handle lists recursively
+                if isinstance(obj, list):
+                    return [ensure_dict_result(item, f"{path}[{i}]") for i, item in enumerate(obj)]
+                
+                # Return primitives as-is
+                return obj
+            
+            # Apply comprehensive conversion
+            result = ensure_dict_result(result)
+            
+            # Final safety check
+            if not isinstance(result, dict):
+                logger.error(f"Result is STILL not a dictionary after conversion: {type(result)}")
+                result = {"error": f"Failed to convert result type: {type(result)}", "original_result": str(result)}
+            
+            # Immediate post-execution feedback
+            yield create_stream_event("progress", session_id,
+                message="✅ Workflow execution completed",
+                progress=80,
+                status="completed"
             )
             
             # ✅ IMMEDIATE DETAILED REASONING: Stream the captured data right after execution
@@ -2896,7 +2788,9 @@ async def langgraph_stream(request: LangGraphQueryRequest, http_request: Request
                 if final_synthesis:
                     synthesis_text = final_synthesis.response_text if hasattr(final_synthesis, 'response_text') else str(final_synthesis)
                     synthesis_length = len(synthesis_text)
-                    confidence = getattr(final_synthesis, 'confidence_score', 0.0)
+                    # ✅ FIX: Ensure confidence_score is always a float, not string
+                    confidence_raw = getattr(final_synthesis, 'confidence_score', 0.0)
+                    confidence = float(confidence_raw) if confidence_raw is not None else 0.0
                     sources_used = getattr(final_synthesis, 'sources_used', 0)
                     
                     yield create_stream_event("final_synthesis_analysis", session_id,
@@ -2915,6 +2809,13 @@ async def langgraph_stream(request: LangGraphQueryRequest, http_request: Request
                     message="🔍 Detailed reasoning chain complete"
                 )
                 
+                # ✅ TIMING FIX: Clear progress update after detailed reasoning is extracted
+                yield create_stream_event("progress", session_id,
+                    message="Detailed reasoning extracted successfully",
+                    progress=95,
+                    status="reasoning_complete"
+                )
+                
             except Exception as e:
                 yield create_stream_event("reasoning_chain_warning", session_id,
                     message=f"⚠️ Could not access detailed reasoning chain: {e}"
@@ -2922,6 +2823,7 @@ async def langgraph_stream(request: LangGraphQueryRequest, http_request: Request
                 if request.verbose:
                     langgraph_logger.warning(f"Reasoning chain access failed: {e}")
 
+            # ✅ NOW stream "Analysis complete" AFTER detailed reasoning has been captured and sent
             yield create_stream_event("progress", session_id,
                 message="Analysis complete, finalizing results...",
                 progress=95,
@@ -3106,7 +3008,9 @@ async def langgraph_stream(request: LangGraphQueryRequest, http_request: Request
                         if final_synthesis:
                             synthesis_text = final_synthesis.response_text if hasattr(final_synthesis, 'response_text') else str(final_synthesis)
                             synthesis_length = len(synthesis_text)
-                            confidence = getattr(final_synthesis, 'confidence_score', 0.0)
+                            # ✅ FIX: Ensure confidence_score is always a float, not string
+                            confidence_raw = getattr(final_synthesis, 'confidence_score', 0.0)
+                            confidence = float(confidence_raw) if confidence_raw is not None else 0.0
                             sources_used = getattr(final_synthesis, 'sources_used', 0)
                             
                             yield create_stream_event("final_synthesis_analysis", session_id,
@@ -3302,10 +3206,53 @@ async def langgraph_stream(request: LangGraphQueryRequest, http_request: Request
             
             # Check for and display visualization data first (EXACT CLI LOGIC)
             visualization_data = result.get("visualization_data")
+            
+            # ✅ FIXED: Extract visualization data from aggregator tool executions
+            if not visualization_data and aggregator:
+                try:
+                    # Get tool executions from the aggregator
+                    tool_executions = aggregator.get_all_tool_executions()
+                    logger.info(f"🔍 AGGREGATOR TOOL EXECUTIONS COUNT: {len(tool_executions)}")
+                    
+                    for i, tool_execution in enumerate(tool_executions):
+                        logger.info(f"🔍 TOOL EXECUTION {i}: {tool_execution.tool_id} - Success: {tool_execution.success}")
+                        logger.info(f"🔍 TOOL EXECUTION {i} RESULT TYPE: {type(tool_execution.result)}")
+                        
+                        if (tool_execution.tool_id == "visualization.create_visualization" and 
+                            tool_execution.success and 
+                            tool_execution.result):
+                            
+                            # Extract the visualization result
+                            visualization_data = tool_execution.result
+                            logger.info(f"🎨 FOUND VISUALIZATION TOOL RESULT FROM AGGREGATOR: {tool_execution.tool_id}")
+                            logger.info(f"🎨 VISUALIZATION DATA KEYS: {list(visualization_data.keys()) if isinstance(visualization_data, dict) else 'Not a dict'}")
+                            logger.info(f"🎨 VISUALIZATION_CREATED: {visualization_data.get('visualization_created') if isinstance(visualization_data, dict) else 'N/A'}")
+                            logger.info(f"🎨 HAS CHART_CONFIG: {bool(visualization_data.get('chart_config')) if isinstance(visualization_data, dict) else 'N/A'}")
+                            break
+                except Exception as e:
+                    logger.warning(f"Failed to extract visualization data from aggregator: {e}")
+                    
+            # ✅ FALLBACK: Try to extract from tool execution results in result
+            if not visualization_data:
+                # Try to extract from tool execution results
+                tool_execution_result = result.get("tool_execution_result", {})
+                logger.info(f"🔍 DEBUGGING TOOL EXECUTION RESULTS: {list(tool_execution_result.keys())}")
+                
+                for tool_result in tool_execution_result.get("execution_results", []):
+                    logger.info(f"🔍 PROCESSING TOOL RESULT: {tool_result.get('tool_id')} - Success: {tool_result.get('success')}")
+                    logger.info(f"🔍 TOOL RESULT KEYS: {list(tool_result.keys()) if isinstance(tool_result, dict) else 'Not a dict'}")
+                    
+                    if tool_result.get("tool_id") == "visualization.create_visualization" and tool_result.get("success"):
+                        visualization_data = tool_result.get("result", {})
+                        logger.info(f"🎨 FOUND VISUALIZATION TOOL RESULT! Keys: {list(visualization_data.keys()) if isinstance(visualization_data, dict) else 'Not a dict'}")
+                        break
+            
             if visualization_data and visualization_data.get("visualization_created"):
+                logger.info("🎨 PROCESSING VISUALIZATION DATA FOR STREAMING")
                 chart_type = visualization_data.get("performance_metrics", {}).get("chart_type", "unknown")
                 dataset_size = visualization_data.get("dataset_info", {}).get("size", 0)
                 
+                logger.info(f"🎨 YIELDING visualization_created EVENT: chart_type={chart_type}, dataset_size={dataset_size}")
                 yield create_stream_event("visualization_created", session_id,
                     chart_type=chart_type,
                     dataset_size=dataset_size,
@@ -3315,12 +3262,65 @@ async def langgraph_stream(request: LangGraphQueryRequest, http_request: Request
                 
                 # Show chart configuration summary (same as CLI)
                 chart_config = visualization_data.get("chart_config", {})
+                logger.info(f"🎨 CHART CONFIG EXTRACTED: {bool(chart_config)}")
+                logger.info(f"🎨 CHART CONFIG KEYS: {list(chart_config.keys()) if chart_config else 'No config'}")
+                
                 if chart_config:
+                    logger.info("🎨 YIELDING chart_config EVENT")
                     yield create_stream_event("chart_config", session_id,
                         type=chart_config.get('type', 'unknown'),
                         data_points=len(chart_config.get('data', [])),
                         title=chart_config.get('layout', {}).get('title', 'N/A')
                     )
+                    
+                    # ✅ NEW: Display the FULL JSON configuration (same as CLI)
+                    import json as json_module  # Use explicit import to avoid shadowing
+                    logger.info("🎨 YIELDING chart_config_json EVENT")
+                    yield create_stream_event("chart_config_json", session_id,
+                        message="📋 Complete Chart Configuration JSON:",
+                        metadata={
+                            "chart_config": chart_config,
+                            "json_size": len(json_module.dumps(chart_config, indent=2))
+                        }
+                    )
+                    
+                    # ✅ NEW: Send complete visualization package as single chunk
+                    logger.info("🎨 YIELDING visualization_complete EVENT - SINGLE CONSOLIDATED CHUNK")
+                    yield create_stream_event("visualization_complete", session_id,
+                        message="🎯 Complete Visualization Package",
+                        # Complete chart configuration
+                        chart_config=chart_config,
+                        # All visualization metadata
+                        visualization_data=visualization_data,
+                        # Chart summary for easy identification
+                        chart_summary={
+                            "type": chart_config.get('type', 'unknown'),
+                            "title": chart_config.get('layout', {}).get('title', 'N/A'),
+                            "data_points": len(chart_config.get('data', [])),
+                            "chart_type": chart_type,
+                            "dataset_size": dataset_size,
+                            "intent": visualization_data.get('visualization_intent', 'N/A'),
+                            "execution_time": visualization_data.get("performance_metrics", {}).get("execution_time", 0),
+                            "confidence": visualization_data.get("chart_selection", {}).get("primary_chart", {}).get("confidence_score", 0)
+                        },
+                        # Easy identification flags
+                        is_visualization=True,
+                        ready_for_render=True
+                    )
+                else:
+                    logger.warning("🎨 NO CHART CONFIG FOUND IN VISUALIZATION DATA")
+                    
+                    # ✅ NEW: Show JSON file save location if available (same as CLI)
+                    json_file_path = visualization_data.get("file_path") or visualization_data.get("json_file_path")
+                    if json_file_path:
+                        yield create_stream_event("chart_json_saved", session_id,
+                            message=f"💾 Chart JSON saved to: {json_file_path}",
+                            file_path=json_file_path
+                        )
+            else:
+                logger.info(f"🎨 VISUALIZATION DATA CHECK FAILED:")
+                logger.info(f"  - visualization_data exists: {bool(visualization_data)}")
+                logger.info(f"  - visualization_created: {visualization_data.get('visualization_created') if visualization_data else 'N/A'}")
             
             # Display results based on workflow type (EXACT CLI LOGIC)
             if workflow == "traditional":
@@ -3387,6 +3387,65 @@ async def langgraph_stream(request: LangGraphQueryRequest, http_request: Request
                 final_result = result.get("final_result", {})
                 operation_results = result.get("operation_results", {})
                 hybrid_advantages = result.get("hybrid_advantages", [])
+                
+                # ✅ NEW: Extract additional visualization data from hybrid workflow (same as CLI)
+                if not visualization_data:
+                    tool_execution_result = result.get("tool_execution_result", {})
+                    for tool_result in tool_execution_result.get("execution_results", []):
+                        if tool_result.get("tool_id") == "visualization.create_visualization" and tool_result.get("success"):
+                            hybrid_viz_data = tool_result.get("result", {})
+                            if hybrid_viz_data and hybrid_viz_data.get("visualization_created"):
+                                yield create_stream_event("hybrid_visualization_found", session_id,
+                                    message="🎨 Hybrid workflow generated visualization",
+                                    chart_type=hybrid_viz_data.get("performance_metrics", {}).get("chart_type", "unknown"),
+                                    dataset_size=hybrid_viz_data.get("dataset_info", {}).get("size", 0)
+                                )
+                                
+                                # Show complete JSON config from hybrid workflow
+                                hybrid_chart_config = hybrid_viz_data.get("chart_config", {})
+                                if hybrid_chart_config:
+                                    import json as json_module  # Use explicit import to avoid shadowing
+                                    yield create_stream_event("hybrid_chart_config_json", session_id,
+                                        message="📋 Hybrid Workflow Chart Configuration JSON:",
+                                        metadata={
+                                            "chart_config": hybrid_chart_config,
+                                            "json_size": len(json_module.dumps(hybrid_chart_config, indent=2))
+                                        }
+                                    )
+                                    
+                                    # ✅ NEW: Send complete hybrid visualization package as single chunk
+                                    yield create_stream_event("visualization_complete", session_id,
+                                        message="🎯 Complete Hybrid Visualization Package",
+                                        # Complete chart configuration
+                                        chart_config=hybrid_chart_config,
+                                        # All visualization metadata
+                                        visualization_data=hybrid_viz_data,
+                                        # Chart summary for easy identification
+                                        chart_summary={
+                                            "type": hybrid_chart_config.get('type', 'unknown'),
+                                            "title": hybrid_chart_config.get('layout', {}).get('title', 'N/A'),
+                                            "data_points": len(hybrid_chart_config.get('data', [])),
+                                            "chart_type": hybrid_viz_data.get("performance_metrics", {}).get("chart_type", "unknown"),
+                                            "dataset_size": hybrid_viz_data.get("dataset_info", {}).get("size", 0),
+                                            "intent": hybrid_viz_data.get('visualization_intent', 'N/A'),
+                                            "execution_time": hybrid_viz_data.get("performance_metrics", {}).get("execution_time", 0),
+                                            "confidence": hybrid_viz_data.get("chart_selection", {}).get("primary_chart", {}).get("confidence_score", 0),
+                                            "workflow": "hybrid"
+                                        },
+                                        # Easy identification flags
+                                        is_visualization=True,
+                                        ready_for_render=True,
+                                        from_hybrid_workflow=True
+                                    )
+                                    
+                                    # Show JSON file save location from hybrid workflow
+                                    hybrid_json_file_path = hybrid_viz_data.get("file_path") or hybrid_viz_data.get("json_file_path")
+                                    if hybrid_json_file_path:
+                                        yield create_stream_event("hybrid_chart_json_saved", session_id,
+                                            message=f"💾 Hybrid workflow chart JSON saved to: {hybrid_json_file_path}",
+                                            file_path=hybrid_json_file_path
+                                        )
+                            break
                 
                 if request.verbose:
                     yield create_stream_event("hybrid_advantages", session_id,

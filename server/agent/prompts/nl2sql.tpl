@@ -26,5 +26,9 @@ When writing SQL:
 # User Question
 {{ user_question }}
 
+# Counter Factuals
+
+For each hypothesis and for each question, add a different counterfactual that takes into account the hypotheses as well as the null hypotheses. That
+
 # SQL Query
 ```sql

@@ -3,7 +3,16 @@ import { Loader2, X, Clock } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
 interface StreamingEvent {
-  type: 'status' | 'progress' | 'error' | 'complete' | 'partial_sql' | 'analysis_chunk';
+  type: 'status' | 'progress' | 'error' | 'complete' | 'partial_sql' | 'analysis_chunk' |
+        // ✅ ENHANCED: Add all detailed reasoning event types
+        'detailed_reasoning_start' | 'sql_queries_section' | 'sql_query_executed' | 'no_sql_queries' |
+        'tool_executions_section' | 'tool_execution_completed' | 'no_tool_executions' |
+        'schema_discovery_section' | 'schema_discovered' | 'no_schema_discovery' |
+        'execution_plans_section' | 'execution_plan_detail' | 'no_execution_plans' |
+        'final_synthesis_analysis' | 'no_final_synthesis' | 'detailed_reasoning_complete' |
+        'reasoning_chain_warning' | 'session_updated' |
+        // ✅ VISUALIZATION: Add missing visualization event types
+        'visualization_created' | 'visualization_stage' | 'chart_config';
   message: string;
   timestamp: string;
   metadata?: any;
@@ -108,6 +117,18 @@ export const StreamingStatusBlock = ({
                     event.type === 'error' ? 'bg-red-400' :
                     event.type === 'complete' ? 'bg-green-400' :
                     event.type === 'progress' ? 'bg-yellow-400' :
+                    // ✅ ENHANCED: Special styling for detailed reasoning events
+                    event.type.includes('sql_query') ? 'bg-blue-400' :
+                    event.type.includes('tool_execution') ? 'bg-purple-400' :
+                    event.type.includes('schema_') ? 'bg-indigo-400' :
+                    event.type.includes('execution_plan') ? 'bg-orange-400' :
+                    event.type.includes('synthesis') ? 'bg-green-400' :
+                    event.type === 'detailed_reasoning_start' ? 'bg-cyan-400' :
+                    event.type === 'detailed_reasoning_complete' ? 'bg-emerald-400' :
+                    // ✅ VISUALIZATION: Special styling for visualization events
+                    event.type === 'visualization_created' ? 'bg-pink-400' :
+                    event.type === 'visualization_stage' ? 'bg-rose-400' :
+                    event.type === 'chart_config' ? 'bg-fuchsia-400' :
                     'bg-gray-400 dark:bg-gray-500'
                   )} />
                   <div className="flex-1 min-w-0">

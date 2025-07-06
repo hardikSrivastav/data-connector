@@ -205,7 +205,19 @@ export interface ProcessedDataset {
 }
 
 export interface ReasoningEvent {
-  type: 'status' | 'progress' | 'error' | 'complete' | 'partial_sql' | 'analysis_chunk' | 'classifying' | 'database_selected' | 'schema_loading' | 'query_generating' | 'query_executing' | 'partial_results' | 'planning' | 'aggregating';
+  type: 'status' | 'progress' | 'error' | 'complete' | 'partial_sql' | 'analysis_chunk' | 'classifying' | 'database_selected' | 'schema_loading' | 'query_generating' | 'query_executing' | 'partial_results' | 'planning' | 'aggregating' |
+        // ✅ NEW: Add all detailed reasoning event types from LangGraph streaming
+        'detailed_reasoning_start' | 'session_updated' | 
+        'sql_queries_section' | 'sql_query_executed' | 'no_sql_queries' |
+        'tool_executions_section' | 'tool_execution_completed' | 'no_tool_executions' |
+        'schema_discovery_section' | 'schema_discovered' | 'no_schema_discovery' |
+        'execution_plans_section' | 'execution_plan_detail' | 'no_execution_plans' |
+        'final_synthesis_analysis' | 'no_final_synthesis' | 'detailed_reasoning_complete' |
+        'reasoning_chain_warning' |
+        // ✅ VISUALIZATION: Add all missing visualization event types from endpoints.py
+        'visualization_created' | 'visualization_stage' | 'chart_config' | 'chart_config_json' | 
+        'hybrid_chart_config_json' | 'chart_json_saved' | 'hybrid_chart_json_saved' |
+        'hybrid_visualization_found' | 'visualization_complete';
   message: string;
   timestamp: string;
   metadata?: any;
@@ -213,7 +225,19 @@ export interface ReasoningEvent {
 
 // Reasoning Chain Types - Enhanced for independent storage
 export interface ReasoningChainEvent {
-  type: 'status' | 'progress' | 'error' | 'complete' | 'partial_sql' | 'analysis_chunk' | 'classifying' | 'database_selected' | 'schema_loading' | 'query_generating' | 'query_executing' | 'partial_results' | 'planning' | 'aggregating';
+  type: 'status' | 'progress' | 'error' | 'complete' | 'partial_sql' | 'analysis_chunk' | 'classifying' | 'database_selected' | 'schema_loading' | 'query_generating' | 'query_executing' | 'partial_results' | 'planning' | 'aggregating' |
+        // ✅ NEW: Add all detailed reasoning event types from LangGraph streaming
+        'detailed_reasoning_start' | 'session_updated' | 
+        'sql_queries_section' | 'sql_query_executed' | 'no_sql_queries' |
+        'tool_executions_section' | 'tool_execution_completed' | 'no_tool_executions' |
+        'schema_discovery_section' | 'schema_discovered' | 'no_schema_discovery' |
+        'execution_plans_section' | 'execution_plan_detail' | 'no_execution_plans' |
+        'final_synthesis_analysis' | 'no_final_synthesis' | 'detailed_reasoning_complete' |
+        'reasoning_chain_warning' |
+        // ✅ VISUALIZATION: Add all missing visualization event types from endpoints.py
+        'visualization_created' | 'visualization_stage' | 'chart_config' | 'chart_config_json' | 
+        'hybrid_chart_config_json' | 'chart_json_saved' | 'hybrid_chart_json_saved' |
+        'hybrid_visualization_found' | 'visualization_complete';
   message: string;
   timestamp: string;
   metadata?: any;

@@ -1049,6 +1049,7 @@ def langgraph(
     show_outputs: bool = typer.Option(False, "--show-outputs", "-o", help="Show comprehensive output breakdown"),
     show_timeline: bool = typer.Option(False, "--show-timeline", "-t", help="Show workflow execution timeline"),
     show_captured_data: bool = typer.Option(False, "--show-captured-data", "-c", help="Show captured SQL queries, tool executions, and raw data"),
+    show_chart_json: bool = typer.Option(True, "--show-chart-json/--no-chart-json", help="Show full chart configuration JSON inline"),
     export_analysis: Optional[str] = typer.Option(None, "--export", "-e", help="Export full analysis to JSON file"),
     save_session: bool = typer.Option(True, "--save-session/--no-save", help="Save session to disk"),
     stream_output: bool = typer.Option(True, "--stream/--no-stream", help="Enable streaming output")
@@ -1176,14 +1177,58 @@ def langgraph(
                 console.print(f"Dataset: [yellow]{dataset_size} rows[/yellow]")
                 console.print(f"Intent: [dim]{visualization_data.get('visualization_intent', 'N/A')}[/dim]")
                 
+                # Show file save info if available
+                if visualization_data.get("file_saved"):
+                    file_path = visualization_data.get("file_path", "unknown")
+                    file_size = visualization_data.get("file_size_kb", 0)
+                    console.print(f"Saved to: [green]{file_path}[/green] ([dim]{file_size}KB[/dim])")
+                elif visualization_data.get("save_error"):
+                    console.print(f"File save failed: [red]{visualization_data.get('save_error')}[/red]")
+                
                 # Show chart configuration summary
                 chart_config = visualization_data.get("chart_config", {})
                 if chart_config:
-                    console.print(f"\n[bold]Chart Configuration:[/bold]")
+                    console.print(f"\n[bold]Chart Configuration Summary:[/bold]")
                     console.print(f"• Type: {chart_config.get('type', 'unknown')}")
                     console.print(f"• Data points: {len(chart_config.get('data', []))}")
                     if 'layout' in chart_config and 'title' in chart_config['layout']:
                         console.print(f"• Title: {chart_config['layout']['title']}")
+                    
+                    # Display the FULL JSON configuration inline if requested
+                    if show_chart_json:
+                        console.print(f"\n[bold cyan]📋 Complete Chart Configuration JSON:[/bold cyan]")
+                        import json
+                        try:
+                            # Pretty print the chart config with syntax highlighting
+                            formatted_json = json.dumps(chart_config, indent=2, ensure_ascii=False)
+                            
+                            # Use Panel to create a nice bordered display
+                            console.print(Panel(
+                                formatted_json,
+                                title="[bold]Plotly Chart Configuration[/bold]",
+                                title_align="left",
+                                border_style="cyan",
+                                expand=False
+                            ))
+                            
+                            # Show JSON size info
+                            json_size_kb = len(formatted_json.encode('utf-8')) / 1024
+                            console.print(f"[dim]JSON size: {json_size_kb:.2f}KB ({len(formatted_json)} characters)[/dim]")
+                            
+                        except Exception as json_error:
+                            console.print(f"[red]Error formatting JSON: {json_error}[/red]")
+                            # Fallback to raw display
+                            console.print(f"Raw config: {chart_config}")
+                    else:
+                        console.print(f"[dim]Use --show-chart-json to display full JSON configuration[/dim]")
+                
+                # Show analysis summary if verbose
+                if verbose:
+                    analysis_summary = visualization_data.get("analysis_summary", {})
+                    if analysis_summary:
+                        console.print(f"\n[bold]Visualization Analysis:[/bold]")
+                        console.print(f"Data types: {analysis_summary.get('data_types', 'unknown')}")
+                        console.print(f"Rationale: [dim]{analysis_summary.get('rationale', 'N/A')}[/dim]")
             
             # Display results based on workflow type
             if workflow == "traditional":
@@ -1321,13 +1366,14 @@ def langgraph_short(
     show_outputs: bool = typer.Option(False, "--show-outputs", "-o", help="Show comprehensive output breakdown"),
     show_timeline: bool = typer.Option(False, "--show-timeline", "-t", help="Show workflow execution timeline"),
     show_captured_data: bool = typer.Option(False, "--show-captured-data", "-c", help="Show captured SQL queries, tool executions, and raw data"),
+    show_chart_json: bool = typer.Option(True, "--show-chart-json/--no-chart-json", help="Show full chart configuration JSON inline"),
     export_analysis: Optional[str] = typer.Option(None, "--export", "-e", help="Export full analysis to JSON file"),
     save_session: bool = typer.Option(True, "--save-session/--no-save", help="Save session to disk"),
     stream_output: bool = typer.Option(True, "--stream/--no-stream", help="Enable streaming output")
 ):
     """Execute a query using LangGraph orchestration (short alias for 'langgraph')"""
     # Call the main langgraph function with the same parameters
-    langgraph(question, force_langgraph, show_routing, verbose, show_outputs, show_timeline, show_captured_data, export_analysis, save_session, stream_output)
+    langgraph(question, force_langgraph, show_routing, verbose, show_outputs, show_timeline, show_captured_data, show_chart_json, export_analysis, save_session, stream_output)
 
 
 

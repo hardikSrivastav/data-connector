@@ -22,7 +22,6 @@ from .nodes.classification import ClassificationNode
 from .nodes.iterative_metadata import IterativeMetadataNode
 from .nodes.iterative_planning import IterativePlanningNode
 from .nodes.iterative_execution import IterativeExecutionNode
-from .nodes.visualization_node import VisualizationNode
 
 # Import existing components to preserve functionality
 from ..tools.state_manager import StateManager, AnalysisState
@@ -75,7 +74,6 @@ class LangGraphIntegrationOrchestrator:
         self.iterative_metadata_node = IterativeMetadataNode(config)
         self.iterative_planning_node = IterativePlanningNode(config)
         self.iterative_execution_node = IterativeExecutionNode(config)
-        self.visualization_node = VisualizationNode(config)
         
         # Integration settings
         self.use_langgraph_for_complex = self.config.get("use_langgraph_for_complex", True)
@@ -465,7 +463,10 @@ class LangGraphIntegrationOrchestrator:
                 **planning_result
             })
             
-            # Step 4: If tool execution succeeded, use those results
+            # Step 4: Completed - visualization now handled by tool calls when LLM decides it's appropriate
+            logger.info("Step 4: Tool execution completed - visualization available via tool calls")
+            
+            # Step 5: If tool execution succeeded, use those results
             if tool_execution_result.get("success", False):
                 logger.info("ToolExecutionNode succeeded, using tool results")
                 
@@ -498,11 +499,35 @@ class LangGraphIntegrationOrchestrator:
                     "formatted_result": tool_execution_result.get("response", "Tool execution completed successfully.")
                 }
                 
+                # Extract visualization data from tool execution results
+                visualization_data = None
+                
                 # Aggregate data from all successful operations
                 for op_result in operation_results.values():
                     if "result" in op_result and op_result["result"]:
                         # Handle different result types
                         result_data = op_result["result"]
+                        
+                        # Check if this is a visualization result
+                        if (isinstance(result_data, dict) and 
+                            result_data.get("success") and 
+                            result_data.get("visualization_created") and
+                            "chart_config" in result_data):
+                            
+                            # Extract visualization data for CLI display
+                            visualization_data = {
+                                "visualization_created": True,
+                                "chart_config": result_data["chart_config"],
+                                "dataset_info": result_data.get("dataset_info", {}),
+                                "analysis_summary": result_data.get("analysis_summary", {}),
+                                "performance_metrics": result_data.get("performance_metrics", {}),
+                                "visualization_intent": result_data.get("user_query", "Data visualization"),
+                                "file_saved": result_data.get("file_saved", False),
+                                "output_filename": result_data.get("output_filename")
+                            }
+                            logger.info(f"✅ Extracted visualization data from tool execution results")
+                            
+                        # Add to regular data aggregation
                         if isinstance(result_data, list):
                             final_result["data"].extend(result_data)
                         elif isinstance(result_data, dict):
@@ -510,7 +535,7 @@ class LangGraphIntegrationOrchestrator:
                         else:
                             final_result["data"].append({"result": result_data})
                 
-                return {
+                result = {
                     "workflow": "hybrid",
                     "session_id": hybrid_state,  # Return the actual graph session_id for CLI export
                     "metadata_collection": metadata_result.get("schema_metadata", {}),
@@ -520,12 +545,20 @@ class LangGraphIntegrationOrchestrator:
                     "operation_results": operation_results,
                     "hybrid_advantages": [
                         "Enhanced parallelism from LangGraph",
-                        "Database adapter tools integration",
+                        "Database adapter tools integration", 
                         "Intelligent tool selection and execution",
                         "Preserved existing business logic",
-                        "Improved error handling and streaming"
+                        "Improved error handling and streaming",
+                        "✅ Intelligent visualization via tool calls"  # Updated advantage
                     ]
                 }
+                
+                # Add visualization data if available
+                if visualization_data:
+                    result["visualization_data"] = visualization_data
+                    logger.info(f"✅ Added visualization data to hybrid workflow result")
+                
+                return result
             
             else:
                 # Step 5: Tool execution failed - return error for debugging
@@ -547,7 +580,8 @@ class LangGraphIntegrationOrchestrator:
                         "Enhanced parallelism from LangGraph",
                         "Database adapter tools integration",
                         "Intelligent tool selection and execution",
-                        "No traditional fallback - debugging mode"
+                        "No traditional fallback - debugging mode",
+                        "✅ Visualization available via tool calls"
                     ]
                 }
             
@@ -832,21 +866,8 @@ class LangGraphIntegrationOrchestrator:
             else:
                 state = await self.iterative_execution_node(state)
             
-            # Phase 5: Visualization (intelligent chart generation based on results)
-            logger.info("🔄 [ITERATIVE_WORKFLOW] Phase 5: Visualization Analysis")
-            if stream_callback:
-                async for chunk in self.visualization_node.stream(state):
-                    if stream_callback:
-                        await stream_callback(chunk)
-                    if chunk.get("is_final", False):
-                        state.update(chunk.get("state_update", {}))
-                        break
-            else:
-                state = await self.visualization_node(state)
-            
-            visualization_completed = state.get("visualization_completed", False)
-            visualization_created = state.get("visualization_data", {}).get("visualization_created", False)
-            logger.info(f"🔄 [ITERATIVE_WORKFLOW] Visualization phase completed: {visualization_completed}, chart created: {visualization_created}")
+            # Phase 5: Completed - visualization now handled by tool calls when LLM decides it's appropriate
+            logger.info("🔄 [ITERATIVE_WORKFLOW] Phase 5: Execution completed - visualization available via tool calls")
             
             # Prepare final result
             execution_time = time.time() - start_time
@@ -865,9 +886,6 @@ class LangGraphIntegrationOrchestrator:
                 # If aggregator has comprehensive data, use it
                 if unified_result and "rows" in unified_result and not unified_result.get("error"):
                     result = unified_result
-                    # Add visualization data if available
-                    if state.get("visualization_data"):
-                        result["visualization_data"] = state["visualization_data"]
                 else:
                     # Fallback to manual construction
                     logger.warning(f"🔄 [ITERATIVE_WORKFLOW] Output aggregator result incomplete, using fallback")
@@ -884,8 +902,7 @@ class LangGraphIntegrationOrchestrator:
                                 "classification",
                                 "iterative_metadata",
                                 "iterative_planning", 
-                                "execution",
-                                "visualization"
+                                "execution"
                             ],
                             "databases_used": state.get("databases_identified", []),
                             "tables_accessed": len(state.get("available_tables", [])),
@@ -905,10 +922,6 @@ class LangGraphIntegrationOrchestrator:
                             "planning_optimizations": state.get("execution_plan", {}).get("optimizations_applied", [])
                         }
                     }
-                    
-                    # Add visualization data if available
-                    if state.get("visualization_data"):
-                        result["visualization_data"] = state["visualization_data"]
                     
             except Exception as e:
                 logger.error(f"🔄 [ITERATIVE_WORKFLOW] Output aggregator failed: {e}")

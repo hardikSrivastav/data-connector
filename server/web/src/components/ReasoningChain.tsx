@@ -2,24 +2,7 @@ import { useState, useEffect } from 'react';
 import { Clock, CheckCircle, XCircle, AlertCircle, ChevronDown, ChevronRight, RotateCcw, Play } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
-
-interface ReasoningEvent {
-  type: 'status' | 'progress' | 'error' | 'complete' | 'partial_sql' | 'analysis_chunk' | 'classifying' | 'database_selected' | 'schema_loading' | 'query_generating' | 'query_executing' | 'partial_results' | 'planning' | 'aggregating';
-  message: string;
-  timestamp: string;
-  metadata?: any;
-}
-
-interface ReasoningChainData {
-  events: ReasoningEvent[];
-  originalQuery: string;
-  sessionId?: string;
-  isComplete: boolean;
-  lastUpdated: string;
-  status: 'streaming' | 'completed' | 'failed' | 'cancelled';
-  progress: number;
-  currentStep?: string;
-}
+import { ReasoningEvent, ReasoningChainData } from '@/types';
 
 interface ReasoningChainProps {
   reasoningData?: ReasoningChainData;
