@@ -7,7 +7,8 @@ import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
 import { toast } from "sonner";
-import { Download, Shield, Server, Database, Key, CheckCircle, Clock, FileText } from "lucide-react";
+import { Download, Shield, Server, Database, Key, CheckCircle, Clock, FileText, MessageCircle } from "lucide-react";
+import Link from "next/link";
 
 interface DeploymentFile {
   name: string;
@@ -189,6 +190,14 @@ export default function DeploymentPortal() {
             <p className="text-lg text-muted-foreground font-baskerville">
               Download your enterprise deployment package for on-premise installation
             </p>
+            <div className="mt-4">
+              <Link href="/deployment/chat">
+                <Button variant="outline" className="font-baskerville hover:bg-[#7b35b8] hover:text-white transition-all duration-300">
+                  <MessageCircle className="h-4 w-4 mr-2" />
+                  Try Our AI Configuration Assistant
+                </Button>
+              </Link>
+            </div>
           </div>
 
           {/* License Validation */}

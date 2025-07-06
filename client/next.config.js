@@ -12,6 +12,16 @@ const nextConfig = {
   reactStrictMode: true,
   // Note: SWC minification is on by default and no longer configurable via next.config.js
   
+  // Add API rewrites to proxy to backend
+  async rewrites() {
+    return [
+      {
+        source: '/api/chat/:path*',
+        destination: 'http://waitlist-backend:3001/api/chat/:path*',
+      },
+    ];
+  },
+
   // Add headers configuration to adjust cross-origin policies
   async headers() {
     return [

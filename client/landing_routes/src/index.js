@@ -4,6 +4,7 @@ const cors = require('cors');
 const waitlistRoutes = require('./routes/waitlistRoutes');
 const paymentRoutes = require('./routes/paymentRoutes');
 const adminRoutes = require('./routes/adminRoutes');
+const chatRoutes = require('./routes/chatRoutes');
 const { sequelize } = require('./config/database');
 
 const app = express();
@@ -17,6 +18,7 @@ app.use(express.json());
 app.use('/api/waitlist', waitlistRoutes);
 app.use('/api/payments', paymentRoutes);
 app.use('/api/admin', adminRoutes);
+app.use('/api/chat', chatRoutes);
 
 // Health check
 app.get('/health', (req, res) => {

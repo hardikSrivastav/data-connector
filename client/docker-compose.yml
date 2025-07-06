@@ -50,6 +50,7 @@ services:
       - RAZORPAY_KEY_ID=${RAZORPAY_KEY_ID}
       - RAZORPAY_KEY_SECRET=${RAZORPAY_KEY_SECRET}
       - JWT_SECRET=admin-secret-key-change-in-production
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
     depends_on:
       - postgres
     restart: unless-stopped
