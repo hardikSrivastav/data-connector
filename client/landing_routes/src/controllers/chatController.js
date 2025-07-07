@@ -1,10 +1,17 @@
 const { v4: uuidv4 } = require('uuid');
-const OpenAI = require('openai');
+const { BedrockRuntimeClient, InvokeModelCommand, InvokeModelWithResponseStreamCommand } = require('@aws-sdk/client-bedrock-runtime');
 
-// Initialize OpenAI (you'll need to add your API key to .env)
-const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY
+// Initialize AWS Bedrock client
+const bedrock = new BedrockRuntimeClient({
+  region: process.env.AWS_REGION || 'ap-south-1',
+  credentials: {
+    accessKeyId: process.env.AWS_ACCESS_KEY_ID,
+    secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY
+  }
 });
+
+// Model ID for Claude 3 Sonnet
+const MODEL_ID = 'anthropic.claude-3-sonnet-20240229-v1:0';
 
 // In-memory storage for conversations (you can migrate to database later)
 const conversations = new Map();
@@ -83,15 +90,8 @@ exports.sendMessage = async (req, res) => {
       content: message
     });
     
-    // Get AI response
-    const response = await openai.chat.completions.create({
-      model: 'gpt-4',
-      messages: conversation.messages,
-      temperature: 0.7,
-      max_tokens: 500
-    });
-    
-    const aiResponse = response.choices[0].message.content;
+    // Get AI response from AWS Bedrock
+    const aiResponse = await callBedrockModel(conversation.messages);
     
     // Add AI response to conversation
     conversation.messages.push({
@@ -116,6 +116,120 @@ exports.sendMessage = async (req, res) => {
     return res.status(500).json({
       success: false,
       message: 'Failed to send message',
+      error: error.message
+    });
+  }
+};
+
+/**
+ * Send a message in a conversation with streaming
+ */
+exports.sendMessageStream = async (req, res) => {
+  const { conversationId, message } = req.body;
+  
+  console.log('=== SENDMESSAGESTREAM CALLED ===');
+  console.log('ConversationId:', conversationId);
+  console.log('Message:', message);
+  
+  try {
+    const conversation = conversations.get(conversationId);
+    if (!conversation) {
+      console.log('ERROR: Conversation not found');
+      return res.status(404).json({
+        success: false,
+        message: 'Conversation not found'
+      });
+    }
+    
+    console.log('Current conversation messages before adding user message:', conversation.messages.map(m => ({ role: m.role, content: m.content.substring(0, 50) + '...' })));
+    
+    // Add user message
+    conversation.messages.push({
+      role: 'user',
+      content: message
+    });
+    
+    console.log('Current conversation messages after adding user message:', conversation.messages.map(m => ({ role: m.role, content: m.content.substring(0, 50) + '...' })));
+    
+    // Set up Server-Sent Events
+    res.writeHead(200, {
+      'Content-Type': 'text/event-stream',
+      'Cache-Control': 'no-cache',
+      'Connection': 'keep-alive',
+      'Access-Control-Allow-Origin': '*',
+      'Access-Control-Allow-Headers': 'Cache-Control'
+    });
+    
+    // Send initial status
+    res.write(`data: ${JSON.stringify({
+      type: 'status',
+      message: 'Starting response generation...'
+    })}\n\n`);
+    
+    let fullResponse = '';
+    
+    try {
+      // Stream AI response from AWS Bedrock
+      console.log('=== ABOUT TO CALL STREAMBEDROCK MODEL ===');
+      await streamBedrockModel(conversation.messages, (chunk) => {
+        console.log(`DEBUG: onChunk called with: "${chunk}"`);
+        fullResponse += chunk;
+        
+        const chunkData = {
+          type: 'chunk',
+          content: chunk,
+          fullContent: fullResponse
+        };
+        
+        console.log(`DEBUG: Sending chunk to client:`, chunkData);
+        
+        // Send chunk to client
+        res.write(`data: ${JSON.stringify(chunkData)}\n\n`);
+      });
+      
+      console.log('DEBUG: Streaming completed, fullResponse length:', fullResponse.length);
+      
+      // Add complete AI response to conversation
+      conversation.messages.push({
+        role: 'assistant',
+        content: fullResponse
+      });
+      
+      // Extract configuration data
+      extractConfigFromMessage(message, conversation.extractedConfig);
+      
+      conversations.set(conversationId, conversation);
+      
+      const completionData = {
+        type: 'complete',
+        message: fullResponse,
+        extractedConfig: conversation.extractedConfig
+      };
+      
+      console.log('DEBUG: Sending completion message:', completionData);
+      
+      // Send completion message
+      res.write(`data: ${JSON.stringify(completionData)}\n\n`);
+      
+    } catch (streamError) {
+      console.error('Error in streaming:', streamError);
+      const errorData = {
+        type: 'error',
+        message: `Streaming error: ${streamError.message}`
+      };
+      
+      console.log('DEBUG: Sending error message:', errorData);
+      
+      res.write(`data: ${JSON.stringify(errorData)}\n\n`);
+    }
+    
+    res.end();
+    
+  } catch (error) {
+    console.error('Error in stream setup:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to start streaming',
       error: error.message
     });
   }
@@ -190,6 +304,223 @@ exports.generateFiles = async (req, res) => {
 };
 
 /**
+ * Call AWS Bedrock model with conversation messages
+ */
+async function callBedrockModel(messages) {
+  try {
+    // Convert messages to Claude format (exclude system messages for user conversation)
+    const filteredMessages = messages.filter(msg => msg.role !== 'system');
+    
+    console.log('DEBUG: All messages:', messages.map(m => ({ role: m.role, content: m.content.substring(0, 50) + '...' })));
+    console.log('DEBUG: Filtered messages:', filteredMessages.map(m => ({ role: m.role, content: m.content.substring(0, 50) + '...' })));
+    
+    // For Claude's Messages API, we need to ensure proper user/assistant alternation
+    // If we have an initial assistant message, we need to skip it and start with user message
+    let claudeMessages = [];
+    
+    // If the first non-system message is from assistant, skip it (it's just the welcome message)
+    let startIndex = 0;
+    if (filteredMessages.length > 0 && filteredMessages[0].role === 'assistant') {
+      startIndex = 1;
+    }
+    
+    // Convert remaining messages to Claude format
+    for (let i = startIndex; i < filteredMessages.length; i++) {
+      const msg = filteredMessages[i];
+      claudeMessages.push({
+        role: msg.role === 'assistant' ? 'assistant' : 'user',
+        content: [
+          {
+            type: "text",
+            text: msg.content
+          }
+        ]
+      });
+    }
+    
+    console.log('DEBUG: Final Claude messages:', claudeMessages.map(m => ({ role: m.role, content: m.content[0].text.substring(0, 50) + '...' })));
+    
+    // Ensure we have at least one user message
+    if (claudeMessages.length === 0 || claudeMessages[0].role !== 'user') {
+      claudeMessages = [
+        {
+          role: 'user',
+          content: [
+            {
+              type: "text",
+              text: 'Hello, I need help with my deployment configuration.'
+            }
+          ]
+        },
+        ...claudeMessages
+      ];
+    }
+
+    // Get system message if it exists
+    const systemMessage = messages.find(msg => msg.role === 'system');
+    const systemContent = systemMessage ? systemMessage.content : '';
+
+    // Prepare the request body for Claude
+    const requestBody = {
+      anthropic_version: "bedrock-2023-05-31",
+      max_tokens: 500,
+      temperature: 0.7,
+      messages: claudeMessages
+    };
+
+    // Add system message if present
+    if (systemContent) {
+      requestBody.system = systemContent;
+    }
+
+    console.log('DEBUG: Final request body being sent to Bedrock:', JSON.stringify(requestBody, null, 2));
+
+    // Create the invoke command
+    const command = new InvokeModelCommand({
+      modelId: MODEL_ID,
+      body: JSON.stringify(requestBody)
+    });
+
+    // Call Bedrock
+    const response = await bedrock.send(command);
+    
+    // Parse response
+    const responseBody = JSON.parse(new TextDecoder().decode(response.body));
+    
+    // Extract the assistant's response
+    if (responseBody.content && responseBody.content.length > 0) {
+      return responseBody.content[0].text;
+    } else {
+      throw new Error('No content in Bedrock response');
+    }
+  } catch (error) {
+    console.error('Error calling Bedrock model:', error);
+    throw new Error(`Bedrock API call failed: ${error.message}`);
+  }
+}
+
+/**
+ * Stream responses from AWS Bedrock model
+ */
+async function streamBedrockModel(messages, onChunk) {
+  try {
+    // Convert messages to Claude format (exclude system messages for user conversation)
+    const filteredMessages = messages.filter(msg => msg.role !== 'system');
+    
+    console.log('DEBUG: All messages:', messages.map(m => ({ role: m.role, content: m.content.substring(0, 50) + '...' })));
+    console.log('DEBUG: Filtered messages:', filteredMessages.map(m => ({ role: m.role, content: m.content.substring(0, 50) + '...' })));
+    
+    // For Claude's Messages API, we need to ensure proper user/assistant alternation
+    // If we have an initial assistant message, we need to skip it and start with user message
+    let claudeMessages = [];
+    
+    // If the first non-system message is from assistant, skip it (it's just the welcome message)
+    let startIndex = 0;
+    if (filteredMessages.length > 0 && filteredMessages[0].role === 'assistant') {
+      startIndex = 1;
+    }
+    
+    // Convert remaining messages to Claude format
+    for (let i = startIndex; i < filteredMessages.length; i++) {
+      const msg = filteredMessages[i];
+      claudeMessages.push({
+        role: msg.role === 'assistant' ? 'assistant' : 'user',
+        content: [
+          {
+            type: "text",
+            text: msg.content
+          }
+        ]
+      });
+    }
+    
+    console.log('DEBUG: Final Claude messages:', claudeMessages.map(m => ({ role: m.role, content: m.content[0].text.substring(0, 50) + '...' })));
+    
+    // Ensure we have at least one user message
+    if (claudeMessages.length === 0 || claudeMessages[0].role !== 'user') {
+      claudeMessages = [
+        {
+          role: 'user',
+          content: [
+            {
+              type: "text",
+              text: 'Hello, I need help with my deployment configuration.'
+            }
+          ]
+        },
+        ...claudeMessages
+      ];
+    }
+
+    // Get system message if it exists
+    const systemMessage = messages.find(msg => msg.role === 'system');
+    const systemContent = systemMessage ? systemMessage.content : '';
+
+    // Prepare the request body for Claude streaming
+    const requestBody = {
+      anthropic_version: "bedrock-2023-05-31",
+      max_tokens: 500,
+      temperature: 0.7,
+      messages: claudeMessages
+    };
+
+    // Add system message if present
+    if (systemContent) {
+      requestBody.system = systemContent;
+    }
+
+    console.log('DEBUG: Final request body being sent to Bedrock:', JSON.stringify(requestBody, null, 2));
+
+    // Create the streaming invoke command
+    const command = new InvokeModelWithResponseStreamCommand({
+      modelId: MODEL_ID,
+      body: JSON.stringify(requestBody)
+    });
+
+    // Call Bedrock with streaming
+    const response = await bedrock.send(command);
+    
+    // Process the streaming response
+    if (response.body) {
+      console.log('DEBUG: Starting to process streaming response');
+      let chunkCount = 0;
+      
+      for await (const chunk of response.body) {
+        chunkCount++;
+        console.log(`DEBUG: Processing chunk ${chunkCount}:`, chunk);
+        
+        if (chunk.chunk && chunk.chunk.bytes) {
+          const chunkData = JSON.parse(new TextDecoder().decode(chunk.chunk.bytes));
+          console.log(`DEBUG: Chunk ${chunkCount} data:`, chunkData);
+          
+          // Handle different types of chunks
+          if (chunkData.type === 'content_block_delta' && chunkData.delta && chunkData.delta.text) {
+            // This is a text chunk from Claude
+            const textChunk = chunkData.delta.text;
+            console.log(`DEBUG: Found text chunk: "${textChunk}"`);
+            onChunk(textChunk);
+          } else if (chunkData.type === 'message_delta' && chunkData.delta && chunkData.delta.stop_reason) {
+            // This indicates the end of the stream
+            console.log('Stream completed with stop reason:', chunkData.delta.stop_reason);
+          } else {
+            console.log(`DEBUG: Unknown chunk type: ${chunkData.type}`);
+          }
+        } else {
+          console.log(`DEBUG: Chunk ${chunkCount} has no bytes:`, chunk);
+        }
+      }
+      
+      console.log(`DEBUG: Finished processing ${chunkCount} chunks`);
+    } else {
+      throw new Error('No streaming body in Bedrock response');
+    }
+  } catch (error) {
+    console.error('Error streaming from Bedrock model:', error);
+    throw new Error(`Bedrock streaming failed: ${error.message}`);
+  }
+}
+
+/**
  * Health check for chat system
  */
 exports.healthCheck = async (req, res) => {
@@ -198,7 +529,7 @@ exports.healthCheck = async (req, res) => {
     message: 'Chat system is healthy',
     data: {
       activeConversations: conversations.size,
-      openaiConfigured: !!process.env.OPENAI_API_KEY
+      bedrockConfigured: !!(process.env.AWS_ACCESS_KEY_ID && process.env.AWS_SECRET_ACCESS_KEY && process.env.AWS_REGION)
     }
   });
 };

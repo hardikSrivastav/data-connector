@@ -8,6 +8,9 @@ router.post('/start', chatController.startConversation);
 // Send a message in a conversation
 router.post('/message', chatController.sendMessage);
 
+// Send a message in a conversation with streaming
+router.post('/message/stream', chatController.sendMessageStream);
+
 // Get conversation history
 router.get('/conversation/:conversationId', chatController.getConversation);
 
