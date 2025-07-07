@@ -40,6 +40,8 @@ services:
       context: .
       dockerfile: docker/backend.Dockerfile
     container_name: waitlist-backend
+    ports:
+      - "3001:3001"  # Expose backend port directly
     environment:
       - PORT=3001
       - DB_HOST=postgres

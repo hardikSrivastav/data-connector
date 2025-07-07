@@ -151,20 +151,48 @@ exports.sendMessageStream = async (req, res) => {
     
     console.log('Current conversation messages after adding user message:', conversation.messages.map(m => ({ role: m.role, content: m.content.substring(0, 50) + '...' })));
     
-    // Set up Server-Sent Events
+    // Set up Server-Sent Events with anti-buffering headers
     res.writeHead(200, {
       'Content-Type': 'text/event-stream',
-      'Cache-Control': 'no-cache',
+      'Cache-Control': 'no-cache, no-store, must-revalidate',
       'Connection': 'keep-alive',
       'Access-Control-Allow-Origin': '*',
-      'Access-Control-Allow-Headers': 'Cache-Control'
+      'Access-Control-Allow-Headers': 'Cache-Control',
+      'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+      'X-Accel-Buffering': 'no', // Disable Nginx buffering
+      'Transfer-Encoding': 'chunked',
+      'Content-Encoding': 'none', // Disable compression
+      'Pragma': 'no-cache',
+      'Expires': '0'
     });
     
-    // Send initial status
+    // Disable buffering at the socket level
+    if (res.socket) {
+      res.socket.setNoDelay(true);
+    }
+    
+    // Send initial status with connection primer
+    const startTime = Date.now();
+    console.log(`Backend: Sending initial status [${new Date().toISOString()}]`);
+    
+    // Send multiple small chunks to "prime" the connection and break buffering
+    res.write(`: connection-primer\n\n`);
+    res.write(`: connection-established\n\n`);
     res.write(`data: ${JSON.stringify({
       type: 'status',
       message: 'Starting response generation...'
     })}\n\n`);
+    
+    // Force flush to prevent buffering
+    if (res.flush) {
+      res.flush();
+    }
+    if (res.socket) {
+      res.socket.setNoDelay(true);
+      if (res.socket.uncork) {
+        res.socket.uncork();
+      }
+    }
     
     let fullResponse = '';
     
@@ -172,7 +200,8 @@ exports.sendMessageStream = async (req, res) => {
       // Stream AI response from AWS Bedrock
       console.log('=== ABOUT TO CALL STREAMBEDROCK MODEL ===');
       await streamBedrockModel(conversation.messages, (chunk) => {
-        console.log(`DEBUG: onChunk called with: "${chunk}"`);
+        const chunkTime = Date.now();
+        console.log(`Backend: onChunk called [${new Date().toISOString()}] (${chunkTime - startTime}ms from start) with: "${chunk}"`);
         fullResponse += chunk;
         
         const chunkData = {
@@ -181,10 +210,25 @@ exports.sendMessageStream = async (req, res) => {
           fullContent: fullResponse
         };
         
-        console.log(`DEBUG: Sending chunk to client:`, chunkData);
+        console.log(`Backend: Sending chunk to client [${new Date().toISOString()}]:`, chunkData);
         
-        // Send chunk to client
-        res.write(`data: ${JSON.stringify(chunkData)}\n\n`);
+        // Send chunk to client with immediate flushing
+        const chunkMessage = `data: ${JSON.stringify(chunkData)}\n\n`;
+        res.write(chunkMessage);
+        
+        // Multiple flush attempts to force immediate sending
+        if (res.flush) {
+          res.flush();
+        }
+        if (res.flushHeaders) {
+          res.flushHeaders();
+        }
+        if (res.socket && res.socket.write) {
+          // Force socket to send immediately
+          res.socket.uncork();
+        }
+        
+        console.log(`Backend: Chunk sent and flushed [${new Date().toISOString()}]`);
       });
       
       console.log('DEBUG: Streaming completed, fullResponse length:', fullResponse.length);
@@ -206,10 +250,17 @@ exports.sendMessageStream = async (req, res) => {
         extractedConfig: conversation.extractedConfig
       };
       
-      console.log('DEBUG: Sending completion message:', completionData);
+      console.log(`Backend: Sending completion message [${new Date().toISOString()}] (${Date.now() - startTime}ms from start):`, completionData);
       
       // Send completion message
       res.write(`data: ${JSON.stringify(completionData)}\n\n`);
+      
+      // Force flush to prevent buffering
+      if (res.flush) {
+        res.flush();
+      }
+      
+      console.log(`Backend: Completion sent and flushed [${new Date().toISOString()}]`);
       
     } catch (streamError) {
       console.error('Error in streaming:', streamError);

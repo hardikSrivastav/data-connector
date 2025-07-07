@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useRef } from "react";
+import { flushSync } from "react-dom";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
@@ -34,7 +35,14 @@ export default function ChatDeploymentPage() {
   // Auto-scroll to bottom of messages
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages]);
+  }, [messages, streamingContent]);
+
+  // Monitor streaming content changes
+  useEffect(() => {
+    console.log('Frontend: streamingContent state changed:', streamingContent);
+    console.log('Frontend: isStreaming state:', isStreaming);
+    console.log('Frontend: Should show streaming message:', isStreaming && streamingContent);
+  }, [streamingContent, isStreaming]);
 
   // Auto-start conversation when component mounts
   useEffect(() => {
@@ -46,7 +54,11 @@ export default function ChatDeploymentPage() {
   const startConversation = async () => {
     setIsLoading(true);
     try {
-      const response = await fetch('/api/chat/start', {
+      const backendUrl = process.env.NODE_ENV === 'production' 
+        ? 'http://localhost:3001/api/chat/start'
+        : 'http://localhost:3001/api/chat/start';
+        
+      const response = await fetch(backendUrl, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -93,10 +105,19 @@ export default function ChatDeploymentPage() {
     setCurrentMessage("");
     setIsStreaming(true);
     setStreamingContent("");
+    
+    let isCompleted = false;
+    let completedData: any = null;
 
     try {
-      // Use streaming endpoint
-      const response = await fetch('/api/chat/message/stream', {
+      // Use streaming endpoint - bypass Next.js rewrites for streaming
+      const backendUrl = process.env.NODE_ENV === 'production' 
+        ? 'http://localhost:3001/api/chat/message/stream'  // Direct to backend in production
+        : 'http://localhost:3001/api/chat/message/stream'; // Direct to backend in development
+        
+      console.log(`Frontend: Making streaming request to ${backendUrl}`);
+      
+      const response = await fetch(backendUrl, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -111,63 +132,106 @@ export default function ChatDeploymentPage() {
         throw new Error('Failed to send message');
       }
 
-      // Read the stream
-      const reader = response.body?.getReader();
-      const decoder = new TextDecoder();
-      
-      if (!reader) {
-        throw new Error('No reader available for stream');
+      // Check if response body exists
+      if (!response.body) {
+        throw new Error('No response body for streaming');
       }
 
+      const startTime = Date.now();
+      console.log(`Frontend: Starting to read stream... [${new Date().toISOString()}]`);
+      
+      // Read the stream with proper handling
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      
       let buffer = '';
       
-      while (true) {
-        const { done, value } = await reader.read();
-        
-        if (done) break;
-        
-        // Decode the chunk
-        buffer += decoder.decode(value, { stream: true });
-        
-        // Process complete lines (Server-Sent Events format)
-        const lines = buffer.split('\n');
-        buffer = lines.pop() || ''; // Keep incomplete line in buffer
-        
-        for (const line of lines) {
-          if (line.startsWith('data: ')) {
-            try {
-              const data = JSON.parse(line.slice(6)); // Remove 'data: ' prefix
-              
-              if (data.type === 'chunk') {
-                setStreamingContent(data.fullContent);
-              } else if (data.type === 'complete') {
-                // Streaming completed
-                setMessages(prev => [...prev, {
-                  role: 'assistant',
-                  content: data.message,
-                  timestamp: new Date()
-                }]);
-                setExtractedConfig(data.extractedConfig);
-                setStreamingContent("");
-                break;
-              } else if (data.type === 'error') {
-                toast.error(data.message);
-                setStreamingContent("");
-                break;
+      try {
+        while (true) {
+          const readStartTime = Date.now();
+          const { done, value } = await reader.read();
+          const readEndTime = Date.now();
+          
+          if (done) {
+            console.log(`Frontend: Stream read completed [${new Date().toISOString()}] (Total time: ${Date.now() - startTime}ms)`);
+            break;
+          }
+          
+          // Decode the chunk
+          const chunk = decoder.decode(value, { stream: true });
+          console.log(`Frontend: Received chunk [${new Date().toISOString()}] (Read took: ${readEndTime - readStartTime}ms):`, chunk);
+          buffer += chunk;
+          
+          // Process complete lines (Server-Sent Events format)
+          const lines = buffer.split('\n');
+          buffer = lines.pop() || ''; // Keep incomplete line in buffer
+          
+          for (const line of lines) {
+            if (line.trim() === '') continue; // Skip empty lines
+            
+            if (line.startsWith('data: ')) {
+              try {
+                const dataStr = line.slice(6); // Remove 'data: ' prefix
+                console.log('Frontend: Processing SSE data:', dataStr);
+                const data = JSON.parse(dataStr);
+                
+                if (data.type === 'chunk') {
+                  console.log('Frontend: Updating streaming content:', data.content);
+                  console.log('Frontend: Full content length:', data.fullContent.length);
+                  console.log('Frontend: isStreaming before update:', isStreaming);
+                  
+                  // Force React to update the UI immediately
+                  flushSync(() => {
+                    setStreamingContent(data.fullContent);
+                  });
+                  
+                  console.log('Frontend: streamingContent updated to:', data.fullContent);
+                } else if (data.type === 'complete') {
+                  // Mark as completed but don't end streaming yet
+                  console.log('Frontend: Stream completion message received');
+                  isCompleted = true;
+                  completedData = data;
+                  // Don't return here, let the stream finish naturally
+                } else if (data.type === 'error') {
+                  console.log('Frontend: Stream error:', data.message);
+                  toast.error(data.message);
+                  setStreamingContent("");
+                  setIsStreaming(false);
+                  return; // Exit on error
+                } else if (data.type === 'status') {
+                  console.log('Frontend: Stream status:', data.message);
+                }
+              } catch (e) {
+                console.error('Frontend: Error parsing streaming data:', e, 'Line:', line);
               }
-            } catch (e) {
-              console.error('Error parsing streaming data:', e);
             }
           }
         }
+      } finally {
+        reader.releaseLock();
       }
+      
+      // Handle completion after stream ends
+      if (isCompleted && completedData) {
+        console.log('Frontend: Processing completion after stream ended');
+        setMessages(prev => [...prev, {
+          role: 'assistant',
+          content: completedData.message,
+          timestamp: new Date()
+        }]);
+        setExtractedConfig(completedData.extractedConfig);
+      }
+      
+      // If we reach here, streaming is done
+      console.log('Frontend: Stream processing completed, setting isStreaming to false');
+      setStreamingContent("");
+      setIsStreaming(false);
       
     } catch (error) {
       toast.error("Failed to send message");
       console.error('Error:', error);
       setStreamingContent("");
-    } finally {
-      setIsStreaming(false);
+      setIsStreaming(false); // Set streaming to false on error
     }
   };
 
@@ -176,7 +240,11 @@ export default function ChatDeploymentPage() {
 
     setIsLoading(true);
     try {
-      const response = await fetch('/api/chat/generate-files', {
+      const backendUrl = process.env.NODE_ENV === 'production' 
+        ? 'http://localhost:3001/api/chat/generate-files'
+        : 'http://localhost:3001/api/chat/generate-files';
+        
+      const response = await fetch(backendUrl, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -298,11 +366,18 @@ export default function ChatDeploymentPage() {
                           <span className="inline-block w-2 h-4 bg-[#7b35b8] ml-1 animate-pulse"></span>
                         </p>
                         <p className="text-xs text-gray-500 mt-3 font-baskerville">
-                          Streaming...
+                          Streaming... (Length: {streamingContent.length})
                         </p>
                       </div>
                     </div>
                   </div>
+                </div>
+              )}
+              
+              {/* Debug info */}
+              {process.env.NODE_ENV === 'development' && (
+                <div className="text-xs text-gray-400 p-2 bg-gray-50 rounded">
+                  Debug: isStreaming={isStreaming.toString()}, streamingContent.length={streamingContent.length}, condition={((isStreaming && streamingContent) ? 'true' : 'false')}
                 </div>
               )}
               
