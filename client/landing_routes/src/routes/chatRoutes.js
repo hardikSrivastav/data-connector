@@ -26,4 +26,10 @@ router.get('/templates', chatController.getTemplateInfo);
 // Health check for chat system
 router.get('/health', chatController.healthCheck);
 
+// Test Bedrock tools functionality
+router.get('/test-tools', chatController.testTools);
+
+// Test tools directly without any agent
+router.get('/test-tools-direct', chatController.testToolsDirect);
+
 module.exports = router; 

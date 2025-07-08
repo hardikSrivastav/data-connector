@@ -1,8 +1,9 @@
 const { v4: uuidv4 } = require('uuid');
 const { BedrockRuntimeClient, InvokeModelCommand, InvokeModelWithResponseStreamCommand } = require('@aws-sdk/client-bedrock-runtime');
 const DeploymentGenerator = require('../services/deploymentGenerator');
+const BedrockToolsAgent = require('../services/bedrockToolsAgent');
 
-// Initialize AWS Bedrock client
+// Initialize AWS Bedrock client (keeping for fallback)
 const bedrock = new BedrockRuntimeClient({
   region: process.env.AWS_REGION || 'ap-south-1',
   credentials: {
@@ -20,64 +21,186 @@ const conversations = new Map();
 // Initialize deployment generator
 const deploymentGenerator = new DeploymentGenerator();
 
-// Initialize deployment generator on server start
+// Initialize agents
+const bedrockToolsAgent = new BedrockToolsAgent();
+
+// Initialize all systems on server start
 (async () => {
   try {
     await deploymentGenerator.initialize();
     console.log('Deployment generator ready for conversations');
+    
+    // Try to initialize Bedrock Tools agent (uses existing AWS creds)
+    try {
+      await bedrockToolsAgent.initialize();
+      console.log('Bedrock Tools agent ready for conversations');
+    } catch (error) {
+      console.warn('Bedrock Tools agent failed to initialize:', error.message);
+    }
   } catch (error) {
-    console.error('Failed to initialize deployment generator:', error);
+    console.error('Failed to initialize systems:', error);
   }
 })();
 
 /**
- * Enhanced system prompt that understands deployment templates and extracts requirements
+ * Get detailed template analysis for introspection
  */
-async function getSystemPrompt(userInfo) {
-  // Get available template requirements dynamically
-  let templateRequirements = {};
+exports.getTemplateIntrospection = async (req, res) => {
   try {
-    templateRequirements = await deploymentGenerator.getAvailableTemplates();
+    await deploymentGenerator.ensureInitialized();
+    const analysis = await deploymentGenerator.getTemplateAnalysis();
+    
+    res.json({
+      success: true,
+      data: analysis
+    });
   } catch (error) {
-    console.warn('Could not load template requirements:', error.message);
+    console.error('Error getting template introspection:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to analyze templates'
+    });
+  }
+};
+
+/**
+ * Enhanced system prompt that understands deployment templates and extracts requirements
+ * Now conversation-aware to only ask about relevant databases
+ * Enhanced with Bedrock tool capabilities
+ */
+async function getSystemPrompt(userInfo, userMessage = null) {
+  // Get actual template analysis for introspection
+  let templateAnalysis = {};
+  let actualPlaceholders = [];
+  
+  try {
+    await deploymentGenerator.ensureInitialized();
+    templateAnalysis = await deploymentGenerator.getTemplateAnalysis();
+    
+    // Extract real placeholders that need values
+    const allPlaceholders = Object.values(templateAnalysis.placeholders);
+    actualPlaceholders = allPlaceholders.map(p => ({
+      name: p.name,
+      type: p.type,
+      category: p.category,
+      placeholder: p.placeholder,
+      example: p.example,
+      usedInTemplates: p.usedInTemplates
+    }));
+    
+  } catch (error) {
+    console.warn('Could not load template analysis:', error.message);
   }
 
-  return `You are a technical consultant specializing in Ceneca deployment configuration. Your goal is to help users configure their deployment through natural conversation while intelligently extracting the information needed to fill deployment templates.
+  // If we have a user message, filter placeholders based on what they mentioned
+  if (userMessage && actualPlaceholders.length > 0) {
+    actualPlaceholders = filterPlaceholdersBasedOnMessage(userMessage, actualPlaceholders);
+  }
 
-PERSONALITY:
-- Knowledgeable but not condescending
-- Ask clarifying questions when needed
-- Explain the "why" behind recommendations
-- Adapt to user's technical level
+  // Get available tools information
+  let availableTools = [];
+  try {
+    if (bedrockToolsAgent.isInitialized) {
+      availableTools = bedrockToolsAgent.getAvailableTools();
+    }
+  } catch (error) {
+    console.warn('Could not get tools info:', error.message);
+  }
 
-CAPABILITIES:
-- Understand infrastructure contexts (databases, auth, networking)
-- Recommend best practices for enterprise deployments
-- Extract deployment requirements from natural language
-- Provide technical explanations for configuration choices
+  return `You are a deployment configuration assistant for Ceneca. You help users set up deployment configurations by collecting their requirements and managing deployment files.
 
-DEPLOYMENT TEMPLATE AWARENESS:
-You have access to real deployment templates that need the following information:
-${JSON.stringify(templateRequirements, null, 2)}
+You have access to tools that let you inspect and modify deployment files. Use these tools naturally when needed:
 
-Your job is to gather this information through natural conversation. When users mention:
-- Database names/hosts: Extract connection details
-- Authentication providers: Extract SSO configuration
-- Domain names: Note for SSL and networking setup
-- Team sizes: Recommend appropriate scaling
-- Environment types: Suggest production vs development settings
+AVAILABLE TOOLS:
+${availableTools.map(tool => `- ${tool.name}: ${tool.description.trim()}`).join('\n')}
 
-CONVERSATION STYLE:
-- Start with understanding their business scenario
-- Ask about their existing infrastructure
-- Recommend configurations based on their needs
-- Explain trade-offs and best practices
-- Confirm understanding before proceeding
+APPROACH:
+1. Ask users about their setup needs (databases, authentication, domain)
+2. Use tools to check available deployment files when relevant
+3. Use tools to inspect files when you need to understand their structure
+4. Use tools to update files immediately when users provide configuration values
+5. Offer environment variable options for sensitive data
+
+WHAT TO ASK FOR:
+${actualPlaceholders.length > 0 ? `Based on the deployment templates, I need:
+${actualPlaceholders.map(p => `- ${p.name} (${p.category}): ${p.example || 'configuration value'}`).join('\n')}` : 'Database connections, authentication setup, and deployment configuration'}
+
+SECURITY APPROACH:
+- Always suggest environment variables for sensitive data (API keys, passwords, etc.)
+- Example: Ask for "POSTGRES_URI" instead of individual database credentials
+- Make it clear users can use placeholders and update them later
+
+Keep responses conversational and focused. Ask for one thing at a time. Use tools when you need to check or modify files.
 
 USER CONTEXT:
-${JSON.stringify(userInfo)}
+${JSON.stringify(userInfo)}`;
+}
 
-IMPORTANT: Extract technical details naturally without making it feel like a form. Focus on understanding their use case first, then gather the technical requirements.`;
+/**
+ * Filter placeholders based on what the user mentioned in their message
+ */
+function filterPlaceholdersBasedOnMessage(userMessage, actualPlaceholders) {
+  const message = userMessage.toLowerCase();
+  
+  // Check for specific database mentions
+  const databaseMentions = {
+    postgresql: ['postgresql', 'postgres', 'pg', 'psql'],
+    mongodb: ['mongodb', 'mongo', 'nosql'],
+    qdrant: ['qdrant', 'vector', 'embedding']
+  };
+
+  // Filter placeholders to only include relevant ones
+  return actualPlaceholders.filter(placeholder => {
+    // Always include non-database placeholders (auth, deployment, etc.)
+    if (!placeholder.category || !['postgresql', 'mongodb', 'qdrant'].includes(placeholder.category)) {
+      return true;
+    }
+    
+    // For database placeholders, only include if mentioned
+    for (const [dbType, keywords] of Object.entries(databaseMentions)) {
+      if (placeholder.category === dbType) {
+        return keywords.some(keyword => message.includes(keyword));
+      }
+    }
+    
+    return false;
+  });
+}
+
+/**
+ * Filter template requirements based on what the user mentioned in their message
+ */
+function filterRequirementsBasedOnMessage(userMessage, allRequirements) {
+  const message = userMessage.toLowerCase();
+  const relevantRequirements = {
+    databases: [],
+    authentication: allRequirements.authentication || [],
+    deployment: allRequirements.deployment || [],
+    networking: allRequirements.networking || []
+  };
+
+  // Check for specific database mentions
+  const databaseMentions = {
+    postgresql: ['postgresql', 'postgres', 'pg', 'psql'],
+    mongodb: ['mongodb', 'mongo', 'nosql'],
+    qdrant: ['qdrant', 'vector', 'embedding']
+  };
+
+  // Only include databases that were actually mentioned
+  for (const [dbType, keywords] of Object.entries(databaseMentions)) {
+    if (keywords.some(keyword => message.includes(keyword))) {
+      if (allRequirements.databases.includes(dbType)) {
+        relevantRequirements.databases.push(dbType);
+      }
+    }
+  }
+
+  // If no specific databases mentioned, include all (fallback)
+  if (relevantRequirements.databases.length === 0) {
+    relevantRequirements.databases = allRequirements.databases || [];
+  }
+
+  return relevantRequirements;
 }
 
 /**
@@ -140,7 +263,7 @@ exports.sendMessage = async (req, res) => {
         message: 'Conversation not found'
       });
     }
-
+    
     // Add user message
     conversation.messages.push({
       role: 'user',
@@ -148,23 +271,51 @@ exports.sendMessage = async (req, res) => {
       timestamp: new Date()
     });
 
+    // Regenerate system prompt based on user's first message to filter relevant requirements
+    let systemPrompt = conversation.systemPrompt;
+    if (conversation.messages.length === 1) {
+      // This is the first user message, regenerate system prompt with filtered requirements
+      systemPrompt = await getSystemPrompt(conversation.userInfo, message);
+      conversation.systemPrompt = systemPrompt;
+    }
+
     // Build conversation context for AI
     const conversationHistory = [
-      { role: 'system', content: conversation.systemPrompt },
+      { role: 'system', content: systemPrompt },
       ...conversation.messages.map(msg => ({
         role: msg.role,
         content: msg.content
       }))
     ];
 
-    // Get AI response
-    const response = await invokeBedrockModel(conversationHistory);
+    // Get AI response using tools-capable agents (priority order)
+    let response;
+    if (bedrockToolsAgent.isInitialized) {
+      // Use Bedrock Tools agent (preferred - uses existing AWS creds)
+      response = await bedrockToolsAgent.processMessage(
+        systemPrompt,
+        message,
+        conversation.messages.map(msg => ({
+          role: msg.role,
+          content: msg.content
+        }))
+      );
+    } else {
+      // Fallback to basic Bedrock (no tools)
+      console.log('Bedrock Tools agent not available, falling back to basic Bedrock');
+      const aiResponse = await invokeBedrockModel(conversationHistory);
+      response = {
+        content: aiResponse,
+        toolCalls: []
+      };
+    }
     
     // Add AI response to conversation
     conversation.messages.push({
       role: 'assistant',
-      content: response,
-      timestamp: new Date()
+      content: response.content,
+      timestamp: new Date(),
+      toolCalls: response.toolCalls || []
     });
 
     // Extract configuration from the conversation
@@ -179,9 +330,10 @@ exports.sendMessage = async (req, res) => {
     res.json({
       success: true,
       data: {
-        message: response,
+        message: response.content,
         extractedConfig: extractedConfig,
-        conversationId: conversationId
+        conversationId: conversationId,
+        toolCalls: response.toolCalls || []
       }
     });
 
@@ -208,7 +360,7 @@ exports.sendMessageStream = async (req, res) => {
         message: 'Conversation not found'
       });
     }
-
+    
     // Set up SSE headers
     res.writeHead(200, {
       'Content-Type': 'text/plain',
@@ -217,7 +369,7 @@ exports.sendMessageStream = async (req, res) => {
       'Access-Control-Allow-Origin': '*',
       'Access-Control-Allow-Headers': 'Cache-Control'
     });
-
+    
     // Add user message
     conversation.messages.push({
       role: 'user',
@@ -225,59 +377,138 @@ exports.sendMessageStream = async (req, res) => {
       timestamp: new Date()
     });
 
-    // Build conversation context
+    // Regenerate system prompt based on user's first message to filter relevant requirements
+    let systemPrompt = conversation.systemPrompt;
+    if (conversation.messages.length === 1) {
+      // This is the first user message, regenerate system prompt with filtered requirements
+      systemPrompt = await getSystemPrompt(conversation.userInfo, message);
+      conversation.systemPrompt = systemPrompt;
+    }
+
+    // Build conversation context for AI
     const conversationHistory = [
-      { role: 'system', content: conversation.systemPrompt },
+      { role: 'system', content: systemPrompt },
       ...conversation.messages.map(msg => ({
         role: msg.role,
         content: msg.content
       }))
     ];
 
-    // Stream AI response
-    let fullResponse = '';
-    await streamBedrockModel(conversationHistory, (chunk) => {
-      fullResponse += chunk;
-      res.write(`data: ${JSON.stringify({ 
-        type: 'chunk', 
-        content: chunk,
-        fullContent: fullResponse 
-      })}\n\n`);
-    });
-
-    // Add AI response to conversation
-    conversation.messages.push({
-      role: 'assistant',
-      content: fullResponse,
-      timestamp: new Date()
-    });
-
-    // Extract configuration from the conversation
-    const extractedConfig = deploymentGenerator.conversationExtractor.extractFromConversation(
-      conversation.messages, 
-      conversation.extractedConfig
-    );
+    let fullContent = '';
+    let hasError = false;
     
-    conversation.extractedConfig = extractedConfig;
-    conversation.lastUpdated = new Date();
+    try {
+      // Stream AI response using tools-capable agents (priority order)
+      let response;
+      if (bedrockToolsAgent.isInitialized) {
+        // Use Bedrock Tools agent streaming
+        response = await bedrockToolsAgent.processMessageStream(
+          systemPrompt,
+          message,
+          conversation.messages.map(msg => ({
+            role: msg.role,
+            content: msg.content
+          })),
+          (data) => {
+            // Handle different types of data from the agent
+            if (typeof data === 'string') {
+              // Regular content chunk
+              if (data.includes('[TOOL CALL]')) {
+                // Tool call notification
+                const toolMatch = data.match(/\[TOOL CALL\] (.+?): (.+)/);
+                if (toolMatch) {
+                  res.write(`data: ${JSON.stringify({
+                    type: 'tool_call',
+                    toolName: toolMatch[1],
+                    toolArgs: toolMatch[2]
+                  })}\n\n`);
+                }
+              } else if (data.includes('[TOOL RESULT]')) {
+                // Tool result notification
+                const resultMatch = data.match(/\[TOOL RESULT\] (.+)/);
+                if (resultMatch) {
+                  res.write(`data: ${JSON.stringify({
+                    type: 'tool_result',
+                    result: resultMatch[1]
+                  })}\n\n`);
+                }
+              } else {
+                // Regular content
+                fullContent += data;
+                res.write(`data: ${JSON.stringify({
+                  type: 'chunk',
+                  content: data,
+                  fullContent: fullContent
+                })}\n\n`);
+              }
+            }
+          }
+        );
+      } else {
+        // Fallback to basic Bedrock streaming
+        console.log('Bedrock Tools agent not available, falling back to basic Bedrock streaming');
+        await streamBedrockModel(conversationHistory, (chunk) => {
+          fullContent += chunk;
+          res.write(`data: ${JSON.stringify({
+            type: 'chunk',
+            content: chunk,
+            fullContent: fullContent
+          })}\n\n`);
+        });
+        response = {
+          content: fullContent,
+          toolCalls: []
+        };
+      }
+      
+      // Add AI response to conversation
+      conversation.messages.push({
+        role: 'assistant',
+        content: response.content,
+        timestamp: new Date(),
+        toolCalls: response.toolCalls || []
+      });
 
-    // Send completion message
-    res.write(`data: ${JSON.stringify({
-      type: 'complete',
-      message: fullResponse,
-      extractedConfig: extractedConfig,
-      conversationId: conversationId
-    })}\n\n`);
+      // Extract configuration from the conversation
+      const extractedConfig = deploymentGenerator.conversationExtractor.extractFromConversation(
+        conversation.messages, 
+        conversation.extractedConfig
+      );
+      
+      conversation.extractedConfig = extractedConfig;
+      conversation.lastUpdated = new Date();
 
+      // Send completion message
+      res.write(`data: ${JSON.stringify({
+        type: 'complete',
+        message: response.content,
+        extractedConfig: extractedConfig,
+        conversationId: conversationId,
+        toolCalls: response.toolCalls || []
+      })}\n\n`);
+      
+    } catch (streamError) {
+      console.error('Streaming error:', streamError);
+      hasError = true;
+      res.write(`data: ${JSON.stringify({
+        type: 'error',
+        message: 'Failed to get AI response'
+      })}\n\n`);
+    }
+    
     res.end();
 
   } catch (error) {
-    console.error('Error in streaming message:', error);
-    res.write(`data: ${JSON.stringify({
-      type: 'error',
-      message: 'Failed to process message'
-    })}\n\n`);
-    res.end();
+    console.error('Error in stream message:', error);
+    try {
+      res.write(`data: ${JSON.stringify({
+        type: 'error',
+        message: 'Failed to process message'
+      })}\n\n`);
+      res.end();
+    } catch (endError) {
+      console.error('Error ending response:', endError);
+    }
   }
 };
 
@@ -362,7 +593,7 @@ ${content}
     res.setHeader('Content-Type', 'text/plain');
     res.setHeader('Content-Disposition', `attachment; filename="ceneca-deployment-${conversationId.slice(0, 8)}.txt"`);
     res.send(packageContent);
-
+    
   } catch (error) {
     console.error('Error downloading deployment package:', error);
     res.status(500).json({
@@ -386,7 +617,7 @@ exports.getConversation = async (req, res) => {
         message: 'Conversation not found'
       });
     }
-
+    
     res.json({
       success: true,
       data: {
@@ -428,22 +659,118 @@ exports.getTemplateInfo = async (req, res) => {
 };
 
 /**
+ * Test Bedrock tools functionality
+ */
+exports.testTools = async (req, res) => {
+  try {
+    // Try Bedrock Tools agent first
+    if (bedrockToolsAgent.isInitialized) {
+      const tools = bedrockToolsAgent.getAvailableTools();
+      
+      // Create a simple test message to trigger tool usage
+      const testResult = await bedrockToolsAgent.processMessage(
+        'You are a test assistant. Use the list_deployment_files tool to show available files.',
+        'List the available deployment files',
+        []
+      );
+
+      return res.json({
+        success: true,
+        data: {
+          message: 'Bedrock Tools test completed',
+          agent: 'bedrock-tools',
+          result: testResult.content,
+          toolCalls: testResult.toolCalls,
+          availableTools: tools.map(t => t.name)
+        }
+      });
+    }
+
+    // No tools agents available
+    return res.status(503).json({
+      success: false,
+      message: 'Bedrock Tools agent not initialized. AWS credentials required.',
+      suggestion: 'Try the /test-tools-direct endpoint to test tools directly.'
+    });
+
+  } catch (error) {
+    console.error('Error testing tools:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to test tools: ' + error.message
+    });
+  }
+};
+
+/**
+ * Test tools directly without any agent
+ */
+exports.testToolsDirect = async (req, res) => {
+  try {
+    const { 
+      IntrospectFileTool, 
+      EditFileTool, 
+      ListDeploymentFilesTool, 
+      CreateDeploymentFileTool 
+    } = require('../services/langgraphTools');
+
+    // Test the tools directly
+    const listTool = new ListDeploymentFilesTool();
+    const introspectTool = new IntrospectFileTool();
+
+    // Test listing files
+    const listResult = await listTool._call('{}');
+    
+    // Test introspecting a file (if any are found)
+    let introspectResult = 'No files to introspect';
+    if (listResult.includes('config.yaml')) {
+      introspectResult = await introspectTool._call('{"filePath": "config.yaml"}');
+    }
+
+    res.json({
+      success: true,
+      data: {
+        message: 'Direct tools test completed',
+        listResult: listResult,
+        introspectResult: introspectResult.substring(0, 500) + '...', // Truncate for readability
+        toolsAvailable: [
+          'introspect_file',
+          'edit_file', 
+          'list_deployment_files',
+          'create_deployment_file'
+        ]
+      }
+    });
+
+  } catch (error) {
+    console.error('Error testing tools directly:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to test tools directly: ' + error.message
+    });
+  }
+};
+
+/**
  * Health check for chat system
  */
 exports.healthCheck = async (req, res) => {
   try {
-    // Check if deployment generator is initialized
-    const isInitialized = deploymentGenerator.isInitialized;
+    // Check if systems are initialized
+    const deploymentInitialized = deploymentGenerator.isInitialized;
+    const bedrockToolsInitialized = bedrockToolsAgent.isInitialized;
     
     // Get basic system info
     const systemInfo = {
       chatSystem: 'operational',
-      deploymentGenerator: isInitialized ? 'initialized' : 'initializing',
+      deploymentGenerator: deploymentInitialized ? 'initialized' : 'initializing',
+      bedrockToolsAgent: bedrockToolsInitialized ? 'initialized' : 'initializing',
+      toolsAvailable: bedrockToolsInitialized,
       conversationsActive: conversations.size,
       timestamp: new Date().toISOString()
     };
 
-    if (isInitialized) {
+    if (deploymentInitialized) {
       // Get template information if available
       try {
         const templates = await deploymentGenerator.getAvailableTemplates();
@@ -451,6 +778,22 @@ exports.healthCheck = async (req, res) => {
       } catch (error) {
         systemInfo.templatesLoaded = 'error loading';
       }
+    }
+
+    // Get tools information from available agents
+    if (bedrockToolsInitialized) {
+      try {
+        const tools = bedrockToolsAgent.getAvailableTools();
+        systemInfo.bedrockTools = tools.length;
+        systemInfo.bedrockToolNames = tools.map(t => t.name);
+        systemInfo.primaryAgent = 'bedrock-tools';
+      } catch (error) {
+        systemInfo.bedrockTools = 'error loading';
+      }
+    }
+
+    if (!systemInfo.primaryAgent) {
+      systemInfo.primaryAgent = 'basic-bedrock';
     }
 
     res.json({
@@ -486,10 +829,10 @@ async function invokeBedrockModel(messages) {
   };
 
   const command = new InvokeModelCommand(params);
-  const response = await bedrock.send(command);
-  
-  const responseBody = JSON.parse(new TextDecoder().decode(response.body));
-  return responseBody.content[0].text;
+    const response = await bedrock.send(command);
+    
+    const responseBody = JSON.parse(new TextDecoder().decode(response.body));
+      return responseBody.content[0].text;
 }
 
 /**
@@ -510,12 +853,12 @@ async function streamBedrockModel(messages, onChunk) {
   };
 
   const command = new InvokeModelWithResponseStreamCommand(params);
-  const response = await bedrock.send(command);
-
-  if (response.body) {
-    for await (const chunk of response.body) {
+    const response = await bedrock.send(command);
+    
+    if (response.body) {
+      for await (const chunk of response.body) {
       if (chunk.chunk?.bytes) {
-        const chunkData = JSON.parse(new TextDecoder().decode(chunk.chunk.bytes));
+          const chunkData = JSON.parse(new TextDecoder().decode(chunk.chunk.bytes));
         if (chunkData.type === 'content_block_delta' && chunkData.delta?.text) {
           onChunk(chunkData.delta.text);
         }

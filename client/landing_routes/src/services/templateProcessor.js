@@ -49,9 +49,19 @@ class TemplateProcessor {
     if (extractedConfig.databases) {
       if (extractedConfig.databases.postgresql) {
         const pg = extractedConfig.databases.postgresql;
-        this.substitutionMap.set('your-postgres-host', pg.host || 'localhost');
-        this.substitutionMap.set('your_database', pg.database || 'ceneca');
-        this.substitutionMap.set('user:password', `${pg.username || 'ceneca_user'}:${pg.password || 'secure_password'}`);
+        
+        // Handle environment variable vs direct values
+        if (pg.use_env_var && pg.env_var) {
+          // Use environment variable reference
+          this.substitutionMap.set('your-postgres-host', `\${${pg.env_var}}`);
+          this.substitutionMap.set('your_database', `\${${pg.env_var}}`);
+          this.substitutionMap.set('user:password', `\${${pg.env_var}}`);
+        } else {
+          // Use direct values
+          this.substitutionMap.set('your-postgres-host', pg.host || 'localhost');
+          this.substitutionMap.set('your_database', pg.database || 'ceneca');
+          this.substitutionMap.set('user:password', `${pg.username || 'ceneca_user'}:${pg.password || 'secure_password'}`);
+        }
       }
 
       if (extractedConfig.databases.mongodb) {
@@ -71,8 +81,19 @@ class TemplateProcessor {
     if (extractedConfig.authentication) {
       const auth = extractedConfig.authentication;
       this.substitutionMap.set('OIDC_PROVIDER', auth.provider || 'okta');
-      this.substitutionMap.set('OIDC_CLIENT_ID', auth.client_id || '');
-      this.substitutionMap.set('OIDC_CLIENT_SECRET', auth.client_secret || '');
+      
+      // Handle environment variables for sensitive auth data
+      if (auth.client_id && typeof auth.client_id === 'object' && auth.client_id.use_env_var) {
+        this.substitutionMap.set('OIDC_CLIENT_ID', `\${${auth.client_id.env_var}}`);
+      } else {
+        this.substitutionMap.set('OIDC_CLIENT_ID', auth.client_id || '');
+      }
+      
+      if (auth.client_secret && typeof auth.client_secret === 'object' && auth.client_secret.use_env_var) {
+        this.substitutionMap.set('OIDC_CLIENT_SECRET', `\${${auth.client_secret.env_var}}`);
+      } else {
+        this.substitutionMap.set('OIDC_CLIENT_SECRET', auth.client_secret || '');
+      }
       
       if (auth.provider === 'okta') {
         this.substitutionMap.set('OIDC_ISSUER', `https://${auth.okta_domain}/oauth2/default`);
@@ -94,7 +115,13 @@ class TemplateProcessor {
     if (extractedConfig.deployment) {
       const deploy = extractedConfig.deployment;
       this.substitutionMap.set('DOMAIN_NAME', deploy.domain_name || 'ceneca.yourcompany.com');
-      this.substitutionMap.set('LLM_API_KEY', deploy.api_key || 'your_api_key_here');
+      
+      // Handle API key as environment variable
+      if (deploy.api_key && typeof deploy.api_key === 'object' && deploy.api_key.use_env_var) {
+        this.substitutionMap.set('LLM_API_KEY', `\${${deploy.api_key.env_var}}`);
+      } else {
+        this.substitutionMap.set('LLM_API_KEY', deploy.api_key || 'your_api_key_here');
+      }
       
       // Set logging level based on environment
       const logLevel = deploy.environment === 'production' ? 'info' : 'debug';

@@ -67,7 +67,16 @@ class ConversationExtractor {
    * Extract database configuration information
    */
   extractDatabaseInfo(content, extraction, originalContent) {
-    // PostgreSQL extraction
+    // Check for environment variable references first
+    const envVarMatch = this.extractEnvironmentVariable(originalContent, ['DATABASE_URL', 'POSTGRES_URI', 'POSTGRESQL_URL']);
+    if (envVarMatch) {
+      extraction.databases.postgresql = extraction.databases.postgresql || {};
+      extraction.databases.postgresql.env_var = envVarMatch;
+      extraction.databases.postgresql.use_env_var = true;
+      return; // Skip detailed extraction if using env var
+    }
+
+    // PostgreSQL extraction (detailed values)
     if (this.matchesPattern(content, 'postgresql')) {
       extraction.databases.postgresql = extraction.databases.postgresql || {};
       
@@ -337,9 +346,47 @@ class ConversationExtractor {
   }
 
   /**
+   * Extract environment variable references
+   */
+  extractEnvironmentVariable(content, possibleVarNames) {
+    // Check if user mentions environment variables explicitly
+    const envPatterns = [
+      /(?:environment variable|env var|env)\s+(\w+)/i,
+      /(?:have it as|using|stored in)\s+(\w+)(?:\s+(?:in my environment|as env var|environment))?/i,
+      /(\w+)\s+(?:in my environment|as environment variable)/i
+    ];
+
+    for (const pattern of envPatterns) {
+      const match = content.match(pattern);
+      if (match && match[1]) {
+        const varName = match[1].toUpperCase();
+        // Check if it matches expected database env var names
+        if (possibleVarNames.some(name => varName.includes(name.replace('_', '')) || name.includes(varName))) {
+          return varName;
+        }
+      }
+    }
+
+    // Check for direct mentions of common env var names
+    for (const varName of possibleVarNames) {
+      if (content.toUpperCase().includes(varName)) {
+        return varName;
+      }
+    }
+
+    return null;
+  }
+
+  /**
    * Extract API keys
    */
   extractApiKey(content, context) {
+    // Check for environment variable first
+    const envVarMatch = this.extractEnvironmentVariable(content, [`${context.toUpperCase()}_API_KEY`, 'API_KEY']);
+    if (envVarMatch) {
+      return { env_var: envVarMatch, use_env_var: true };
+    }
+
     const apiKeyPatterns = [
       new RegExp(`${context}[\\s_-]*api[\\s_-]*key[:\\s]+([^\\s,;]+)`, 'i'),
       /api[_\s]?key[:\s]+([^\s,;]+)/i,
@@ -449,11 +496,18 @@ class ConversationExtractor {
 
     for (const [dbType, config] of Object.entries(databases)) {
       let dbConfidence = 0;
-      if (config.host) dbConfidence += 0.4;
-      if (config.port) dbConfidence += 0.2;
-      if (config.database) dbConfidence += 0.2;
-      if (config.username) dbConfidence += 0.1;
-      if (config.password) dbConfidence += 0.1;
+      
+      // Environment variable gets high confidence
+      if (config.use_env_var && config.env_var) {
+        dbConfidence = 0.9; // High confidence for env vars
+      } else {
+        // Traditional detailed configuration
+        if (config.host) dbConfidence += 0.4;
+        if (config.port) dbConfidence += 0.2;
+        if (config.database) dbConfidence += 0.2;
+        if (config.username) dbConfidence += 0.1;
+        if (config.password) dbConfidence += 0.1;
+      }
 
       total += dbConfidence;
       count++;
@@ -495,6 +549,11 @@ class ConversationExtractor {
 
     // Validate database configurations
     for (const [dbType, config] of Object.entries(extraction.databases)) {
+      // Skip validation if using environment variable
+      if (config.use_env_var && config.env_var) {
+        continue; // Environment variable configurations are considered complete
+      }
+      
       if (!config.host) {
         extraction.validation.warnings.push(`Missing host for ${dbType} database`);
       }

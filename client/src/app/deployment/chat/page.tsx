@@ -10,11 +10,19 @@ import { toast } from "sonner";
 import { Send, Bot, User, FileText, Database, Shield, Settings, CheckCircle, Menu } from "lucide-react";
 import { Navbar } from "@/components/navbar";
 import Image from "next/image";
+import ReactMarkdown from 'react-markdown';
 
 interface Message {
   role: 'user' | 'assistant';
   content: string;
   timestamp: Date;
+  toolCalls?: ToolCall[];
+}
+
+interface ToolCall {
+  name: string;
+  args: string;
+  result?: string;
 }
 
 interface ExtractedConfig {
@@ -222,6 +230,12 @@ export default function ChatDeploymentPage() {
                   flushSync(() => {
                     setStreamingContent(data.fullContent);
                   });
+                } else if (data.type === 'tool_call') {
+                  // Handle tool call notifications
+                  toast.info(`🔧 Using tool: ${data.toolName}`);
+                } else if (data.type === 'tool_result') {
+                  // Handle tool result notifications
+                  toast.success(`✅ Tool completed`);
                 } else if (data.type === 'complete') {
                   isCompleted = true;
                   completedData = data;
@@ -245,7 +259,8 @@ export default function ChatDeploymentPage() {
         setMessages(prev => [...prev, {
           role: 'assistant',
           content: completedData.message,
-          timestamp: new Date()
+          timestamp: new Date(),
+          toolCalls: completedData.toolCalls || []
         }]);
         setExtractedConfig(completedData.extractedConfig);
       }
@@ -455,9 +470,37 @@ export default function ChatDeploymentPage() {
                           ? 'bg-gray-50 border-gray-200 text-gray-900' 
                           : 'bg-white border-gray-900 text-gray-900'
                       }`}>
-                        <p className="text-sm whitespace-pre-wrap leading-relaxed font-baskerville">
-                          {message.content}
-                        </p>
+                        <div className="text-sm leading-relaxed font-baskerville prose prose-sm max-w-none">
+                          <ReactMarkdown
+                            components={{
+                              p: ({children}) => <p className="mb-2 last:mb-0">{children}</p>,
+                              strong: ({children}) => <strong className="font-semibold text-gray-900">{children}</strong>,
+                              ul: ({children}) => <ul className="list-disc list-inside mb-2 space-y-1">{children}</ul>,
+                              ol: ({children}) => <ol className="list-decimal list-inside mb-2 space-y-1">{children}</ol>,
+                              li: ({children}) => <li className="ml-0">{children}</li>,
+                              h1: ({children}) => <h1 className="text-lg font-semibold mb-2 text-gray-900">{children}</h1>,
+                              h2: ({children}) => <h2 className="text-base font-semibold mb-2 text-gray-900">{children}</h2>,
+                              h3: ({children}) => <h3 className="text-sm font-semibold mb-1 text-gray-900">{children}</h3>,
+                              code: ({children}) => <code className="bg-gray-100 px-1 py-0.5 rounded text-xs font-mono">{children}</code>,
+                              pre: ({children}) => <pre className="bg-gray-100 p-2 rounded text-xs font-mono overflow-x-auto">{children}</pre>
+                            }}
+                          >
+                            {message.content}
+                          </ReactMarkdown>
+                        </div>
+                        
+                        {/* Tool usage indicators */}
+                        {message.role === 'assistant' && message.toolCalls && message.toolCalls.length > 0 && (
+                          <div className="mt-2 pt-2 border-t border-gray-200">
+                            <div className="flex flex-wrap gap-1">
+                              {message.toolCalls.map((toolCall, idx) => (
+                                <Badge key={idx} variant="secondary" className="text-xs bg-blue-50 text-blue-700 border border-blue-200">
+                                  🔧 {toolCall.name}
+                                </Badge>
+                              ))}
+                            </div>
+                          </div>
+                        )}
                       </div>
                     </div>
                   </div>
@@ -469,14 +512,26 @@ export default function ChatDeploymentPage() {
                 <div className="flex justify-start">
                   <div className="w-full">
                     <div className="flex items-start gap-3">
-                      <div className="w-8 h-8 rounded-full bg-[#7b35b8] flex items-center justify-center flex-shrink-0">
-                        <Bot className="h-4 w-4 text-white" />
-                      </div>
-                      <div className="p-3 rounded-2xl bg-white border border-gray-200 text-gray-900">
-                        <p className="text-sm whitespace-pre-wrap leading-relaxed font-baskerville">
-                          {streamingContent}
+                      <div className="p-3 rounded-2xl bg-white border border-gray-900 text-gray-900">
+                        <div className="text-sm leading-relaxed font-baskerville prose prose-sm max-w-none">
+                          <ReactMarkdown
+                            components={{
+                              p: ({children}) => <p className="mb-2 last:mb-0">{children}</p>,
+                              strong: ({children}) => <strong className="font-semibold text-gray-900">{children}</strong>,
+                              ul: ({children}) => <ul className="list-disc list-inside mb-2 space-y-1">{children}</ul>,
+                              ol: ({children}) => <ol className="list-decimal list-inside mb-2 space-y-1">{children}</ol>,
+                              li: ({children}) => <li className="ml-0">{children}</li>,
+                              h1: ({children}) => <h1 className="text-lg font-semibold mb-2 text-gray-900">{children}</h1>,
+                              h2: ({children}) => <h2 className="text-base font-semibold mb-2 text-gray-900">{children}</h2>,
+                              h3: ({children}) => <h3 className="text-sm font-semibold mb-1 text-gray-900">{children}</h3>,
+                              code: ({children}) => <code className="bg-gray-100 px-1 py-0.5 rounded text-xs font-mono">{children}</code>,
+                              pre: ({children}) => <pre className="bg-gray-100 p-2 rounded text-xs font-mono overflow-x-auto">{children}</pre>
+                            }}
+                          >
+                            {streamingContent}
+                          </ReactMarkdown>
                           <span className="inline-block w-2 h-4 bg-[#7b35b8] ml-1 animate-pulse"></span>
-                        </p>
+                        </div>
                       </div>
                     </div>
                   </div>
@@ -506,6 +561,18 @@ export default function ChatDeploymentPage() {
                       </div>
                     ))}
                   </div>
+                </div>
+              )}
+
+              {/* Generate Files Button */}
+              {!isGeneratingFiles && extractedConfig.databases && extractedConfig.databases.length > 0 && (
+                <div className="flex justify-center py-6">
+                  <Button 
+                    onClick={simulateFileGeneration}
+                    className="bg-[#7b35b8] text-white px-8 py-3 rounded-lg font-baskerville hover:bg-[#6a2d9f] transition-all"
+                  >
+                    🚀 Generate Deployment Files
+                  </Button>
                 </div>
               )}
 
@@ -539,7 +606,7 @@ export default function ChatDeploymentPage() {
               <Button 
                 onClick={sendMessage}
                 disabled={isLoading || isStreaming || !currentMessage.trim()}
-                className="absolute w-8 h-8 right-3 top-1/2 transform text-gray-600 bg-white border-1 border-gray-300 rounded-lg p-1 transition-all duration-300 hover:bg-[#7b35b8] hover:text-white font-baskerville disabled:hidden disabled:opacity-50"
+                className="absolute w-8 h-8 right-3 top-1/2 transform text-gray-600 bg-white border-1 border-gray-900 shadow-xl rounded-lg p-1 transition-all duration-300 hover:bg-[#7b35b8] hover:text-white font-baskerville disabled:hidden disabled:opacity-50"
               >
                 ↵
               </Button>

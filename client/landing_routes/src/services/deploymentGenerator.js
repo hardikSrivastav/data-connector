@@ -273,7 +273,14 @@ class DeploymentGenerator {
       '## Configuration Summary',
       '',
       '### Databases Configured:',
-      ...Object.keys(extractedConfig.databases).map(db => `- ${db.toUpperCase()}: ${extractedConfig.databases[db].host || 'localhost'}`),
+      ...Object.keys(extractedConfig.databases).map(db => {
+        const config = extractedConfig.databases[db];
+        if (config.use_env_var && config.env_var) {
+          return `- ${db.toUpperCase()}: Using environment variable \${${config.env_var}}`;
+        } else {
+          return `- ${db.toUpperCase()}: ${config.host || 'localhost'}`;
+        }
+      }),
       '',
       '### Authentication:',
       extractedConfig.authentication?.provider ? 
