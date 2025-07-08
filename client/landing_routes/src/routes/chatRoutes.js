@@ -17,6 +17,12 @@ router.get('/conversation/:conversationId', chatController.getConversation);
 // Generate deployment files
 router.post('/generate-files', chatController.generateFiles);
 
+// Download deployment package
+router.get('/download/:conversationId', chatController.downloadDeploymentPackage);
+
+// Get deployment template information (for debugging/testing)
+router.get('/templates', chatController.getTemplateInfo);
+
 // Health check for chat system
 router.get('/health', chatController.healthCheck);
 

@@ -112,12 +112,48 @@ export default function ChatDeploymentPage() {
   const sendMessage = async () => {
     if (!currentMessage.trim()) return;
 
+    let currentConversationId = conversationId;
+
     // If no conversation started yet, start it first
-    if (!conversationId) {
-      await startConversation();
+    if (!currentConversationId) {
+      setIsLoading(true);
+      try {
+        const backendUrl = process.env.NODE_ENV === 'production' 
+          ? 'http://localhost:3001/api/chat/start'
+          : 'http://localhost:3001/api/chat/start';
+          
+        const response = await fetch(backendUrl, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            userInfo: {
+              company: "Your Company",
+              email: "user@company.com"
+            }
+          })
+        });
+
+        if (!response.ok) {
+          throw new Error('Failed to start conversation');
+        }
+
+        const data = await response.json();
+        currentConversationId = data.data.conversationId;
+        setConversationId(currentConversationId);
+        
+      } catch (error) {
+        toast.error("Failed to start conversation");
+        console.error('Error:', error);
+        setIsLoading(false);
+        return;
+      } finally {
+        setIsLoading(false);
+      }
     }
 
-    if (!conversationId) return;
+    if (!currentConversationId) return;
 
     const userMessage = {
       role: 'user' as const,
@@ -145,7 +181,7 @@ export default function ChatDeploymentPage() {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
-          conversationId,
+          conversationId: currentConversationId,
           message: messageToSend
         })
       });
@@ -301,7 +337,7 @@ export default function ChatDeploymentPage() {
     }
   };
 
-  const handleKeyPress = (e: React.KeyboardEvent) => {
+  const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
       sendMessage();
@@ -379,8 +415,8 @@ export default function ChatDeploymentPage() {
             <textarea
               value={currentMessage}
               onChange={(e) => setCurrentMessage(e.target.value)}
-              onKeyPress={handleKeyPress}
-              placeholder="Tell me about your deployment needs - databases, authentication, scale, environment..."
+              onKeyDown={handleKeyDown}
+              placeholder="Describe your business scenario: What data sources will you connect? How many users? What's your primary use case for Ceneca?"
               className="w-full min-h-[150px] max-h-[400px] bg-white border-1 border-gray-800 text-base px-6 py-4 pr-20 pb-16 rounded-2xl focus:outline-none resize-none placeholder-gray-500 disabled:opacity-50 shadow-lg transition-all font-baskerville"
               disabled={isLoading || isStreaming}
               rows={3}
@@ -407,23 +443,17 @@ export default function ChatDeploymentPage() {
         /* Conversation state - full height layout */
         <div className="flex-1 flex flex-col h-full relative">
           {/* Messages Area - 80% of available space */}
-          <div className="flex-1 px-6 py-4 overflow-y-auto" style={{height: '80%'}}>
+          <div className={`flex-1 px-6 py-4 overflow-y-auto transition-all duration-300 ${navbarVisible ? 'pt-32' : 'pt-4'}`} style={{height: '80%'}}>
             <div className="max-w-5xl mx-auto space-y-4" style={{width: '80%'}}>
               {messages.map((message, index) => (
                 <div key={index} className={`flex ${message.role === 'user' ? 'justify-end' : 'justify-start'}`}>
-                  <div className={`max-w-[80%] ${message.role === 'user' ? 'order-2' : 'order-1'}`}>
+                  <div className={`${message.role === 'user' ? 'max-w-[80%] order-2' : 'w-full order-1'}`}>
                     <div className={`flex items-start gap-3 ${message.role === 'user' ? 'flex-row-reverse' : 'flex-row'}`}>
-                      <div className={`w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0 ${
-                        message.role === 'user' 
-                          ? 'bg-gray-100 text-gray-600' 
-                          : 'bg-[#7b35b8] text-white'
-                      }`}>
-                        {message.role === 'user' ? <User className="h-4 w-4" /> : <Bot className="h-4 w-4" />}
-                      </div>
+                      
                       <div className={`p-3 rounded-2xl border ${
                         message.role === 'user' 
                           ? 'bg-gray-50 border-gray-200 text-gray-900' 
-                          : 'bg-white border-gray-200 text-gray-900'
+                          : 'bg-white border-gray-900 text-gray-900'
                       }`}>
                         <p className="text-sm whitespace-pre-wrap leading-relaxed font-baskerville">
                           {message.content}
@@ -437,7 +467,7 @@ export default function ChatDeploymentPage() {
               {/* Streaming message */}
               {isStreaming && streamingContent && (
                 <div className="flex justify-start">
-                  <div className="max-w-[80%]">
+                  <div className="w-full">
                     <div className="flex items-start gap-3">
                       <div className="w-8 h-8 rounded-full bg-[#7b35b8] flex items-center justify-center flex-shrink-0">
                         <Bot className="h-4 w-4 text-white" />
@@ -495,21 +525,21 @@ export default function ChatDeploymentPage() {
           </div>
 
           {/* Input Area - Fixed at bottom */}
-          <div className="border-t border-gray-200 bg-white px-6 py-4">
+          <div className=" border-gray-200 bg-white px-6 py-4">
             <div className="max-w-5xl mx-auto relative" style={{width: '80%'}}>
               <textarea
                 value={currentMessage}
                 onChange={(e) => setCurrentMessage(e.target.value)}
-                onKeyPress={handleKeyPress}
+                onKeyDown={handleKeyDown}
                 placeholder="Continue the conversation..."
-                className="w-full min-h-[60px] max-h-[200px] bg-white border-1 border-gray-300 text-base px-4 py-3 pr-16 rounded-2xl focus:outline-none resize-none placeholder-gray-500 disabled:opacity-50 shadow-sm transition-all font-baskerville"
+                className="w-full min-h-[100px] max-h-[200px] bg-white border-1 border-gray-900 text-base px-4 py-3 pr-16 rounded-2xl focus:outline-none resize-none placeholder-gray-500 disabled:opacity-50 shadow-xl transition-all font-baskerville"
                 disabled={isLoading || isStreaming}
                 rows={2}
               />
               <Button 
                 onClick={sendMessage}
                 disabled={isLoading || isStreaming || !currentMessage.trim()}
-                className="absolute w-8 h-8 right-2 top-1/2 transform -translate-y-1/2 text-gray-600 bg-white border-1 border-gray-300 rounded-lg p-1 transition-all duration-300 hover:bg-[#7b35b8] hover:text-white font-baskerville disabled:hidden disabled:opacity-50"
+                className="absolute w-8 h-8 right-3 top-1/2 transform text-gray-600 bg-white border-1 border-gray-300 rounded-lg p-1 transition-all duration-300 hover:bg-[#7b35b8] hover:text-white font-baskerville disabled:hidden disabled:opacity-50"
               >
                 ↵
               </Button>

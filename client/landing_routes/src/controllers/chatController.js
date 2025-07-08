@@ -1,5 +1,6 @@
 const { v4: uuidv4 } = require('uuid');
 const { BedrockRuntimeClient, InvokeModelCommand, InvokeModelWithResponseStreamCommand } = require('@aws-sdk/client-bedrock-runtime');
+const DeploymentGenerator = require('../services/deploymentGenerator');
 
 // Initialize AWS Bedrock client
 const bedrock = new BedrockRuntimeClient({
@@ -10,61 +11,117 @@ const bedrock = new BedrockRuntimeClient({
   }
 });
 
-// Model ID for Claude 3 Sonnet
-const MODEL_ID = 'anthropic.claude-3-sonnet-20240229-v1:0';
+// Model ID for Claude 3 Haiku (Messages API) - Stable and fast
+const MODEL_ID = 'anthropic.claude-3-haiku-20240307-v1:0';
 
 // In-memory storage for conversations (you can migrate to database later)
 const conversations = new Map();
+
+// Initialize deployment generator
+const deploymentGenerator = new DeploymentGenerator();
+
+// Initialize deployment generator on server start
+(async () => {
+  try {
+    await deploymentGenerator.initialize();
+    console.log('Deployment generator ready for conversations');
+  } catch (error) {
+    console.error('Failed to initialize deployment generator:', error);
+  }
+})();
+
+/**
+ * Enhanced system prompt that understands deployment templates and extracts requirements
+ */
+async function getSystemPrompt(userInfo) {
+  // Get available template requirements dynamically
+  let templateRequirements = {};
+  try {
+    templateRequirements = await deploymentGenerator.getAvailableTemplates();
+  } catch (error) {
+    console.warn('Could not load template requirements:', error.message);
+  }
+
+  return `You are a technical consultant specializing in Ceneca deployment configuration. Your goal is to help users configure their deployment through natural conversation while intelligently extracting the information needed to fill deployment templates.
+
+PERSONALITY:
+- Knowledgeable but not condescending
+- Ask clarifying questions when needed
+- Explain the "why" behind recommendations
+- Adapt to user's technical level
+
+CAPABILITIES:
+- Understand infrastructure contexts (databases, auth, networking)
+- Recommend best practices for enterprise deployments
+- Extract deployment requirements from natural language
+- Provide technical explanations for configuration choices
+
+DEPLOYMENT TEMPLATE AWARENESS:
+You have access to real deployment templates that need the following information:
+${JSON.stringify(templateRequirements, null, 2)}
+
+Your job is to gather this information through natural conversation. When users mention:
+- Database names/hosts: Extract connection details
+- Authentication providers: Extract SSO configuration
+- Domain names: Note for SSL and networking setup
+- Team sizes: Recommend appropriate scaling
+- Environment types: Suggest production vs development settings
+
+CONVERSATION STYLE:
+- Start with understanding their business scenario
+- Ask about their existing infrastructure
+- Recommend configurations based on their needs
+- Explain trade-offs and best practices
+- Confirm understanding before proceeding
+
+USER CONTEXT:
+${JSON.stringify(userInfo)}
+
+IMPORTANT: Extract technical details naturally without making it feel like a form. Focus on understanding their use case first, then gather the technical requirements.`;
+}
 
 /**
  * Start a new conversation
  */
 exports.startConversation = async (req, res) => {
+  const { userInfo } = req.body;
+  
   try {
     const conversationId = uuidv4();
-    const { userInfo } = req.body; // License key, company info, etc.
+    const systemPrompt = await getSystemPrompt(userInfo);
     
-    // Initialize conversation with system context
-    const conversation = {
+    // Initialize conversation with enhanced context
+    conversations.set(conversationId, {
       id: conversationId,
       userInfo,
-      messages: [
-        {
-          role: 'system',
-          content: `You are a deployment configuration assistant for Ceneca, an enterprise data platform. 
-          Your job is to help users configure their on-premise deployment by asking questions and providing guidance.
-          
-          User Info: ${JSON.stringify(userInfo)}
-          
-          Be conversational, ask follow-up questions, and help them understand their deployment options.
-          Focus on: database connections, authentication (SSO), scaling requirements, and security needs.`
-        },
-        {
-          role: 'assistant',
-          content: `Hi! I'm here to help you configure your Ceneca deployment. I can see you're setting up for ${userInfo?.company || 'your organization'}. 
-          
-          Let's start with the basics - what databases are you planning to connect to? Are you using PostgreSQL, MySQL, MongoDB, or something else?`
-        }
-      ],
+      messages: [],
+      extractedConfig: {
+        databases: {},
+        authentication: {},
+        deployment: {},
+        confidence: {}
+      },
+      systemPrompt,
       createdAt: new Date(),
-      extractedConfig: {}
-    };
-    
-    conversations.set(conversationId, conversation);
-    
-    return res.status(200).json({
+      lastUpdated: new Date()
+    });
+
+    const welcomeMessage = `Hi! I'm here to help you set up Ceneca for your infrastructure. I'll ask you some questions about your setup to create a personalized deployment package.
+
+To get started, could you tell me about your current data infrastructure? What databases are you using, and what's your primary use case for Ceneca?`;
+
+    res.json({
       success: true,
       data: {
         conversationId,
-        message: conversation.messages[conversation.messages.length - 1].content
+        message: welcomeMessage
       }
     });
   } catch (error) {
     console.error('Error starting conversation:', error);
-    return res.status(500).json({
+    res.status(500).json({
       success: false,
-      message: 'Failed to start conversation',
-      error: error.message
+      message: 'Failed to start conversation'
     });
   }
 };
@@ -83,205 +140,234 @@ exports.sendMessage = async (req, res) => {
         message: 'Conversation not found'
       });
     }
-    
+
     // Add user message
     conversation.messages.push({
       role: 'user',
-      content: message
+      content: message,
+      timestamp: new Date()
     });
-    
-    // Get AI response from AWS Bedrock
-    const aiResponse = await callBedrockModel(conversation.messages);
+
+    // Build conversation context for AI
+    const conversationHistory = [
+      { role: 'system', content: conversation.systemPrompt },
+      ...conversation.messages.map(msg => ({
+        role: msg.role,
+        content: msg.content
+      }))
+    ];
+
+    // Get AI response
+    const response = await invokeBedrockModel(conversationHistory);
     
     // Add AI response to conversation
     conversation.messages.push({
       role: 'assistant',
-      content: aiResponse
+      content: response,
+      timestamp: new Date()
     });
+
+    // Extract configuration from the conversation
+    const extractedConfig = deploymentGenerator.conversationExtractor.extractFromConversation(
+      conversation.messages, 
+      conversation.extractedConfig
+    );
     
-    // Extract configuration data (basic pattern matching for now)
-    extractConfigFromMessage(message, conversation.extractedConfig);
-    
-    conversations.set(conversationId, conversation);
-    
-    return res.status(200).json({
+    conversation.extractedConfig = extractedConfig;
+    conversation.lastUpdated = new Date();
+
+    res.json({
       success: true,
       data: {
-        message: aiResponse,
-        extractedConfig: conversation.extractedConfig
+        message: response,
+        extractedConfig: extractedConfig,
+        conversationId: conversationId
       }
     });
+
   } catch (error) {
     console.error('Error sending message:', error);
-    return res.status(500).json({
+    res.status(500).json({
       success: false,
-      message: 'Failed to send message',
-      error: error.message
+      message: 'Failed to send message'
     });
   }
 };
 
 /**
- * Send a message in a conversation with streaming
+ * Send a message with streaming response
  */
 exports.sendMessageStream = async (req, res) => {
   const { conversationId, message } = req.body;
   
-  console.log('=== SENDMESSAGESTREAM CALLED ===');
-  console.log('ConversationId:', conversationId);
-  console.log('Message:', message);
-  
   try {
     const conversation = conversations.get(conversationId);
     if (!conversation) {
-      console.log('ERROR: Conversation not found');
       return res.status(404).json({
         success: false,
         message: 'Conversation not found'
       });
     }
-    
-    console.log('Current conversation messages before adding user message:', conversation.messages.map(m => ({ role: m.role, content: m.content.substring(0, 50) + '...' })));
-    
+
+    // Set up SSE headers
+    res.writeHead(200, {
+      'Content-Type': 'text/plain',
+      'Cache-Control': 'no-cache',
+      'Connection': 'keep-alive',
+      'Access-Control-Allow-Origin': '*',
+      'Access-Control-Allow-Headers': 'Cache-Control'
+    });
+
     // Add user message
     conversation.messages.push({
       role: 'user',
-      content: message
+      content: message,
+      timestamp: new Date()
     });
-    
-    console.log('Current conversation messages after adding user message:', conversation.messages.map(m => ({ role: m.role, content: m.content.substring(0, 50) + '...' })));
-    
-    // Set up Server-Sent Events with anti-buffering headers
-    res.writeHead(200, {
-      'Content-Type': 'text/event-stream',
-      'Cache-Control': 'no-cache, no-store, must-revalidate',
-      'Connection': 'keep-alive',
-      'Access-Control-Allow-Origin': '*',
-      'Access-Control-Allow-Headers': 'Cache-Control',
-      'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
-      'X-Accel-Buffering': 'no', // Disable Nginx buffering
-      'Transfer-Encoding': 'chunked',
-      'Content-Encoding': 'none', // Disable compression
-      'Pragma': 'no-cache',
-      'Expires': '0'
-    });
-    
-    // Disable buffering at the socket level
-    if (res.socket) {
-      res.socket.setNoDelay(true);
-    }
-    
-    // Send initial status with connection primer
-    const startTime = Date.now();
-    console.log(`Backend: Sending initial status [${new Date().toISOString()}]`);
-    
-    // Send multiple small chunks to "prime" the connection and break buffering
-    res.write(`: connection-primer\n\n`);
-    res.write(`: connection-established\n\n`);
-    res.write(`data: ${JSON.stringify({
-      type: 'status',
-      message: 'Starting response generation...'
-    })}\n\n`);
-    
-    // Force flush to prevent buffering
-    if (res.flush) {
-      res.flush();
-    }
-    if (res.socket) {
-      res.socket.setNoDelay(true);
-      if (res.socket.uncork) {
-        res.socket.uncork();
-      }
-    }
-    
+
+    // Build conversation context
+    const conversationHistory = [
+      { role: 'system', content: conversation.systemPrompt },
+      ...conversation.messages.map(msg => ({
+        role: msg.role,
+        content: msg.content
+      }))
+    ];
+
+    // Stream AI response
     let fullResponse = '';
+    await streamBedrockModel(conversationHistory, (chunk) => {
+      fullResponse += chunk;
+      res.write(`data: ${JSON.stringify({ 
+        type: 'chunk', 
+        content: chunk,
+        fullContent: fullResponse 
+      })}\n\n`);
+    });
+
+    // Add AI response to conversation
+    conversation.messages.push({
+      role: 'assistant',
+      content: fullResponse,
+      timestamp: new Date()
+    });
+
+    // Extract configuration from the conversation
+    const extractedConfig = deploymentGenerator.conversationExtractor.extractFromConversation(
+      conversation.messages, 
+      conversation.extractedConfig
+    );
     
-    try {
-      // Stream AI response from AWS Bedrock
-      console.log('=== ABOUT TO CALL STREAMBEDROCK MODEL ===');
-      await streamBedrockModel(conversation.messages, (chunk) => {
-        const chunkTime = Date.now();
-        console.log(`Backend: onChunk called [${new Date().toISOString()}] (${chunkTime - startTime}ms from start) with: "${chunk}"`);
-        fullResponse += chunk;
-        
-        const chunkData = {
-          type: 'chunk',
-          content: chunk,
-          fullContent: fullResponse
-        };
-        
-        console.log(`Backend: Sending chunk to client [${new Date().toISOString()}]:`, chunkData);
-        
-        // Send chunk to client with immediate flushing
-        const chunkMessage = `data: ${JSON.stringify(chunkData)}\n\n`;
-        res.write(chunkMessage);
-        
-        // Multiple flush attempts to force immediate sending
-        if (res.flush) {
-          res.flush();
-        }
-        if (res.flushHeaders) {
-          res.flushHeaders();
-        }
-        if (res.socket && res.socket.write) {
-          // Force socket to send immediately
-          res.socket.uncork();
-        }
-        
-        console.log(`Backend: Chunk sent and flushed [${new Date().toISOString()}]`);
-      });
-      
-      console.log('DEBUG: Streaming completed, fullResponse length:', fullResponse.length);
-      
-      // Add complete AI response to conversation
-      conversation.messages.push({
-        role: 'assistant',
-        content: fullResponse
-      });
-      
-      // Extract configuration data
-      extractConfigFromMessage(message, conversation.extractedConfig);
-      
-      conversations.set(conversationId, conversation);
-      
-      const completionData = {
-        type: 'complete',
-        message: fullResponse,
-        extractedConfig: conversation.extractedConfig
-      };
-      
-      console.log(`Backend: Sending completion message [${new Date().toISOString()}] (${Date.now() - startTime}ms from start):`, completionData);
-      
-      // Send completion message
-      res.write(`data: ${JSON.stringify(completionData)}\n\n`);
-      
-      // Force flush to prevent buffering
-      if (res.flush) {
-        res.flush();
-      }
-      
-      console.log(`Backend: Completion sent and flushed [${new Date().toISOString()}]`);
-      
-    } catch (streamError) {
-      console.error('Error in streaming:', streamError);
-      const errorData = {
-        type: 'error',
-        message: `Streaming error: ${streamError.message}`
-      };
-      
-      console.log('DEBUG: Sending error message:', errorData);
-      
-      res.write(`data: ${JSON.stringify(errorData)}\n\n`);
-    }
-    
+    conversation.extractedConfig = extractedConfig;
+    conversation.lastUpdated = new Date();
+
+    // Send completion message
+    res.write(`data: ${JSON.stringify({
+      type: 'complete',
+      message: fullResponse,
+      extractedConfig: extractedConfig,
+      conversationId: conversationId
+    })}\n\n`);
+
     res.end();
-    
+
   } catch (error) {
-    console.error('Error in stream setup:', error);
+    console.error('Error in streaming message:', error);
+    res.write(`data: ${JSON.stringify({
+      type: 'error',
+      message: 'Failed to process message'
+    })}\n\n`);
+    res.end();
+  }
+};
+
+/**
+ * Generate deployment files from conversation
+ */
+exports.generateFiles = async (req, res) => {
+  const { conversationId } = req.body;
+  
+  try {
+    const conversation = conversations.get(conversationId);
+    if (!conversation) {
+      return res.status(404).json({
+        success: false,
+        message: 'Conversation not found'
+      });
+    }
+
+    // Generate deployment package using the new template-based system
+    const result = await deploymentGenerator.generateFromConversation(
+      conversation.messages,
+      conversation.extractedConfig
+    );
+
+    // Store the generated package in conversation for download
+    conversation.generatedPackage = result.deploymentPackage;
+    conversation.lastUpdated = new Date();
+
+    res.json({
+      success: true,
+      data: {
+        message: `Successfully generated ${Object.keys(result.deploymentPackage.files).length} deployment files`,
+        filesGenerated: Object.keys(result.deploymentPackage.files),
+        confidence: result.extractedConfig.confidence,
+        metadata: result.metadata
+      }
+    });
+
+  } catch (error) {
+    console.error('Error generating deployment files:', error);
     res.status(500).json({
       success: false,
-      message: 'Failed to start streaming',
-      error: error.message
+      message: error.message || 'Failed to generate deployment files'
+    });
+  }
+};
+
+/**
+ * Download generated deployment package
+ */
+exports.downloadDeploymentPackage = async (req, res) => {
+  const { conversationId } = req.params;
+  
+  try {
+    const conversation = conversations.get(conversationId);
+    if (!conversation || !conversation.generatedPackage) {
+      return res.status(404).json({
+        success: false,
+        message: 'Deployment package not found. Please generate files first.'
+      });
+    }
+
+    const deploymentPackage = conversation.generatedPackage;
+    
+    // Create a simple multi-file response (in production, you'd create a ZIP)
+    let packageContent = `# Ceneca Deployment Package
+# Generated on: ${deploymentPackage.metadata.generatedAt}
+# Files included: ${Object.keys(deploymentPackage.files).length}
+
+`;
+
+    for (const [filename, content] of Object.entries(deploymentPackage.files)) {
+      packageContent += `# ============================================================
+# FILE: ${filename}
+# ============================================================
+
+${content}
+
+`;
+    }
+
+    res.setHeader('Content-Type', 'text/plain');
+    res.setHeader('Content-Disposition', `attachment; filename="ceneca-deployment-${conversationId.slice(0, 8)}.txt"`);
+    res.send(packageContent);
+
+  } catch (error) {
+    console.error('Error downloading deployment package:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to download deployment package'
     });
   }
 };
@@ -300,343 +386,170 @@ exports.getConversation = async (req, res) => {
         message: 'Conversation not found'
       });
     }
-    
-    return res.status(200).json({
+
+    res.json({
       success: true,
       data: {
-        conversationId,
-        messages: conversation.messages.filter(msg => msg.role !== 'system'),
-        extractedConfig: conversation.extractedConfig
+        conversationId: conversation.id,
+        messages: conversation.messages,
+        extractedConfig: conversation.extractedConfig,
+        hasGeneratedPackage: !!conversation.generatedPackage,
+        createdAt: conversation.createdAt,
+        lastUpdated: conversation.lastUpdated
       }
     });
   } catch (error) {
-    console.error('Error fetching conversation:', error);
-    return res.status(500).json({
+    console.error('Error getting conversation:', error);
+    res.status(500).json({
       success: false,
-      message: 'Failed to fetch conversation',
-      error: error.message
+      message: 'Failed to get conversation'
     });
   }
 };
 
 /**
- * Generate deployment files based on extracted configuration
+ * Get template analysis for debugging
  */
-exports.generateFiles = async (req, res) => {
-  const { conversationId } = req.body;
-  
+exports.getTemplateInfo = async (req, res) => {
   try {
-    const conversation = conversations.get(conversationId);
-    if (!conversation) {
-      return res.status(404).json({
-        success: false,
-        message: 'Conversation not found'
-      });
-    }
+    const analysis = await deploymentGenerator.getTemplateAnalysis();
     
-    // TODO: Implement template processing here
-    // For now, return the extracted configuration
-    
-    return res.status(200).json({
+    res.json({
       success: true,
-      data: {
-        config: conversation.extractedConfig,
-        message: 'Configuration extracted successfully. File generation coming soon!'
-      }
+      data: analysis
     });
   } catch (error) {
-    console.error('Error generating files:', error);
-    return res.status(500).json({
+    console.error('Error getting template info:', error);
+    res.status(500).json({
       success: false,
-      message: 'Failed to generate files',
-      error: error.message
+      message: 'Failed to get template information'
     });
   }
 };
-
-/**
- * Call AWS Bedrock model with conversation messages
- */
-async function callBedrockModel(messages) {
-  try {
-    // Convert messages to Claude format (exclude system messages for user conversation)
-    const filteredMessages = messages.filter(msg => msg.role !== 'system');
-    
-    console.log('DEBUG: All messages:', messages.map(m => ({ role: m.role, content: m.content.substring(0, 50) + '...' })));
-    console.log('DEBUG: Filtered messages:', filteredMessages.map(m => ({ role: m.role, content: m.content.substring(0, 50) + '...' })));
-    
-    // For Claude's Messages API, we need to ensure proper user/assistant alternation
-    // If we have an initial assistant message, we need to skip it and start with user message
-    let claudeMessages = [];
-    
-    // If the first non-system message is from assistant, skip it (it's just the welcome message)
-    let startIndex = 0;
-    if (filteredMessages.length > 0 && filteredMessages[0].role === 'assistant') {
-      startIndex = 1;
-    }
-    
-    // Convert remaining messages to Claude format
-    for (let i = startIndex; i < filteredMessages.length; i++) {
-      const msg = filteredMessages[i];
-      claudeMessages.push({
-        role: msg.role === 'assistant' ? 'assistant' : 'user',
-        content: [
-          {
-            type: "text",
-            text: msg.content
-          }
-        ]
-      });
-    }
-    
-    console.log('DEBUG: Final Claude messages:', claudeMessages.map(m => ({ role: m.role, content: m.content[0].text.substring(0, 50) + '...' })));
-    
-    // Ensure we have at least one user message
-    if (claudeMessages.length === 0 || claudeMessages[0].role !== 'user') {
-      claudeMessages = [
-        {
-          role: 'user',
-          content: [
-            {
-              type: "text",
-              text: 'Hello, I need help with my deployment configuration.'
-            }
-          ]
-        },
-        ...claudeMessages
-      ];
-    }
-
-    // Get system message if it exists
-    const systemMessage = messages.find(msg => msg.role === 'system');
-    const systemContent = systemMessage ? systemMessage.content : '';
-
-    // Prepare the request body for Claude
-    const requestBody = {
-      anthropic_version: "bedrock-2023-05-31",
-      max_tokens: 500,
-      temperature: 0.7,
-      messages: claudeMessages
-    };
-
-    // Add system message if present
-    if (systemContent) {
-      requestBody.system = systemContent;
-    }
-
-    console.log('DEBUG: Final request body being sent to Bedrock:', JSON.stringify(requestBody, null, 2));
-
-    // Create the invoke command
-    const command = new InvokeModelCommand({
-      modelId: MODEL_ID,
-      body: JSON.stringify(requestBody)
-    });
-
-    // Call Bedrock
-    const response = await bedrock.send(command);
-    
-    // Parse response
-    const responseBody = JSON.parse(new TextDecoder().decode(response.body));
-    
-    // Extract the assistant's response
-    if (responseBody.content && responseBody.content.length > 0) {
-      return responseBody.content[0].text;
-    } else {
-      throw new Error('No content in Bedrock response');
-    }
-  } catch (error) {
-    console.error('Error calling Bedrock model:', error);
-    throw new Error(`Bedrock API call failed: ${error.message}`);
-  }
-}
-
-/**
- * Stream responses from AWS Bedrock model
- */
-async function streamBedrockModel(messages, onChunk) {
-  try {
-    // Convert messages to Claude format (exclude system messages for user conversation)
-    const filteredMessages = messages.filter(msg => msg.role !== 'system');
-    
-    console.log('DEBUG: All messages:', messages.map(m => ({ role: m.role, content: m.content.substring(0, 50) + '...' })));
-    console.log('DEBUG: Filtered messages:', filteredMessages.map(m => ({ role: m.role, content: m.content.substring(0, 50) + '...' })));
-    
-    // For Claude's Messages API, we need to ensure proper user/assistant alternation
-    // If we have an initial assistant message, we need to skip it and start with user message
-    let claudeMessages = [];
-    
-    // If the first non-system message is from assistant, skip it (it's just the welcome message)
-    let startIndex = 0;
-    if (filteredMessages.length > 0 && filteredMessages[0].role === 'assistant') {
-      startIndex = 1;
-    }
-    
-    // Convert remaining messages to Claude format
-    for (let i = startIndex; i < filteredMessages.length; i++) {
-      const msg = filteredMessages[i];
-      claudeMessages.push({
-        role: msg.role === 'assistant' ? 'assistant' : 'user',
-        content: [
-          {
-            type: "text",
-            text: msg.content
-          }
-        ]
-      });
-    }
-    
-    console.log('DEBUG: Final Claude messages:', claudeMessages.map(m => ({ role: m.role, content: m.content[0].text.substring(0, 50) + '...' })));
-    
-    // Ensure we have at least one user message
-    if (claudeMessages.length === 0 || claudeMessages[0].role !== 'user') {
-      claudeMessages = [
-        {
-          role: 'user',
-          content: [
-            {
-              type: "text",
-              text: 'Hello, I need help with my deployment configuration.'
-            }
-          ]
-        },
-        ...claudeMessages
-      ];
-    }
-
-    // Get system message if it exists
-    const systemMessage = messages.find(msg => msg.role === 'system');
-    const systemContent = systemMessage ? systemMessage.content : '';
-
-    // Prepare the request body for Claude streaming
-    const requestBody = {
-      anthropic_version: "bedrock-2023-05-31",
-      max_tokens: 500,
-      temperature: 0.7,
-      messages: claudeMessages
-    };
-
-    // Add system message if present
-    if (systemContent) {
-      requestBody.system = systemContent;
-    }
-
-    console.log('DEBUG: Final request body being sent to Bedrock:', JSON.stringify(requestBody, null, 2));
-
-    // Create the streaming invoke command
-    const command = new InvokeModelWithResponseStreamCommand({
-      modelId: MODEL_ID,
-      body: JSON.stringify(requestBody)
-    });
-
-    // Call Bedrock with streaming
-    const response = await bedrock.send(command);
-    
-    // Process the streaming response
-    if (response.body) {
-      console.log('DEBUG: Starting to process streaming response');
-      let chunkCount = 0;
-      
-      for await (const chunk of response.body) {
-        chunkCount++;
-        console.log(`DEBUG: Processing chunk ${chunkCount}:`, chunk);
-        
-        if (chunk.chunk && chunk.chunk.bytes) {
-          const chunkData = JSON.parse(new TextDecoder().decode(chunk.chunk.bytes));
-          console.log(`DEBUG: Chunk ${chunkCount} data:`, chunkData);
-          
-          // Handle different types of chunks
-          if (chunkData.type === 'content_block_delta' && chunkData.delta && chunkData.delta.text) {
-            // This is a text chunk from Claude
-            const textChunk = chunkData.delta.text;
-            console.log(`DEBUG: Found text chunk: "${textChunk}"`);
-            onChunk(textChunk);
-          } else if (chunkData.type === 'message_delta' && chunkData.delta && chunkData.delta.stop_reason) {
-            // This indicates the end of the stream
-            console.log('Stream completed with stop reason:', chunkData.delta.stop_reason);
-          } else {
-            console.log(`DEBUG: Unknown chunk type: ${chunkData.type}`);
-          }
-        } else {
-          console.log(`DEBUG: Chunk ${chunkCount} has no bytes:`, chunk);
-        }
-      }
-      
-      console.log(`DEBUG: Finished processing ${chunkCount} chunks`);
-    } else {
-      throw new Error('No streaming body in Bedrock response');
-    }
-  } catch (error) {
-    console.error('Error streaming from Bedrock model:', error);
-    throw new Error(`Bedrock streaming failed: ${error.message}`);
-  }
-}
 
 /**
  * Health check for chat system
  */
 exports.healthCheck = async (req, res) => {
-  return res.status(200).json({
-    success: true,
-    message: 'Chat system is healthy',
-    data: {
-      activeConversations: conversations.size,
-      bedrockConfigured: !!(process.env.AWS_ACCESS_KEY_ID && process.env.AWS_SECRET_ACCESS_KEY && process.env.AWS_REGION)
+  try {
+    // Check if deployment generator is initialized
+    const isInitialized = deploymentGenerator.isInitialized;
+    
+    // Get basic system info
+    const systemInfo = {
+      chatSystem: 'operational',
+      deploymentGenerator: isInitialized ? 'initialized' : 'initializing',
+      conversationsActive: conversations.size,
+      timestamp: new Date().toISOString()
+    };
+
+    if (isInitialized) {
+      // Get template information if available
+      try {
+        const templates = await deploymentGenerator.getAvailableTemplates();
+        systemInfo.templatesLoaded = Object.keys(templates).length;
+      } catch (error) {
+        systemInfo.templatesLoaded = 'error loading';
+      }
     }
-  });
+
+    res.json({
+      success: true,
+      status: 'healthy',
+      data: systemInfo
+    });
+  } catch (error) {
+    console.error('Health check error:', error);
+    res.status(500).json({
+      success: false,
+      status: 'unhealthy',
+      message: error.message
+    });
+  }
 };
 
 /**
- * Helper function to extract configuration from user messages
+ * Invoke Bedrock model for regular response
  */
-function extractConfigFromMessage(message, config) {
-  const lowerMessage = message.toLowerCase();
+async function invokeBedrockModel(messages) {
+  const params = {
+    modelId: MODEL_ID,
+    contentType: 'application/json',
+    accept: 'application/json',
+    body: JSON.stringify({
+      anthropic_version: "bedrock-2023-05-31",
+      max_tokens: 2000,
+      temperature: 0.7,
+      top_p: 0.9,
+      messages: formatMessagesForAnthropic(messages)
+    })
+  };
+
+  const command = new InvokeModelCommand(params);
+  const response = await bedrock.send(command);
   
-  // Database detection
-  if (lowerMessage.includes('postgresql') || lowerMessage.includes('postgres')) {
-    config.databases = config.databases || [];
-    if (!config.databases.includes('postgresql')) {
-      config.databases.push('postgresql');
+  const responseBody = JSON.parse(new TextDecoder().decode(response.body));
+  return responseBody.content[0].text;
+}
+
+/**
+ * Stream Bedrock model response
+ */
+async function streamBedrockModel(messages, onChunk) {
+  const params = {
+    modelId: MODEL_ID,
+    contentType: 'application/json',
+    accept: 'application/json',
+    body: JSON.stringify({
+      anthropic_version: "bedrock-2023-05-31",
+      max_tokens: 2000,
+      temperature: 0.7,
+      top_p: 0.9,
+      messages: formatMessagesForAnthropic(messages)
+    })
+  };
+
+  const command = new InvokeModelWithResponseStreamCommand(params);
+  const response = await bedrock.send(command);
+
+  if (response.body) {
+    for await (const chunk of response.body) {
+      if (chunk.chunk?.bytes) {
+        const chunkData = JSON.parse(new TextDecoder().decode(chunk.chunk.bytes));
+        if (chunkData.type === 'content_block_delta' && chunkData.delta?.text) {
+          onChunk(chunkData.delta.text);
+        }
+      }
+    }
+  }
+}
+
+/**
+ * Format messages for Anthropic Messages API
+ */
+function formatMessagesForAnthropic(messages) {
+  const formattedMessages = [];
+  let systemMessage = '';
+  
+  // Extract system message and format conversation messages
+  for (const message of messages) {
+    if (message.role === 'system') {
+      systemMessage = message.content;
+    } else if (message.role === 'user' || message.role === 'assistant') {
+      formattedMessages.push({
+        role: message.role,
+        content: message.content
+      });
     }
   }
   
-  if (lowerMessage.includes('mongodb') || lowerMessage.includes('mongo')) {
-    config.databases = config.databases || [];
-    if (!config.databases.includes('mongodb')) {
-      config.databases.push('mongodb');
-    }
+  // Add system message to the first message if it exists
+  if (systemMessage && formattedMessages.length > 0) {
+    formattedMessages[0] = {
+      ...formattedMessages[0],
+      content: `${systemMessage}\n\n${formattedMessages[0].content}`
+    };
   }
   
-  if (lowerMessage.includes('mysql')) {
-    config.databases = config.databases || [];
-    if (!config.databases.includes('mysql')) {
-      config.databases.push('mysql');
-    }
-  }
-  
-  // Authentication detection
-  if (lowerMessage.includes('okta')) {
-    config.auth = 'okta';
-  } else if (lowerMessage.includes('azure') || lowerMessage.includes('microsoft')) {
-    config.auth = 'azure';
-  } else if (lowerMessage.includes('google')) {
-    config.auth = 'google';
-  } else if (lowerMessage.includes('auth0')) {
-    config.auth = 'auth0';
-  }
-  
-  // Environment detection
-  if (lowerMessage.includes('production') || lowerMessage.includes('prod')) {
-    config.environment = 'production';
-  } else if (lowerMessage.includes('development') || lowerMessage.includes('dev')) {
-    config.environment = 'development';
-  } else if (lowerMessage.includes('staging')) {
-    config.environment = 'staging';
-  }
-  
-  // Scale detection
-  if (lowerMessage.includes('high traffic') || lowerMessage.includes('thousands')) {
-    config.scale = 'high';
-  } else if (lowerMessage.includes('small') || lowerMessage.includes('few users')) {
-    config.scale = 'small';
-  }
+  return formattedMessages;
 } 
