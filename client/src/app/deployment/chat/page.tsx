@@ -5,9 +5,11 @@ import { flushSync } from "react-dom";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
+import { Progress } from "@/components/ui/progress";
 import { toast } from "sonner";
-import { Send, Bot, User, ArrowLeft, Download } from "lucide-react";
-import Link from "next/link";
+import { Send, Bot, User, FileText, Database, Shield, Settings, CheckCircle, Menu } from "lucide-react";
+import { Navbar } from "@/components/navbar";
+import Image from "next/image";
 
 interface Message {
   role: 'user' | 'assistant';
@@ -22,6 +24,13 @@ interface ExtractedConfig {
   scale?: string;
 }
 
+interface ProgressStep {
+  id: string;
+  label: string;
+  completed: boolean;
+  current: boolean;
+}
+
 export default function ChatDeploymentPage() {
   const [messages, setMessages] = useState<Message[]>([]);
   const [currentMessage, setCurrentMessage] = useState("");
@@ -30,6 +39,12 @@ export default function ChatDeploymentPage() {
   const [streamingContent, setStreamingContent] = useState("");
   const [conversationId, setConversationId] = useState<string | null>(null);
   const [extractedConfig, setExtractedConfig] = useState<ExtractedConfig>({});
+  const [isGeneratingFiles, setIsGeneratingFiles] = useState(false);
+  const [generationProgress, setGenerationProgress] = useState(0);
+  const [progressSteps, setProgressSteps] = useState<ProgressStep[]>([]);
+  const [showNavbar, setShowNavbar] = useState(false);
+  const [navbarVisible, setNavbarVisible] = useState(false);
+  const [currentStage, setCurrentStage] = useState<string>("Ready to configure your deployment");
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   // Auto-scroll to bottom of messages
@@ -37,19 +52,26 @@ export default function ChatDeploymentPage() {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, streamingContent]);
 
-  // Monitor streaming content changes
-  useEffect(() => {
-    console.log('Frontend: streamingContent state changed:', streamingContent);
-    console.log('Frontend: isStreaming state:', isStreaming);
-    console.log('Frontend: Should show streaming message:', isStreaming && streamingContent);
-  }, [streamingContent, isStreaming]);
-
   // Auto-start conversation when component mounts
   useEffect(() => {
     if (!conversationId) {
-      startConversation();
+      // Don't auto-start conversation - let user initiate
+      // startConversation();
     }
   }, []);
+
+  // Update current stage based on conversation state
+  useEffect(() => {
+    if (isGeneratingFiles) {
+      setCurrentStage("Generating your deployment files...");
+    } else if (isStreaming) {
+      setCurrentStage("Analyzing your requirements...");
+    } else if (messages.length > 0) {
+      setCurrentStage("Configuring your deployment");
+    } else {
+      setCurrentStage("Ready to configure your deployment");
+    }
+  }, [isGeneratingFiles, isStreaming, messages.length]);
 
   const startConversation = async () => {
     setIsLoading(true);
@@ -77,11 +99,7 @@ export default function ChatDeploymentPage() {
 
       const data = await response.json();
       setConversationId(data.data.conversationId);
-      setMessages([{
-        role: 'assistant',
-        content: data.data.message,
-        timestamp: new Date()
-      }]);
+      // Don't add the initial welcome message to messages array
       
     } catch (error) {
       toast.error("Failed to start conversation");
@@ -92,7 +110,14 @@ export default function ChatDeploymentPage() {
   };
 
   const sendMessage = async () => {
-    if (!currentMessage.trim() || !conversationId) return;
+    if (!currentMessage.trim()) return;
+
+    // If no conversation started yet, start it first
+    if (!conversationId) {
+      await startConversation();
+    }
+
+    if (!conversationId) return;
 
     const userMessage = {
       role: 'user' as const,
@@ -110,13 +135,10 @@ export default function ChatDeploymentPage() {
     let completedData: any = null;
 
     try {
-      // Use streaming endpoint - bypass Next.js rewrites for streaming
       const backendUrl = process.env.NODE_ENV === 'production' 
-        ? 'http://localhost:3001/api/chat/message/stream'  // Direct to backend in production
-        : 'http://localhost:3001/api/chat/message/stream'; // Direct to backend in development
+        ? 'http://localhost:3001/api/chat/message/stream'
+        : 'http://localhost:3001/api/chat/message/stream';
         
-      console.log(`Frontend: Making streaming request to ${backendUrl}`);
-      
       const response = await fetch(backendUrl, {
         method: 'POST',
         headers: {
@@ -132,77 +154,49 @@ export default function ChatDeploymentPage() {
         throw new Error('Failed to send message');
       }
 
-      // Check if response body exists
       if (!response.body) {
         throw new Error('No response body for streaming');
       }
 
-      const startTime = Date.now();
-      console.log(`Frontend: Starting to read stream... [${new Date().toISOString()}]`);
-      
-      // Read the stream with proper handling
       const reader = response.body.getReader();
       const decoder = new TextDecoder();
-      
       let buffer = '';
       
       try {
         while (true) {
-          const readStartTime = Date.now();
           const { done, value } = await reader.read();
-          const readEndTime = Date.now();
           
-          if (done) {
-            console.log(`Frontend: Stream read completed [${new Date().toISOString()}] (Total time: ${Date.now() - startTime}ms)`);
-            break;
-          }
+          if (done) break;
           
-          // Decode the chunk
           const chunk = decoder.decode(value, { stream: true });
-          console.log(`Frontend: Received chunk [${new Date().toISOString()}] (Read took: ${readEndTime - readStartTime}ms):`, chunk);
           buffer += chunk;
           
-          // Process complete lines (Server-Sent Events format)
           const lines = buffer.split('\n');
-          buffer = lines.pop() || ''; // Keep incomplete line in buffer
+          buffer = lines.pop() || '';
           
           for (const line of lines) {
-            if (line.trim() === '') continue; // Skip empty lines
+            if (line.trim() === '') continue;
             
             if (line.startsWith('data: ')) {
               try {
-                const dataStr = line.slice(6); // Remove 'data: ' prefix
-                console.log('Frontend: Processing SSE data:', dataStr);
+                const dataStr = line.slice(6);
                 const data = JSON.parse(dataStr);
                 
                 if (data.type === 'chunk') {
-                  console.log('Frontend: Updating streaming content:', data.content);
-                  console.log('Frontend: Full content length:', data.fullContent.length);
-                  console.log('Frontend: isStreaming before update:', isStreaming);
-                  
-                  // Force React to update the UI immediately
                   flushSync(() => {
                     setStreamingContent(data.fullContent);
                   });
-                  
-                  console.log('Frontend: streamingContent updated to:', data.fullContent);
                 } else if (data.type === 'complete') {
-                  // Mark as completed but don't end streaming yet
-                  console.log('Frontend: Stream completion message received');
                   isCompleted = true;
                   completedData = data;
-                  // Don't return here, let the stream finish naturally
                 } else if (data.type === 'error') {
-                  console.log('Frontend: Stream error:', data.message);
                   toast.error(data.message);
                   setStreamingContent("");
                   setIsStreaming(false);
-                  return; // Exit on error
-                } else if (data.type === 'status') {
-                  console.log('Frontend: Stream status:', data.message);
+                  return;
                 }
               } catch (e) {
-                console.error('Frontend: Error parsing streaming data:', e, 'Line:', line);
+                console.error('Error parsing streaming data:', e);
               }
             }
           }
@@ -211,9 +205,7 @@ export default function ChatDeploymentPage() {
         reader.releaseLock();
       }
       
-      // Handle completion after stream ends
       if (isCompleted && completedData) {
-        console.log('Frontend: Processing completion after stream ended');
         setMessages(prev => [...prev, {
           role: 'assistant',
           content: completedData.message,
@@ -222,8 +214,6 @@ export default function ChatDeploymentPage() {
         setExtractedConfig(completedData.extractedConfig);
       }
       
-      // If we reach here, streaming is done
-      console.log('Frontend: Stream processing completed, setting isStreaming to false');
       setStreamingContent("");
       setIsStreaming(false);
       
@@ -231,14 +221,56 @@ export default function ChatDeploymentPage() {
       toast.error("Failed to send message");
       console.error('Error:', error);
       setStreamingContent("");
-      setIsStreaming(false); // Set streaming to false on error
+      setIsStreaming(false);
     }
   };
 
-  const generateFiles = async () => {
-    if (!conversationId) return;
-
-    setIsLoading(true);
+  const simulateFileGeneration = async () => {
+    setIsGeneratingFiles(true);
+    setGenerationProgress(0);
+    
+    const steps: ProgressStep[] = [];
+    
+    if (extractedConfig.databases?.includes('PostgreSQL')) {
+      steps.push({ id: 'db-postgres', label: 'Setting up PostgreSQL configuration', completed: false, current: false });
+    }
+    if (extractedConfig.databases?.includes('MongoDB')) {
+      steps.push({ id: 'db-mongo', label: 'Setting up MongoDB configuration', completed: false, current: false });
+    }
+    if (extractedConfig.databases?.includes('Shopify')) {
+      steps.push({ id: 'db-shopify', label: 'Setting up Shopify integration', completed: false, current: false });
+    }
+    if (extractedConfig.auth === 'Google OAuth') {
+      steps.push({ id: 'auth-google', label: 'Configuring Google OAuth', completed: false, current: false });
+    }
+    if (extractedConfig.auth === 'Azure AD') {
+      steps.push({ id: 'auth-azure', label: 'Configuring Azure AD', completed: false, current: false });
+    }
+    
+    steps.push(
+      { id: 'docker', label: 'Generating Docker configuration', completed: false, current: false },
+      { id: 'nginx', label: 'Setting up Nginx reverse proxy', completed: false, current: false },
+      { id: 'env', label: 'Creating environment files', completed: false, current: false },
+      { id: 'scripts', label: 'Generating deployment scripts', completed: false, current: false }
+    );
+    
+    setProgressSteps(steps);
+    
+    for (let i = 0; i < steps.length; i++) {
+      const updatedSteps = [...steps];
+      updatedSteps[i].current = true;
+      setProgressSteps(updatedSteps);
+      
+      await new Promise(resolve => setTimeout(resolve, 800 + Math.random() * 1200));
+      
+      updatedSteps[i].completed = true;
+      updatedSteps[i].current = false;
+      setProgressSteps(updatedSteps);
+      
+      const progress = ((i + 1) / steps.length) * 100;
+      setGenerationProgress(progress);
+    }
+    
     try {
       const backendUrl = process.env.NODE_ENV === 'production' 
         ? 'http://localhost:3001/api/chat/generate-files'
@@ -265,7 +297,7 @@ export default function ChatDeploymentPage() {
       toast.error("Failed to generate files");
       console.error('Error:', error);
     } finally {
-      setIsLoading(false);
+      setIsGeneratingFiles(false);
     }
   };
 
@@ -276,58 +308,111 @@ export default function ChatDeploymentPage() {
     }
   };
 
+  const totalFiles = progressSteps.length;
+  const completedFiles = progressSteps.filter(step => step.completed).length;
+  const remainingFiles = totalFiles - completedFiles;
+
+  const toggleNavbar = () => {
+    if (!navbarVisible) {
+      // Show navbar
+      setNavbarVisible(true);
+      setTimeout(() => setShowNavbar(true), 10);
+    } else {
+      // Hide navbar
+      setShowNavbar(false);
+      setTimeout(() => setNavbarVisible(false), 300); // Match animation duration
+    }
+  };
+
   return (
-    <div className="h-screen bg-white flex flex-col pt-24">
-      {/* Header */}
-      <div className="border-b border-gray-200 bg-white flex-shrink-0">
-        <div className="max-w-4xl mx-auto px-6 py-4">
-          <div className="flex items-center justify-between">
-            
-            {/* Configuration Pills */}
-            {Object.keys(extractedConfig).length > 0 && (
-              <div className="flex items-center gap-2">
-                {extractedConfig.databases && extractedConfig.databases.map((db) => (
-                  <Badge key={db} variant="secondary" className="font-baskerville text-xs">
-                    {db}
-                  </Badge>
-                ))}
-                {extractedConfig.auth && (
-                  <Badge variant="secondary" className="font-baskerville text-xs">
-                    {extractedConfig.auth}
-                  </Badge>
-                )}
-                {extractedConfig.environment && (
-                  <Badge variant="secondary" className="font-baskerville text-xs">
-                    {extractedConfig.environment}
-                  </Badge>
-                )}
-                {Object.keys(extractedConfig).length > 0 && (
-                  <Button
-                    onClick={generateFiles}
-                    size="sm"
-                    className="text-white bg-[#7b35b8] hover:bg-[#6b2ea5] font-baskerville"
-                  >
-                    <Download className="h-3 w-3 mr-1" />
-                    Generate Files
-                  </Button>
-                )}
-              </div>
-            )}
+    <div className="h-screen bg-white flex flex-col relative">
+      {/* Navbar overlay */}
+      {navbarVisible && (
+        <div className={`absolute top-0 left-0 right-0 z-50 bg-white shadow-lg transition-all duration-300 ease-in-out ${
+          showNavbar ? 'opacity-100 translate-y-0' : 'opacity-0 -translate-y-full'
+        }`}>
+          <Navbar />
+        </div>
+      )}
+
+      {/* Progress Bar */}
+      {(isGeneratingFiles || completedFiles > 0) && (
+        <div className="w-full bg-gray-50 border-b border-gray-200 p-4">
+          <div className="max-w-2xl mx-auto">
+            <div className="flex items-center justify-between mb-2">
+                             <span className="text-sm text-gray-600 font-baskerville">
+                 {isGeneratingFiles ? 
+                   `${remainingFiles} files remaining, ${Math.round(generationProgress)}% there` :
+                   `${completedFiles} files completed`
+                 }
+               </span>
+            </div>
+            <Progress value={generationProgress} className="h-2" />
           </div>
         </div>
-      </div>
+      )}
 
       {/* Main Content */}
-      <div className="flex-1 flex flex-col max-w-4xl mx-auto px-6 py-6 overflow-hidden">
-        
-        {/* Messages */}
-        <div className="flex-1 overflow-y-auto mb-4">
-          {messages.length > 0 && (
-            <div className="space-y-8 pb-4">
+      {messages.length === 0 ? (
+        /* Initial state - centered layout */
+        <div className="flex-1 flex flex-col items-center justify-center px-6 py-8">
+          {/* Logo */}
+          <div className="mb-8">
+            <button
+              onClick={toggleNavbar}
+              className="flex items-center gap-2 hover:opacity-80 transition-opacity"
+            >
+              <div className="w-18 h-18 duration-300 bg-transparent border border-gray-900 rounded-full flex items-center justify-center shadow-lg">
+                <Image
+                  src="/ceneca-light.png"
+                  alt="Ceneca"
+                  width={60}
+                  height={60}
+                  className="rounded-lg grayscale"
+                />
+              </div>
+            </button>
+          </div>
+
+          {/* Input Area - Large and Centered */}
+          <div className="w-full max-w-2xl relative">
+            <textarea
+              value={currentMessage}
+              onChange={(e) => setCurrentMessage(e.target.value)}
+              onKeyPress={handleKeyPress}
+              placeholder="Tell me about your deployment needs - databases, authentication, scale, environment..."
+              className="w-full min-h-[150px] max-h-[400px] bg-white border-1 border-gray-800 text-base px-6 py-4 pr-20 pb-16 rounded-2xl focus:outline-none resize-none placeholder-gray-500 disabled:opacity-50 shadow-lg transition-all font-baskerville"
+              disabled={isLoading || isStreaming}
+              rows={3}
+            />
+            <Button 
+              onClick={sendMessage}
+              disabled={isLoading || isStreaming || !currentMessage.trim()}
+              className="absolute w-10 h-10 right-2 bottom-4 text-gray-600 bg-white border-1 border-gray-800 rounded-lg p-2 transition-all duration-300 hover:bg-[#7b35b8] hover:text-white font-baskerville disabled:hidden disabled:opacity-50 transition-all"
+            >
+              ↵
+            </Button>
+          </div>
+
+          {/* Loading indicator */}
+          {(isLoading || isStreaming) && !streamingContent && (
+            <div className="mt-6 flex items-center gap-2">
+              <div className="w-2 h-2 bg-[#7b35b8] rounded-full animate-bounce"></div>
+              <div className="w-2 h-2 bg-[#7b35b8] rounded-full animate-bounce" style={{animationDelay: '0.1s'}}></div>
+              <div className="w-2 h-2 bg-[#7b35b8] rounded-full animate-bounce" style={{animationDelay: '0.2s'}}></div>
+            </div>
+          )}
+        </div>
+      ) : (
+        /* Conversation state - full height layout */
+        <div className="flex-1 flex flex-col h-full relative">
+          {/* Messages Area - 80% of available space */}
+          <div className="flex-1 px-6 py-4 overflow-y-auto" style={{height: '80%'}}>
+            <div className="max-w-5xl mx-auto space-y-4" style={{width: '80%'}}>
               {messages.map((message, index) => (
                 <div key={index} className={`flex ${message.role === 'user' ? 'justify-end' : 'justify-start'}`}>
-                  <div className={`max-w-[70%] ${message.role === 'user' ? 'order-2' : 'order-1'}`}>
-                    <div className={`flex items-start gap-4 ${message.role === 'user' ? 'flex-row-reverse' : 'flex-row'}`}>
+                  <div className={`max-w-[80%] ${message.role === 'user' ? 'order-2' : 'order-1'}`}>
+                    <div className={`flex items-start gap-3 ${message.role === 'user' ? 'flex-row-reverse' : 'flex-row'}`}>
                       <div className={`w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0 ${
                         message.role === 'user' 
                           ? 'bg-gray-100 text-gray-600' 
@@ -335,16 +420,13 @@ export default function ChatDeploymentPage() {
                       }`}>
                         {message.role === 'user' ? <User className="h-4 w-4" /> : <Bot className="h-4 w-4" />}
                       </div>
-                      <div className={`p-5 rounded-xl ${
+                      <div className={`p-3 rounded-2xl border ${
                         message.role === 'user' 
-                          ? 'bg-gray-100 text-gray-900' 
-                          : 'bg-gray-50 text-gray-900'
+                          ? 'bg-gray-50 border-gray-200 text-gray-900' 
+                          : 'bg-white border-gray-200 text-gray-900'
                       }`}>
-                        <p className="text-sm whitespace-pre-wrap font-baskerville leading-relaxed">
+                        <p className="text-sm whitespace-pre-wrap leading-relaxed font-baskerville">
                           {message.content}
-                        </p>
-                        <p className="text-xs text-gray-500 mt-3 font-baskerville">
-                          {message.timestamp.toLocaleTimeString()}
                         </p>
                       </div>
                     </div>
@@ -355,91 +437,104 @@ export default function ChatDeploymentPage() {
               {/* Streaming message */}
               {isStreaming && streamingContent && (
                 <div className="flex justify-start">
-                  <div className="max-w-[70%]">
-                    <div className="flex items-start gap-4">
+                  <div className="max-w-[80%]">
+                    <div className="flex items-start gap-3">
                       <div className="w-8 h-8 rounded-full bg-[#7b35b8] flex items-center justify-center flex-shrink-0">
                         <Bot className="h-4 w-4 text-white" />
                       </div>
-                      <div className="p-5 rounded-xl bg-gray-50 text-gray-900">
-                        <p className="text-sm whitespace-pre-wrap font-baskerville leading-relaxed">
+                      <div className="p-3 rounded-2xl bg-white border border-gray-200 text-gray-900">
+                        <p className="text-sm whitespace-pre-wrap leading-relaxed font-baskerville">
                           {streamingContent}
                           <span className="inline-block w-2 h-4 bg-[#7b35b8] ml-1 animate-pulse"></span>
-                        </p>
-                        <p className="text-xs text-gray-500 mt-3 font-baskerville">
-                          Streaming... (Length: {streamingContent.length})
                         </p>
                       </div>
                     </div>
                   </div>
                 </div>
               )}
-              
-              {/* Debug info */}
-              {process.env.NODE_ENV === 'development' && (
-                <div className="text-xs text-gray-400 p-2 bg-gray-50 rounded">
-                  Debug: isStreaming={isStreaming.toString()}, streamingContent.length={streamingContent.length}, condition={((isStreaming && streamingContent) ? 'true' : 'false')}
+
+              {/* File Generation Progress Details */}
+              {isGeneratingFiles && (
+                <div className="w-full max-w-2xl mx-auto my-4">
+                  <div className="space-y-2">
+                    {progressSteps.map((step) => (
+                      <div key={step.id} className="flex items-center gap-3 p-2">
+                        <div className={`w-4 h-4 rounded-full flex items-center justify-center ${
+                          step.completed ? 'bg-green-500' : 
+                          step.current ? 'bg-[#7b35b8] animate-pulse' : 
+                          'bg-gray-300'
+                        }`}>
+                          {step.completed && <CheckCircle className="h-3 w-3 text-white" />}
+                        </div>
+                        <span className={`text-sm font-baskerville ${
+                          step.completed ? 'text-green-600' : 
+                          step.current ? 'text-[#7b35b8] font-medium' : 
+                          'text-gray-500'
+                        }`}>
+                          {step.label}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
                 </div>
               )}
-              
+
+              {/* Loading indicator */}
               {(isLoading || isStreaming) && !streamingContent && (
-                <div className="flex justify-start">
-                  <div className="flex items-start gap-4">
-                    <div className="w-8 h-8 rounded-full bg-[#7b35b8] flex items-center justify-center">
-                      <Bot className="h-4 w-4 text-white animate-pulse" />
-                    </div>
-                    <div className="bg-gray-50 p-5 rounded-xl">
-                      <div className="flex items-center gap-2">
-                        <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce"></div>
-                        <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{animationDelay: '0.1s'}}></div>
-                        <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{animationDelay: '0.2s'}}></div>
-                      </div>
-                    </div>
+                <div className="flex justify-center py-4">
+                  <div className="flex items-center gap-2">
+                    <div className="w-2 h-2 bg-[#7b35b8] rounded-full animate-bounce"></div>
+                    <div className="w-2 h-2 bg-[#7b35b8] rounded-full animate-bounce" style={{animationDelay: '0.1s'}}></div>
+                    <div className="w-2 h-2 bg-[#7b35b8] rounded-full animate-bounce" style={{animationDelay: '0.2s'}}></div>
                   </div>
                 </div>
               )}
               
               <div ref={messagesEndRef} />
             </div>
-          )}
-          
-          {messages.length === 0 && !isLoading && !isStreaming && (
-            <div className="flex items-center justify-center h-full">
-              <div className="text-center">
-                <div className="inline-flex items-center gap-2 text-gray-500 text-sm font-baskerville">
-                  <Bot className="h-4 w-4" />
-                  I'll help you configure your Ceneca deployment
-                </div>
-              </div>
-            </div>
-          )}
-        </div>
+          </div>
 
-        {/* Input - Much Bigger Like Notion */}
-        <div className="flex-shrink-0 bg-white border-t border-gray-100 pt-4">
-          <div className="max-w-3xl mx-auto">
-            <div className="flex gap-4 items-end">
-              <div className="flex-1">
-                <textarea
-                  value={currentMessage}
-                  onChange={(e) => setCurrentMessage(e.target.value)}
-                  onKeyPress={handleKeyPress}
-                  placeholder={messages.length === 0 ? "Ask me about your deployment configuration..." : "Continue the conversation..."}
-                  className="w-full min-h-[120px] max-h-[300px] bg-gray-50 border border-gray-200 font-baskerville text-base px-6 py-4 rounded-2xl focus:ring-2 focus:ring-[#7b35b8] focus:border-transparent resize-none placeholder-gray-500 disabled:opacity-50"
-                  disabled={isLoading || isStreaming}
-                  rows={4}
-                />
-              </div>
+          {/* Input Area - Fixed at bottom */}
+          <div className="border-t border-gray-200 bg-white px-6 py-4">
+            <div className="max-w-5xl mx-auto relative" style={{width: '80%'}}>
+              <textarea
+                value={currentMessage}
+                onChange={(e) => setCurrentMessage(e.target.value)}
+                onKeyPress={handleKeyPress}
+                placeholder="Continue the conversation..."
+                className="w-full min-h-[60px] max-h-[200px] bg-white border-1 border-gray-300 text-base px-4 py-3 pr-16 rounded-2xl focus:outline-none resize-none placeholder-gray-500 disabled:opacity-50 shadow-sm transition-all font-baskerville"
+                disabled={isLoading || isStreaming}
+                rows={2}
+              />
               <Button 
                 onClick={sendMessage}
                 disabled={isLoading || isStreaming || !currentMessage.trim()}
-                className="bg-[#7b35b8] hover:bg-[#6b2ea5] text-white p-4 rounded-2xl h-12 w-12 flex items-center justify-center disabled:opacity-50"
+                className="absolute w-8 h-8 right-2 top-1/2 transform -translate-y-1/2 text-gray-600 bg-white border-1 border-gray-300 rounded-lg p-1 transition-all duration-300 hover:bg-[#7b35b8] hover:text-white font-baskerville disabled:hidden disabled:opacity-50"
               >
-                <Send className="h-5 w-5" />
+                ↵
               </Button>
             </div>
           </div>
+
+          {/* Logo button - Bottom Right */}
+          <button
+            onClick={toggleNavbar}
+            className="fixed bottom-6 right-6 hover:opacity-80 transition-opacity z-10"
+          >
+            <div className="w-12 h-12 duration-300 bg-white border border-gray-900 rounded-full flex items-center justify-center shadow-lg">
+              <Image
+                src="/ceneca-light.png"
+                alt="Ceneca"
+                width={30}
+                height={30}
+                className="rounded-lg grayscale"
+              />
+            </div>
+          </button>
         </div>
-      </div>
+      )}
+
     </div>
   );
-} 
+}
+

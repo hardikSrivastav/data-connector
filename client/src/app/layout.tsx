@@ -9,6 +9,7 @@ import "@fontsource/libre-baskerville/700.css";
 import { RootSEO } from "@/components/seo/root-seo";
 import { reportWebVitals } from "@/components/seo/web-vitals";
 import Script from "next/script";
+import { ConditionalLayout } from "@/components/conditional-layout";
 
 // Note: The AnalyticsProvider is temporarily commented out due to import issues
 // import AnalyticsProvider from "@/components/analytics-provider";
@@ -204,12 +205,10 @@ export default function RootLayout({
         </noscript>
         
         <RootSEO />
-        {/* Temporarily removing AnalyticsProvider due to import issues */}
-        <Navbar />
-        <main className="relative min-h-screen">
+        {/* Conditionally render navbar and footer based on current path */}
+        <ConditionalLayout>
           {children}
-        </main>
-        <Footer />
+        </ConditionalLayout>
         <Toaster position="bottom-right" />
       </body>
     </html>
