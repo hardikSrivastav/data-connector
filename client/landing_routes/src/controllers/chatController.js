@@ -777,29 +777,45 @@ exports.testToolsDirect = async (req, res) => {
 
 /**
  * Session management endpoints
+ * Handles both GET (conversationId in params) and POST (conversationId in body) formats
  */
 exports.validateSession = async (req, res) => {
-  const { conversationId } = req.params;
+  // Handle both GET and POST formats
+  const conversationId = req.params.conversationId || req.body.conversationId;
+  
+  if (!conversationId) {
+    return res.status(400).json({
+      success: false,
+      message: 'Conversation ID is required'
+    });
+  }
   
   try {
     const validation = await sessionManager.validateSession(conversationId);
     
     if (validation.valid) {
+      // Load full conversation data for frontend restoration
+      const conversation = await conversationStorage.loadConversation(conversationId);
       const sessionInfo = await sessionManager.getSessionInfo(conversationId);
-      res.json({
-        success: true,
-        data: {
-          valid: true,
+      
+      if (conversation) {
+        res.json({
+          success: true,
+          conversation: conversation,
           sessionInfo: sessionInfo
-        }
-      });
+        });
+      } else {
+        // Session exists but conversation data not found
+        res.status(404).json({
+          success: false,
+          message: 'Conversation data not found'
+        });
+      }
     } else {
       res.status(404).json({
         success: false,
-        data: {
-          valid: false,
-          reason: validation.reason
-        }
+        valid: false,
+        reason: validation.reason
       });
     }
   } catch (error) {

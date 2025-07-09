@@ -64,12 +64,68 @@ export default function ChatDeploymentPage() {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, streamingContent]);
 
-  // Auto-start conversation when component mounts
+  // Restore conversation from localStorage on component mount
   useEffect(() => {
-    if (!conversationId) {
-      // Don't auto-start conversation - let user initiate
-      // startConversation();
-    }
+    const restoreConversation = async () => {
+      // Try to restore conversation ID from localStorage
+      const savedConversationId = localStorage.getItem('deployment-conversation-id');
+      if (savedConversationId) {
+        try {
+          // Validate the session with backend and load conversation history
+          const backendUrl = process.env.NODE_ENV === 'production' 
+            ? 'http://localhost:3001/api/chat/validate-session'
+            : 'http://localhost:3001/api/chat/validate-session';
+            
+          const response = await fetch(backendUrl, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+              conversationId: savedConversationId
+            })
+          });
+
+          if (response.ok) {
+            const data = await response.json();
+            if (data.success && data.conversation) {
+              // Session is valid, restore the conversation
+              setConversationId(savedConversationId);
+              
+              // Restore messages from conversation history
+              if (data.conversation.messages && data.conversation.messages.length > 0) {
+                const formattedMessages = data.conversation.messages.map((msg: any) => ({
+                  role: msg.role,
+                  content: msg.content,
+                  timestamp: new Date(msg.timestamp),
+                  toolCalls: msg.toolCalls || []
+                }));
+                setMessages(formattedMessages);
+              }
+              
+              // Restore extracted config if available
+              if (data.conversation.metadata?.extractedConfig) {
+                setExtractedConfig(data.conversation.metadata.extractedConfig);
+              }
+              
+              console.log(`Restored conversation ${savedConversationId} with ${data.conversation.messages?.length || 0} messages`);
+            } else {
+              // Session is invalid or expired, clear localStorage
+              localStorage.removeItem('deployment-conversation-id');
+            }
+          } else {
+            // Session validation failed, clear localStorage
+            localStorage.removeItem('deployment-conversation-id');
+          }
+        } catch (error) {
+          console.error('Failed to restore conversation:', error);
+          // Clear invalid session from localStorage
+          localStorage.removeItem('deployment-conversation-id');
+        }
+      }
+    };
+
+    restoreConversation();
   }, []);
 
   // Update current stage based on conversation state
@@ -111,6 +167,8 @@ export default function ChatDeploymentPage() {
 
       const data = await response.json();
       setConversationId(data.data.conversationId);
+      // Save conversation ID to localStorage for persistence
+      localStorage.setItem('deployment-conversation-id', data.data.conversationId);
       // Don't add the initial welcome message to messages array
       
     } catch (error) {
@@ -191,6 +249,10 @@ export default function ChatDeploymentPage() {
         const data = await response.json();
         currentConversationId = data.data.conversationId;
         setConversationId(currentConversationId);
+        // Save conversation ID to localStorage for persistence
+        if (currentConversationId) {
+          localStorage.setItem('deployment-conversation-id', currentConversationId);
+        }
         
       } catch (error) {
         toast.error("Failed to start conversation");
@@ -443,6 +505,26 @@ export default function ChatDeploymentPage() {
     }
   };
 
+  const startNewConversation = () => {
+    // Clear localStorage
+    localStorage.removeItem('deployment-conversation-id');
+    
+    // Reset all state
+    setConversationId(null);
+    setMessages([]);
+    setCurrentMessage("");
+    setExtractedConfig({});
+    setIsGeneratingFiles(false);
+    setGenerationProgress(0);
+    setProgressSteps([]);
+    setStreamingContent("");
+    setStreamingToolCalls([]);
+    setIsStreaming(false);
+    setIsLoading(false);
+    
+    console.log('Started new conversation - cleared all state and localStorage');
+  };
+
   return (
     <div className="h-screen bg-white flex flex-col relative">
       {/* Navbar overlay */}
@@ -526,11 +608,11 @@ export default function ChatDeploymentPage() {
         /* Conversation state - full height layout */
         <div className="flex-1 flex flex-col h-full relative">
           {/* Messages Area - 80% of available space */}
-          <div className={`flex-1 px-6 py-4 overflow-y-auto transition-all duration-300 ${
+          <div className={`flex-1 px-6 pt-4 overflow-y-auto transition-all duration-300 ${
             isToolSidebarOpen ? 'mr-96' : ''
           }`} style={{
             height: '80%',
-            maxHeight: navbarVisible ? 'calc(80vh - 120px)' : '80vh',
+            maxHeight: navbarVisible ? 'calc(85vh - 120px)' : '85vh',
             marginTop: navbarVisible ? '120px' : '0px'
           }}>
             <div className="max-w-5xl mx-auto space-y-4" style={{width: '80%'}}>
@@ -635,7 +717,7 @@ export default function ChatDeploymentPage() {
 
 
           {/* Input Area - Fixed at bottom */}
-          <div className={`border-gray-200 bg-white px-6 transition-all duration-300 ${
+          <div className={`border-gray-200 bg-white px-6 pt-2 transition-all duration-300 ${
             isToolSidebarOpen ? 'mr-96' : ''
           }`}>
             <div className="max-w-5xl mx-auto relative" style={{width: '80%'}}>
