@@ -120,6 +120,7 @@ class BedrockToolsAgent {
       let finalResponse = '';
       let allToolCalls = [];
       let currentMessages = [...messages];
+      let fullConversationContent = '';
 
       // Main conversation loop with tool calling
       while (true) {
@@ -130,8 +131,20 @@ class BedrockToolsAgent {
           const toolCalls = response.content.filter(content => content.type === 'tool_use');
           allToolCalls.push(...toolCalls);
           
+          // Add tool call text to full content as formatted code blocks
+          for (const toolCall of toolCalls) {
+            fullConversationContent += `\n\n\`\`\`tool-call\n🔧 ${toolCall.name}\n${JSON.stringify(toolCall.input, null, 2)}\n\`\`\`\n`;
+          }
+          
           // Execute tools and collect results
           const toolResults = await this.executeTools(toolCalls);
+          
+          // Add tool results to full content as formatted code blocks
+          for (let i = 0; i < toolResults.length; i++) {
+            const toolResult = toolResults[i];
+            const toolCall = toolCalls[i];
+            fullConversationContent += `\n\`\`\`tool-result\n✅ ${toolCall.name} completed\n${toolResult.content.length > 500 ? toolResult.content.substring(0, 500) + '...' : toolResult.content}\n\`\`\`\n\n`;
+          }
           
           // Add assistant message with tool calls to conversation
           currentMessages.push({
@@ -154,6 +167,9 @@ class BedrockToolsAgent {
           const textContent = response.content.find(content => content.type === 'text');
           finalResponse = textContent ? textContent.text : '';
           
+          // Add final response to full content
+          fullConversationContent += finalResponse;
+          
           // Add final assistant message if we haven't already
           if (currentMessages.length === 0 || currentMessages[currentMessages.length - 1].role !== 'assistant') {
             currentMessages.push({
@@ -167,7 +183,7 @@ class BedrockToolsAgent {
       }
 
       return {
-        content: finalResponse,
+        content: fullConversationContent, // Include tool calls in the final content
         toolCalls: allToolCalls,
         fullMessages: currentMessages
       };
@@ -259,31 +275,96 @@ class BedrockToolsAgent {
   }
 
   async processMessageStream(systemPrompt, userMessage, conversationHistory = [], onChunk) {
-    // For now, use non-streaming and simulate chunks
-    // AWS Bedrock streaming with tools is more complex
+    if (!this.isInitialized) {
+      throw new Error('Agent not initialized. Call initialize() first.');
+    }
+
     try {
-      const response = await this.processMessage(systemPrompt, userMessage, conversationHistory);
-      
-      // Simulate streaming by sending chunks
-      if (onChunk) {
-        const content = response.content;
-        const chunkSize = 10;
+      // Build message history for Bedrock format with proper role alternation
+      const messages = this.buildValidMessageHistory(conversationHistory, userMessage);
+
+      let finalResponse = '';
+      let allToolCalls = [];
+      let currentMessages = [...messages];
+      let fullConversationContent = '';
+
+      // Main conversation loop with tool calling
+      while (true) {
+        const response = await this.invokeWithTools(systemPrompt, currentMessages);
         
-        for (let i = 0; i < content.length; i += chunkSize) {
-          const chunk = content.slice(i, i + chunkSize);
-          onChunk(chunk);
-          // Small delay to simulate streaming
-          await new Promise(resolve => setTimeout(resolve, 50));
-        }
-        
-        // Send tool call information
-        for (const toolCall of response.toolCalls) {
-          onChunk(`\n[TOOL CALL] ${toolCall.name}: ${JSON.stringify(toolCall.input)}\n`);
+        if (response.stop_reason === 'tool_use') {
+          // Extract tool calls
+          const toolCalls = response.content.filter(content => content.type === 'tool_use');
+          allToolCalls.push(...toolCalls);
+          
+          // Send tool call notifications to frontend as formatted code blocks
+          for (const toolCall of toolCalls) {
+            const toolCallText = `\n\n\`\`\`tool-call\n🔧 ${toolCall.name}\n${JSON.stringify(toolCall.input, null, 2)}\n\`\`\`\n`;
+            fullConversationContent += toolCallText;
+            if (onChunk) {
+              onChunk(toolCallText);
+            }
+          }
+          
+          // Execute tools and collect results
+          const toolResults = await this.executeTools(toolCalls);
+          
+          // Send tool results to frontend as formatted code blocks
+          for (let i = 0; i < toolResults.length; i++) {
+            const toolResult = toolResults[i];
+            const toolCall = toolCalls[i];
+            const toolResultText = `\n\`\`\`tool-result\n✅ ${toolCall.name} completed\n${toolResult.content.length > 500 ? toolResult.content.substring(0, 500) + '...' : toolResult.content}\n\`\`\`\n\n`;
+            fullConversationContent += toolResultText;
+            if (onChunk) {
+              onChunk(toolResultText);
+            }
+          }
+          
+          // Add assistant message with tool calls to conversation
+          currentMessages.push({
+            role: 'assistant',
+            content: response.content
+          });
+          
+          // Add user message with tool results
+          // Ensure we maintain role alternation
+          currentMessages.push({
+            role: 'user',
+            content: toolResults
+          });
+          
+          // Validate before next iteration
+          this.validateRoleAlternation(currentMessages);
+          
+        } else {
+          // Final response
+          const textContent = response.content.find(content => content.type === 'text');
+          finalResponse = textContent ? textContent.text : '';
+          
+          // Add final response to full content
+          fullConversationContent += finalResponse;
+          
+          // Stream the final response
+          if (onChunk && finalResponse) {
+            const chunkSize = 10;
+            for (let i = 0; i < finalResponse.length; i += chunkSize) {
+              const chunk = finalResponse.slice(i, i + chunkSize);
+              onChunk(chunk);
+              // Small delay to simulate streaming
+              await new Promise(resolve => setTimeout(resolve, 50));
+            }
+          }
+          
+          break;
         }
       }
-      
-      return response;
-      
+
+      return {
+        content: fullConversationContent, // Include tool calls in the final content
+        toolCalls: allToolCalls,
+        fullMessages: currentMessages
+      };
+
     } catch (error) {
       console.error('Error streaming message with Bedrock Tools:', error);
       throw error;

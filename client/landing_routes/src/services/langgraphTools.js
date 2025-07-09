@@ -38,7 +38,7 @@ class IntrospectFileTool extends Tool {
       }
 
       // Define the base directory for deployment files
-      const baseDir = path.join(__dirname, '../../..', 'deploy');
+      const baseDir = path.join(__dirname, '..', 'deploy-reference');
       const fullPath = path.join(baseDir, filePath);
 
       // Check if file exists
@@ -95,7 +95,7 @@ class EditFileTool extends Tool {
         return 'Error: Path traversal not allowed';
       }
 
-      const baseDir = path.join(__dirname, '../../..', 'deploy');
+      const baseDir = path.join(__dirname, '..', 'deploy-reference');
       const fullPath = path.join(baseDir, filePath);
 
       // Check if file exists
@@ -152,7 +152,7 @@ class ListDeploymentFilesTool extends Tool {
 
   async _call(input) {
     try {
-      const baseDir = path.join(__dirname, '../../..', 'deploy');
+      const baseDir = path.join(__dirname, '..', 'deploy-reference');
       
       const files = await fs.readdir(baseDir);
       const allowedExtensions = ['.yaml', '.yml', '.json', '.conf', '.env', '.sh'];
@@ -206,7 +206,7 @@ class CreateDeploymentFileTool extends Tool {
         return 'Error: Invalid file name. No path separators or traversal allowed';
       }
 
-      const baseDir = path.join(__dirname, '../../..', 'deploy');
+      const baseDir = path.join(__dirname, '..', 'deploy-reference');
       const fullPath = path.join(baseDir, fileName);
 
       // Check if file exists and overwrite policy

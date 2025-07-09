@@ -53,6 +53,7 @@ export default function ChatDeploymentPage() {
   const [showNavbar, setShowNavbar] = useState(false);
   const [navbarVisible, setNavbarVisible] = useState(false);
   const [currentStage, setCurrentStage] = useState<string>("Ready to configure your deployment");
+
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   // Auto-scroll to bottom of messages
@@ -231,10 +232,10 @@ export default function ChatDeploymentPage() {
                     setStreamingContent(data.fullContent);
                   });
                 } else if (data.type === 'tool_call') {
-                  // Handle tool call notifications
-                  toast.info(`🔧 Using tool: ${data.toolName}`);
+                  // Tool calls are now inline in the message content
+                  toast.info(`🔧 Tool in use`);
                 } else if (data.type === 'tool_result') {
-                  // Handle tool result notifications
+                  // Tool results are now inline in the message content
                   toast.success(`✅ Tool completed`);
                 } else if (data.type === 'complete') {
                   isCompleted = true;
@@ -489,18 +490,7 @@ export default function ChatDeploymentPage() {
                           </ReactMarkdown>
                         </div>
                         
-                        {/* Tool usage indicators */}
-                        {message.role === 'assistant' && message.toolCalls && message.toolCalls.length > 0 && (
-                          <div className="mt-2 pt-2 border-t border-gray-200">
-                            <div className="flex flex-wrap gap-1">
-                              {message.toolCalls.map((toolCall, idx) => (
-                                <Badge key={idx} variant="secondary" className="text-xs bg-blue-50 text-blue-700 border border-blue-200">
-                                  🔧 {toolCall.name}
-                                </Badge>
-                              ))}
-                            </div>
-                          </div>
-                        )}
+
                       </div>
                     </div>
                   </div>
@@ -590,6 +580,8 @@ export default function ChatDeploymentPage() {
               <div ref={messagesEndRef} />
             </div>
           </div>
+
+
 
           {/* Input Area - Fixed at bottom */}
           <div className=" border-gray-200 bg-white px-6 py-4">

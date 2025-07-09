@@ -9,7 +9,7 @@ services:
     container_name: ceneca-agent
     ports:
       - "8787:8787"
-    [object Object]:
+    volumes:
       - ./config.yaml:/root/.data-connector/config.yaml
     environment:
       - AGENT_PORT=8787

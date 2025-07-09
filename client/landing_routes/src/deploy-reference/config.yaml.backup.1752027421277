@@ -6,32 +6,29 @@ default_database: postgres
 
 # PostgreSQL configuration
 postgres:
-  uri: "postgresql://user:password@your-postgres-host:p"  /your_database"
+  uri: "postgresql://user:password@your-postgres-host:5432/your_database"
   pool:
-    max_connections: 
-{
-    min_connections:  
+    max_connections: 10
+    min_connections: 2
   ssl: true  # Enable SSL for secure connections
 
 # MongoDB configuration
 mongodb:
-  uri: "mongodb://user:password@your-mongodb-host: s{
-s/your_database?authSource=admin"
-  pool_size: 
-{
-  connect_timeout_ms: p{{{
+  uri: "mongodb://user:password@your-mongodb-host:27017/your_database?authSource=admin"
+  pool_size: 10
+  connect_timeout_ms: 5000
 
 # Qdrant vector database configuration
 qdrant:
-  uri: "http://your-qdrant-host:o   "
+  uri: "http://your-qdrant-host:6333"
   api_key: "your-qdrant-api-key-if-needed"  # Optional
 
 # LLM configuration
 llm:
   provider: "openai"  # Options: openai, anthropic, local
-  model: "gpt-""      # Model to use
-  max_tokens:  {{{    # Maximum tokens per request
-  temperature: {.s    # Sampling temperature
+  model: "gpt-4"      # Model to use
+  max_tokens: 2000    # Maximum tokens per request
+  temperature: 0.7    # Sampling temperature
 
 # Logging configuration
 logging:
@@ -43,14 +40,13 @@ logging:
 # Web interface configuration
 web:
   enabled: true
-  port: tsts
-  host: "{.{.{.{"
+  port: 8787
+  host: "0.0.0.0"
   cors:
     enabled: true
     allowed_origins: ["*"]
 
 # Security settings
 security:
-  request_timeout_seconds: o{
-  max_request_size_mb: 
-{
+  request_timeout_seconds: 60
+  max_request_size_mb: 10

@@ -2,6 +2,7 @@ const { v4: uuidv4 } = require('uuid');
 const { BedrockRuntimeClient, InvokeModelCommand, InvokeModelWithResponseStreamCommand } = require('@aws-sdk/client-bedrock-runtime');
 const DeploymentGenerator = require('../services/deploymentGenerator');
 const BedrockToolsAgent = require('../services/bedrockToolsAgent');
+const PromptRenderer = require('../services/promptRenderer');
 
 // Initialize AWS Bedrock client (keeping for fallback)
 const bedrock = new BedrockRuntimeClient({
@@ -23,6 +24,9 @@ const deploymentGenerator = new DeploymentGenerator();
 
 // Initialize agents
 const bedrockToolsAgent = new BedrockToolsAgent();
+
+// Initialize prompt renderer
+const promptRenderer = new PromptRenderer();
 
 // Initialize all systems on server start
 (async () => {
@@ -67,36 +71,9 @@ exports.getTemplateIntrospection = async (req, res) => {
  * Enhanced system prompt that understands deployment templates and extracts requirements
  * Now conversation-aware to only ask about relevant databases
  * Enhanced with Bedrock tool capabilities
+ * Uses Jinja templating for better maintainability
  */
 async function getSystemPrompt(userInfo, userMessage = null) {
-  // Get actual template analysis for introspection
-  let templateAnalysis = {};
-  let actualPlaceholders = [];
-  
-  try {
-    await deploymentGenerator.ensureInitialized();
-    templateAnalysis = await deploymentGenerator.getTemplateAnalysis();
-    
-    // Extract real placeholders that need values
-    const allPlaceholders = Object.values(templateAnalysis.placeholders);
-    actualPlaceholders = allPlaceholders.map(p => ({
-      name: p.name,
-      type: p.type,
-      category: p.category,
-      placeholder: p.placeholder,
-      example: p.example,
-      usedInTemplates: p.usedInTemplates
-    }));
-    
-  } catch (error) {
-    console.warn('Could not load template analysis:', error.message);
-  }
-
-  // If we have a user message, filter placeholders based on what they mentioned
-  if (userMessage && actualPlaceholders.length > 0) {
-    actualPlaceholders = filterPlaceholdersBasedOnMessage(userMessage, actualPlaceholders);
-  }
-
   // Get available tools information
   let availableTools = [];
   try {
@@ -107,101 +84,40 @@ async function getSystemPrompt(userInfo, userMessage = null) {
     console.warn('Could not get tools info:', error.message);
   }
 
-  return `You are a deployment configuration assistant for Ceneca. You help users set up deployment configurations by collecting their requirements and managing deployment files.
+  // Extract contextual requirements from user message
+  let contextualRequirements = null;
+  if (userMessage) {
+    try {
+      contextualRequirements = promptRenderer.extractContextualRequirements(userMessage);
+    } catch (error) {
+      console.warn('Could not extract contextual requirements:', error.message);
+    }
+  }
 
-You have access to tools that let you inspect and modify deployment files. Use these tools naturally when needed:
+  // Render the system prompt using Jinja template
+  try {
+    return promptRenderer.renderDeploymentAssistant({
+      availableTools,
+      userInfo,
+      userMessage,
+      contextualRequirements
+    });
+  } catch (error) {
+    console.error('Error rendering system prompt:', error);
+    // Fallback to basic prompt if template fails
+    return `You are a deployment configuration assistant for Ceneca. Your job is to systematically configure a COMPLETE deployment package by transparently introspecting and updating existing template files in the deploy-reference folder.
 
 AVAILABLE TOOLS:
 ${availableTools.map(tool => `- ${tool.name}: ${tool.description.trim()}`).join('\n')}
 
-APPROACH:
-1. Ask users about their setup needs (databases, authentication, domain)
-2. Use tools to check available deployment files when relevant
-3. Use tools to inspect files when you need to understand their structure
-4. Use tools to update files immediately when users provide configuration values
-5. Offer environment variable options for sensitive data
-
-WHAT TO ASK FOR:
-${actualPlaceholders.length > 0 ? `Based on the deployment templates, I need:
-${actualPlaceholders.map(p => `- ${p.name} (${p.category}): ${p.example || 'configuration value'}`).join('\n')}` : 'Database connections, authentication setup, and deployment configuration'}
-
-SECURITY APPROACH:
-- Always suggest environment variables for sensitive data (API keys, passwords, etc.)
-- Example: Ask for "POSTGRES_URI" instead of individual database credentials
-- Make it clear users can use placeholders and update them later
-
-Keep responses conversational and focused. Ask for one thing at a time. Use tools when you need to check or modify files.
+GOAL: Complete deployment package ready for download, not just answering one question.
 
 USER CONTEXT:
 ${JSON.stringify(userInfo)}`;
-}
-
-/**
- * Filter placeholders based on what the user mentioned in their message
- */
-function filterPlaceholdersBasedOnMessage(userMessage, actualPlaceholders) {
-  const message = userMessage.toLowerCase();
-  
-  // Check for specific database mentions
-  const databaseMentions = {
-    postgresql: ['postgresql', 'postgres', 'pg', 'psql'],
-    mongodb: ['mongodb', 'mongo', 'nosql'],
-    qdrant: ['qdrant', 'vector', 'embedding']
-  };
-
-  // Filter placeholders to only include relevant ones
-  return actualPlaceholders.filter(placeholder => {
-    // Always include non-database placeholders (auth, deployment, etc.)
-    if (!placeholder.category || !['postgresql', 'mongodb', 'qdrant'].includes(placeholder.category)) {
-      return true;
-    }
-    
-    // For database placeholders, only include if mentioned
-    for (const [dbType, keywords] of Object.entries(databaseMentions)) {
-      if (placeholder.category === dbType) {
-        return keywords.some(keyword => message.includes(keyword));
-      }
-    }
-    
-    return false;
-  });
-}
-
-/**
- * Filter template requirements based on what the user mentioned in their message
- */
-function filterRequirementsBasedOnMessage(userMessage, allRequirements) {
-  const message = userMessage.toLowerCase();
-  const relevantRequirements = {
-    databases: [],
-    authentication: allRequirements.authentication || [],
-    deployment: allRequirements.deployment || [],
-    networking: allRequirements.networking || []
-  };
-
-  // Check for specific database mentions
-  const databaseMentions = {
-    postgresql: ['postgresql', 'postgres', 'pg', 'psql'],
-    mongodb: ['mongodb', 'mongo', 'nosql'],
-    qdrant: ['qdrant', 'vector', 'embedding']
-  };
-
-  // Only include databases that were actually mentioned
-  for (const [dbType, keywords] of Object.entries(databaseMentions)) {
-    if (keywords.some(keyword => message.includes(keyword))) {
-      if (allRequirements.databases.includes(dbType)) {
-        relevantRequirements.databases.push(dbType);
-      }
-    }
   }
-
-  // If no specific databases mentioned, include all (fallback)
-  if (relevantRequirements.databases.length === 0) {
-    relevantRequirements.databases = allRequirements.databases || [];
-  }
-
-  return relevantRequirements;
 }
+
+
 
 /**
  * Start a new conversation
