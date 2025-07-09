@@ -1,0 +1,56 @@
+# Ceneca Agent Configuration
+# Main configuration for connecting to existing databases
+
+# Default database to use for queries if not specified
+postgres: [object Object]
+
+# PostgreSQL configuration
+[object Object]:
+  uri: "[object Object]ql://user:password@your-[object Object]-host:p"  /your_database"
+  pool:
+    max_connections: 
+{
+    min_connections:  
+  ssl: true  # Enable SSL for secure connections
+
+# MongoDB configuration
+[object Object]:
+  uri: "[object Object]://user:password@your-[object Object]-host: s{
+s/your_database?authSource=admin"
+  pool_size: 
+{
+  connect_timeout_ms: p{{{
+
+# Qdrant vector database configuration
+qdrant:
+  uri: "http://your-qdrant-host:o   "
+  api_key: "your-qdrant-api-key-if-needed"  # Optional
+
+# LLM configuration
+llm:
+  provider: "openai"  # Options: openai, anthropic, local
+  model: "gpt-""      # Model to use
+  max_tokens:  {{{    # Maximum tokens per request
+  temperature: {.s    # Sampling temperature
+
+# Logging configuration
+logging:
+  level: "info"       # Options: debug, info, warning, error
+  format: "json"      # Options: json, text
+  destination: "file" # Options: file, stdout
+  file_path: "/var/log/ceneca-agent.log"  # Only used if destination is "file"
+
+# Web interface configuration
+web:
+  enabled: true
+  port: tsts
+  host: "{.{.{.{"
+  cors:
+    enabled: true
+    allowed_origins: ["*"]
+
+# Security settings
+security:
+  request_timeout_seconds: o{
+  max_request_size_mb: 
+{

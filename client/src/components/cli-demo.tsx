@@ -12,7 +12,8 @@ export function CliDemo() {
       <div className="container mx-auto">
         <div className="text-center mb-20">
           <motion.h2 
-            className="text-5xl md:text-6xl font-bold mb-8 bg-clip-text text-transparent bg-gradient-to-r from-[#3a86ff] via-[#9d4edd] to-[#ff006e]"
+            className="text-5xl md:text-6xl font-bold mb-8 bg-clip-text text-transparent bg-gradient-to-r from-[#3a86ff] via-[#9d4edd] to-[#ff006e] leading-tight"
+            style={{ lineHeight: '1.1', paddingBottom: '0.15em' }}
             initial={{ opacity: 0, y: 20 }}
             whileInView={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.5 }}

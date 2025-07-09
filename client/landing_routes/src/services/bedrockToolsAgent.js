@@ -12,6 +12,16 @@ class BedrockToolsAgent {
     this.tools = null;
     this.isInitialized = false;
     this.modelId = 'anthropic.claude-3-haiku-20240307-v1:0';
+    
+    // Token limits for different models
+    this.tokenLimits = {
+      'anthropic.claude-3-haiku-20240307-v1:0': 200000,  // 200K tokens
+      'anthropic.claude-3-sonnet-20240229-v1:0': 200000,
+      'anthropic.claude-3-opus-20240229-v1:0': 200000
+    };
+    
+    // Reserve tokens for response and buffer
+    this.reservedTokens = 2500; // 2000 for response + 500 buffer
   }
 
   async initialize() {
@@ -39,6 +49,138 @@ class BedrockToolsAgent {
       console.error('Failed to initialize Bedrock Tools agent:', error);
       throw error;
     }
+  }
+
+  // Rough token estimation (1 token ≈ 4 characters for English text)
+  estimateTokens(text) {
+    if (typeof text !== 'string') {
+      text = JSON.stringify(text);
+    }
+    return Math.ceil(text.length / 4);
+  }
+
+  // Calculate total tokens for a message
+  calculateMessageTokens(message) {
+    let totalTokens = 0;
+    
+    if (message.content && Array.isArray(message.content)) {
+      for (const content of message.content) {
+        if (content.text) {
+          totalTokens += this.estimateTokens(content.text);
+        } else if (content.type === 'tool_use') {
+          totalTokens += this.estimateTokens(JSON.stringify(content));
+        } else if (content.type === 'tool_result') {
+          totalTokens += this.estimateTokens(content.content || '');
+        }
+      }
+    }
+    
+    return totalTokens;
+  }
+
+  // Calculate total tokens for the entire request
+  calculateRequestTokens(systemPrompt, messages, tools) {
+    let totalTokens = 0;
+    
+    // System prompt tokens
+    totalTokens += this.estimateTokens(systemPrompt);
+    
+    // Message tokens
+    for (const message of messages) {
+      totalTokens += this.calculateMessageTokens(message);
+    }
+    
+    // Tool definition tokens
+    totalTokens += this.estimateTokens(JSON.stringify(tools));
+    
+    return totalTokens;
+  }
+
+  // Intelligently slice conversation history to fit within token limits
+  sliceConversationHistory(systemPrompt, messages, tools) {
+    const maxTokens = this.tokenLimits[this.modelId] || 200000;
+    const availableTokens = maxTokens - this.reservedTokens;
+    
+    // Calculate fixed costs
+    const systemTokens = this.estimateTokens(systemPrompt);
+    const toolTokens = this.estimateTokens(JSON.stringify(tools));
+    const fixedTokens = systemTokens + toolTokens;
+    
+    const availableForMessages = availableTokens - fixedTokens;
+    
+    console.log('BedrockToolsAgent: Token management', {
+      maxTokens,
+      availableTokens,
+      systemTokens,
+      toolTokens,
+      fixedTokens,
+      availableForMessages,
+      totalMessages: messages.length
+    });
+    
+    // If we have plenty of space, return all messages
+    const totalMessageTokens = messages.reduce((sum, msg) => sum + this.calculateMessageTokens(msg), 0);
+    if (totalMessageTokens <= availableForMessages) {
+      console.log('BedrockToolsAgent: All messages fit within token limit');
+      return messages;
+    }
+    
+    // We need to slice - prioritize recent messages
+    const slicedMessages = [];
+    let currentTokens = 0;
+    
+    // Start from the end (most recent) and work backwards
+    for (let i = messages.length - 1; i >= 0; i--) {
+      const messageTokens = this.calculateMessageTokens(messages[i]);
+      
+      // Always include the last message (current user message)
+      if (i === messages.length - 1) {
+        slicedMessages.unshift(messages[i]);
+        currentTokens += messageTokens;
+        continue;
+      }
+      
+      // Check if we can fit this message
+      if (currentTokens + messageTokens <= availableForMessages) {
+        slicedMessages.unshift(messages[i]);
+        currentTokens += messageTokens;
+      } else {
+        // Try to fit a truncated version if it's a text message
+        if (messages[i].content && Array.isArray(messages[i].content)) {
+          const textContent = messages[i].content.find(c => c.type === 'text');
+          if (textContent && textContent.text) {
+            const remainingTokens = availableForMessages - currentTokens;
+            const maxChars = Math.max(100, remainingTokens * 4); // At least 100 chars
+            
+            if (textContent.text.length > maxChars) {
+              const truncatedMessage = {
+                ...messages[i],
+                content: [{
+                  type: 'text',
+                  text: textContent.text.substring(0, maxChars) + '...[truncated]'
+                }]
+              };
+              
+              const truncatedTokens = this.calculateMessageTokens(truncatedMessage);
+              if (currentTokens + truncatedTokens <= availableForMessages) {
+                slicedMessages.unshift(truncatedMessage);
+                currentTokens += truncatedTokens;
+              }
+            }
+          }
+        }
+        break;
+      }
+    }
+    
+    console.log('BedrockToolsAgent: Sliced conversation', {
+      originalMessages: messages.length,
+      slicedMessages: slicedMessages.length,
+      estimatedTokens: currentTokens,
+      availableForMessages
+    });
+    
+    return slicedMessages;
   }
 
   // Convert our custom tools to Bedrock tool format
@@ -129,21 +271,31 @@ class BedrockToolsAgent {
         if (response.stop_reason === 'tool_use') {
           // Extract tool calls
           const toolCalls = response.content.filter(content => content.type === 'tool_use');
-          allToolCalls.push(...toolCalls);
           
-          // Add tool call text to full content as formatted code blocks
+          // Add tool call text to full content as inline markers
           for (const toolCall of toolCalls) {
-            fullConversationContent += `\n\n\`\`\`tool-call\n🔧 ${toolCall.name}\n${JSON.stringify(toolCall.input, null, 2)}\n\`\`\`\n`;
+            fullConversationContent += `[TOOL:${toolCall.name}:${toolCall.id}]`;
           }
           
           // Execute tools and collect results
           const toolResults = await this.executeTools(toolCalls);
           
-          // Add tool results to full content as formatted code blocks
+          // Create frontend-friendly tool calls with results (don't mutate original)
+          const frontendToolCalls = toolCalls.map((toolCall, i) => ({
+            name: toolCall.name,
+            id: toolCall.id,
+            input: toolCall.input,
+            result: toolResults[i] ? toolResults[i].content : undefined
+          }));
+          
+          // Add to allToolCalls for frontend
+          allToolCalls.push(...frontendToolCalls);
+          
+          // Add tool results to full content as inline markers
           for (let i = 0; i < toolResults.length; i++) {
             const toolResult = toolResults[i];
             const toolCall = toolCalls[i];
-            fullConversationContent += `\n\`\`\`tool-result\n✅ ${toolCall.name} completed\n${toolResult.content.length > 500 ? toolResult.content.substring(0, 500) + '...' : toolResult.content}\n\`\`\`\n\n`;
+            fullConversationContent += `[RESULT:${toolCall.name}:${toolCall.id}]`;
           }
           
           // Add assistant message with tool calls to conversation
@@ -198,11 +350,15 @@ class BedrockToolsAgent {
     // Validate role alternation
     this.validateRoleAlternation(messages);
     
+    // Get tools and apply intelligent slicing
+    const tools = this.getBedrockToolsFormat();
+    const slicedMessages = this.sliceConversationHistory(systemPrompt, messages, tools);
+    
     // Add validation and debugging
-    console.log('BedrockToolsAgent: Invoking with messages (roles):', messages.map(m => m.role));
+    console.log('BedrockToolsAgent: Invoking with messages (roles):', slicedMessages.map(m => m.role));
     
     // Validate message format
-    for (const message of messages) {
+    for (const message of slicedMessages) {
       if (!message.content || !Array.isArray(message.content)) {
         throw new Error(`Invalid message format: content must be an array. Got: ${JSON.stringify(message)}`);
       }
@@ -222,8 +378,8 @@ class BedrockToolsAgent {
         max_tokens: 2000,
         temperature: 0.7,
         system: systemPrompt,
-        messages: messages,
-        tools: this.getBedrockToolsFormat()
+        messages: slicedMessages,
+        tools: tools
       })
     };
 
@@ -255,10 +411,16 @@ class BedrockToolsAgent {
         // Execute the tool
         const result = await tool._call(toolCall.input.input || JSON.stringify(toolCall.input));
         
+        // Truncate very long results to prevent token overflow
+        let truncatedResult = result;
+        if (result.length > 10000) {
+          truncatedResult = result.substring(0, 10000) + '\n...[Result truncated to prevent token overflow]';
+        }
+        
         toolResults.push({
           type: 'tool_result',
           tool_use_id: toolCall.id,
-          content: result
+          content: truncatedResult
         });
         
       } catch (error) {
@@ -295,11 +457,10 @@ class BedrockToolsAgent {
         if (response.stop_reason === 'tool_use') {
           // Extract tool calls
           const toolCalls = response.content.filter(content => content.type === 'tool_use');
-          allToolCalls.push(...toolCalls);
           
-          // Send tool call notifications to frontend as formatted code blocks
+          // Send tool call notifications as inline markers (just the marker, not the full input)
           for (const toolCall of toolCalls) {
-            const toolCallText = `\n\n\`\`\`tool-call\n🔧 ${toolCall.name}\n${JSON.stringify(toolCall.input, null, 2)}\n\`\`\`\n`;
+            const toolCallText = `[TOOL:${toolCall.name}:${toolCall.id}]`;
             fullConversationContent += toolCallText;
             if (onChunk) {
               onChunk(toolCallText);
@@ -309,11 +470,22 @@ class BedrockToolsAgent {
           // Execute tools and collect results
           const toolResults = await this.executeTools(toolCalls);
           
-          // Send tool results to frontend as formatted code blocks
+          // Create frontend-friendly tool calls with results (don't mutate original)
+          const frontendToolCalls = toolCalls.map((toolCall, i) => ({
+            name: toolCall.name,
+            id: toolCall.id,
+            input: toolCall.input,
+            result: toolResults[i] ? toolResults[i].content : undefined
+          }));
+          
+          // Add to allToolCalls for frontend
+          allToolCalls.push(...frontendToolCalls);
+          
+          // Send tool results as inline markers (just the marker, not the full content)
           for (let i = 0; i < toolResults.length; i++) {
             const toolResult = toolResults[i];
             const toolCall = toolCalls[i];
-            const toolResultText = `\n\`\`\`tool-result\n✅ ${toolCall.name} completed\n${toolResult.content.length > 500 ? toolResult.content.substring(0, 500) + '...' : toolResult.content}\n\`\`\`\n\n`;
+            const toolResultText = `[RESULT:${toolCall.name}:${toolCall.id}]`;
             fullConversationContent += toolResultText;
             if (onChunk) {
               onChunk(toolResultText);

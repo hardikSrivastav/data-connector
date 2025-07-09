@@ -10,7 +10,7 @@ import { toast } from "sonner";
 import { Send, Bot, User, FileText, Database, Shield, Settings, CheckCircle, Menu } from "lucide-react";
 import { Navbar } from "@/components/navbar";
 import Image from "next/image";
-import ReactMarkdown from 'react-markdown';
+import { MessageRenderer } from "@/components/message-renderer";
 
 interface Message {
   role: 'user' | 'assistant';
@@ -21,7 +21,8 @@ interface Message {
 
 interface ToolCall {
   name: string;
-  args: string;
+  id: string;
+  input?: any;
   result?: string;
 }
 
@@ -45,6 +46,7 @@ export default function ChatDeploymentPage() {
   const [isLoading, setIsLoading] = useState(false);
   const [isStreaming, setIsStreaming] = useState(false);
   const [streamingContent, setStreamingContent] = useState("");
+  const [streamingToolCalls, setStreamingToolCalls] = useState<ToolCall[]>([]);
   const [conversationId, setConversationId] = useState<string | null>(null);
   const [extractedConfig, setExtractedConfig] = useState<ExtractedConfig>({});
   const [isGeneratingFiles, setIsGeneratingFiles] = useState(false);
@@ -53,6 +55,7 @@ export default function ChatDeploymentPage() {
   const [showNavbar, setShowNavbar] = useState(false);
   const [navbarVisible, setNavbarVisible] = useState(false);
   const [currentStage, setCurrentStage] = useState<string>("Ready to configure your deployment");
+  const [isToolSidebarOpen, setIsToolSidebarOpen] = useState(false);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
@@ -118,6 +121,43 @@ export default function ChatDeploymentPage() {
     }
   };
 
+  // Function to parse tool calls from streaming content
+  const parseToolCallsFromContent = (content: string): ToolCall[] => {
+    const toolCalls: ToolCall[] = [];
+    const processedToolIds = new Set<string>();
+    
+    // Find all tool markers in the content
+    const toolMarkerRegex = /\[(?:TOOL|RESULT):([^:]+):([^\]]+)\]/g;
+    let match;
+    
+    while ((match = toolMarkerRegex.exec(content)) !== null) {
+      const [fullMatch, toolName, toolId] = match;
+      
+      // Only process each tool once
+      if (!processedToolIds.has(toolId)) {
+        processedToolIds.add(toolId);
+        
+        // Create placeholder tool call
+        const toolCall: ToolCall = {
+          name: toolName,
+          id: toolId,
+          input: undefined, // Will be populated when complete data arrives
+          result: undefined // Will be populated when complete data arrives
+        };
+        
+        // Check if we have a result marker for this tool
+        const resultMarker = `[RESULT:${toolName}:${toolId}]`;
+        if (content.includes(resultMarker)) {
+          toolCall.result = 'Processing...'; // Placeholder until real result arrives
+        }
+        
+        toolCalls.push(toolCall);
+      }
+    }
+    
+    return toolCalls;
+  };
+
   const sendMessage = async () => {
     if (!currentMessage.trim()) return;
 
@@ -175,6 +215,7 @@ export default function ChatDeploymentPage() {
     setCurrentMessage("");
     setIsStreaming(true);
     setStreamingContent("");
+    setStreamingToolCalls([]);
     
     let isCompleted = false;
     let completedData: any = null;
@@ -230,6 +271,9 @@ export default function ChatDeploymentPage() {
                 if (data.type === 'chunk') {
                   flushSync(() => {
                     setStreamingContent(data.fullContent);
+                    // Parse tool calls from the current content
+                    const parsedToolCalls = parseToolCallsFromContent(data.fullContent);
+                    setStreamingToolCalls(parsedToolCalls);
                   });
                 } else if (data.type === 'tool_call') {
                   // Tool calls are now inline in the message content
@@ -240,9 +284,26 @@ export default function ChatDeploymentPage() {
                 } else if (data.type === 'complete') {
                   isCompleted = true;
                   completedData = data;
+                  // Update streaming tool calls with the complete data - merge with existing parsed calls
+                  flushSync(() => {
+                    const completeToolCalls = data.toolCalls || [];
+                    const mergedToolCalls = completeToolCalls.map((completeTool: ToolCall) => {
+                      // Find existing parsed tool call or create new one
+                      const existingTool = parseToolCallsFromContent(data.message).find(
+                        (t: ToolCall) => t.id === completeTool.id
+                      );
+                      return {
+                        ...completeTool,
+                        // Preserve any existing state but use complete data
+                        ...existingTool
+                      };
+                    });
+                    setStreamingToolCalls(mergedToolCalls);
+                  });
                 } else if (data.type === 'error') {
                   toast.error(data.message);
                   setStreamingContent("");
+                  setStreamingToolCalls([]);
                   setIsStreaming(false);
                   return;
                 }
@@ -267,12 +328,14 @@ export default function ChatDeploymentPage() {
       }
       
       setStreamingContent("");
+      setStreamingToolCalls([]);
       setIsStreaming(false);
       
     } catch (error) {
       toast.error("Failed to send message");
       console.error('Error:', error);
       setStreamingContent("");
+      setStreamingToolCalls([]);
       setIsStreaming(false);
     }
   };
@@ -358,6 +421,10 @@ export default function ChatDeploymentPage() {
       e.preventDefault();
       sendMessage();
     }
+  };
+
+  const handleSidebarStateChange = (isOpen: boolean) => {
+    setIsToolSidebarOpen(isOpen);
   };
 
   const totalFiles = progressSteps.length;
@@ -459,7 +526,13 @@ export default function ChatDeploymentPage() {
         /* Conversation state - full height layout */
         <div className="flex-1 flex flex-col h-full relative">
           {/* Messages Area - 80% of available space */}
-          <div className={`flex-1 px-6 py-4 overflow-y-auto transition-all duration-300 ${navbarVisible ? 'pt-32' : 'pt-4'}`} style={{height: '80%'}}>
+          <div className={`flex-1 px-6 py-4 overflow-y-auto transition-all duration-300 ${
+            isToolSidebarOpen ? 'mr-96' : ''
+          }`} style={{
+            height: '80%',
+            maxHeight: navbarVisible ? 'calc(80vh - 120px)' : '80vh',
+            marginTop: navbarVisible ? '120px' : '0px'
+          }}>
             <div className="max-w-5xl mx-auto space-y-4" style={{width: '80%'}}>
               {messages.map((message, index) => (
                 <div key={index} className={`flex ${message.role === 'user' ? 'justify-end' : 'justify-start'}`}>
@@ -471,24 +544,12 @@ export default function ChatDeploymentPage() {
                           ? 'bg-gray-50 border-gray-200 text-gray-900' 
                           : 'bg-white border-gray-900 text-gray-900'
                       }`}>
-                        <div className="text-sm leading-relaxed font-baskerville prose prose-sm max-w-none">
-                          <ReactMarkdown
-                            components={{
-                              p: ({children}) => <p className="mb-2 last:mb-0">{children}</p>,
-                              strong: ({children}) => <strong className="font-semibold text-gray-900">{children}</strong>,
-                              ul: ({children}) => <ul className="list-disc list-inside mb-2 space-y-1">{children}</ul>,
-                              ol: ({children}) => <ol className="list-decimal list-inside mb-2 space-y-1">{children}</ol>,
-                              li: ({children}) => <li className="ml-0">{children}</li>,
-                              h1: ({children}) => <h1 className="text-lg font-semibold mb-2 text-gray-900">{children}</h1>,
-                              h2: ({children}) => <h2 className="text-base font-semibold mb-2 text-gray-900">{children}</h2>,
-                              h3: ({children}) => <h3 className="text-sm font-semibold mb-1 text-gray-900">{children}</h3>,
-                              code: ({children}) => <code className="bg-gray-100 px-1 py-0.5 rounded text-xs font-mono">{children}</code>,
-                              pre: ({children}) => <pre className="bg-gray-100 p-2 rounded text-xs font-mono overflow-x-auto">{children}</pre>
-                            }}
-                          >
-                            {message.content}
-                          </ReactMarkdown>
-                        </div>
+                        <MessageRenderer 
+                          content={message.content} 
+                          role={message.role}
+                          toolCalls={message.toolCalls}
+                          onSidebarStateChange={handleSidebarStateChange}
+                        />
                         
 
                       </div>
@@ -503,23 +564,13 @@ export default function ChatDeploymentPage() {
                   <div className="w-full">
                     <div className="flex items-start gap-3">
                       <div className="p-3 rounded-2xl bg-white border border-gray-900 text-gray-900">
-                        <div className="text-sm leading-relaxed font-baskerville prose prose-sm max-w-none">
-                          <ReactMarkdown
-                            components={{
-                              p: ({children}) => <p className="mb-2 last:mb-0">{children}</p>,
-                              strong: ({children}) => <strong className="font-semibold text-gray-900">{children}</strong>,
-                              ul: ({children}) => <ul className="list-disc list-inside mb-2 space-y-1">{children}</ul>,
-                              ol: ({children}) => <ol className="list-decimal list-inside mb-2 space-y-1">{children}</ol>,
-                              li: ({children}) => <li className="ml-0">{children}</li>,
-                              h1: ({children}) => <h1 className="text-lg font-semibold mb-2 text-gray-900">{children}</h1>,
-                              h2: ({children}) => <h2 className="text-base font-semibold mb-2 text-gray-900">{children}</h2>,
-                              h3: ({children}) => <h3 className="text-sm font-semibold mb-1 text-gray-900">{children}</h3>,
-                              code: ({children}) => <code className="bg-gray-100 px-1 py-0.5 rounded text-xs font-mono">{children}</code>,
-                              pre: ({children}) => <pre className="bg-gray-100 p-2 rounded text-xs font-mono overflow-x-auto">{children}</pre>
-                            }}
-                          >
-                            {streamingContent}
-                          </ReactMarkdown>
+                        <div className="text-md leading-relaxed font-baskerville prose prose-md max-w-none">
+                          <MessageRenderer 
+                            content={streamingContent} 
+                            role="assistant"
+                            toolCalls={streamingToolCalls}
+                            onSidebarStateChange={handleSidebarStateChange}
+                          />
                           <span className="inline-block w-2 h-4 bg-[#7b35b8] ml-1 animate-pulse"></span>
                         </div>
                       </div>
@@ -584,7 +635,9 @@ export default function ChatDeploymentPage() {
 
 
           {/* Input Area - Fixed at bottom */}
-          <div className=" border-gray-200 bg-white px-6 py-4">
+          <div className={`border-gray-200 bg-white px-6 transition-all duration-300 ${
+            isToolSidebarOpen ? 'mr-96' : ''
+          }`}>
             <div className="max-w-5xl mx-auto relative" style={{width: '80%'}}>
               <textarea
                 value={currentMessage}

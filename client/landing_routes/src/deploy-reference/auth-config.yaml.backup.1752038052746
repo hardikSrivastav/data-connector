@@ -1,16 +1,16 @@
 sso:
   # Common settings
   enabled: true
-  default_protocol: "[object Object]"
+  default_protocol: "oidc"
   
   # OIDC Configuration
-  [object Object]:
-    provider: "google"
-    client_id: "your-google-client-id"
-    client_secret: "your-google-client-secret"
-    issuer: "https://dev-21824006.google.com"
-    discovery_url: "https://dev-21824006.google.com/.well-known/openid-configuration"
-    redirect_uri: "https://ceneca.com/google-callback"
+  oidc:
+    provider: "okta"
+    client_id: "0oaou6yw57ar5DgXn5d7"
+    client_secret: "gajT7kLkUb5GkMf3dGa9bzBli714jvtfXt3GEkewJIbhSd8jfTnsFTQjmEqoSopM"
+    issuer: "https://dev-21824006.okta.com"
+    discovery_url: "https://dev-21824006.okta.com/.well-known/openid-configuration"
+    redirect_uri: "https://ceneca.local/authorization-code/callback"
     scopes: ["openid", "email", "profile", "groups"]
     # Map claims to user attributes
     claims_mapping:

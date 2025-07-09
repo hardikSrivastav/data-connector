@@ -64,7 +64,7 @@ export default function TermsOfService() {
 
             <h2 className="text-2xl font-bold mb-4 mt-10">5. Cancellation</h2>
             <p className="mb-6 text-muted-foreground leading-relaxed">
-              You can cancel your subscription at any time by contacting us using the contact information provided below. Your cancellation will take effect at the end of the current paid term. If you are unsatisfied with our services, please email us at support@ceneca.com.
+              You can cancel your subscription at any time by contacting us using the contact information provided below. Your cancellation will take effect at the end of the current paid term. If you are unsatisfied with our services, please email us at hardik@ceneca.ai.
             </p>
 
             <h2 className="text-2xl font-bold mb-4 mt-10">6. Prohibited Activities</h2>
