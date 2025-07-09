@@ -35,6 +35,21 @@ services:
       - pg_data:/var/lib/postgresql/data
     restart: unless-stopped
 
+  redis:
+    image: redis:7-alpine
+    container_name: agent-redis
+    command: redis-server --appendonly yes --requirepass ${REDIS_PASSWORD:-}
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+
   backend:
     build:
       context: .
@@ -55,8 +70,16 @@ services:
       - AWS_REGION=${AWS_REGION}
       - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}
       - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}
+      # Redis configuration
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - REDIS_PASSWORD=${REDIS_PASSWORD:-}
+      - REDIS_DB=0
+      - ENABLE_REDIS=true
+      - ENABLE_CLEANUP=true
     depends_on:
       - postgres
+      - redis
     restart: unless-stopped
     volumes:
       - ./landing_routes:/app
@@ -64,3 +87,4 @@ services:
 
 volumes:
   pg_data:
+  redis_data:

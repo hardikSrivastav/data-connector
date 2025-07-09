@@ -4,6 +4,11 @@ const DeploymentGenerator = require('../services/deploymentGenerator');
 const BedrockToolsAgent = require('../services/bedrockToolsAgent');
 const PromptRenderer = require('../services/promptRenderer');
 
+// Redis-based persistence services
+const sessionManager = require('../services/sessionManager');
+const conversationStorage = require('../services/conversationStorage');
+const redisService = require('../services/redisService');
+
 // Initialize AWS Bedrock client (keeping for fallback)
 const bedrock = new BedrockRuntimeClient({
   region: process.env.AWS_REGION || 'ap-south-1',
@@ -15,9 +20,6 @@ const bedrock = new BedrockRuntimeClient({
 
 // Model ID for Claude 3 Haiku (Messages API) - Stable and fast
 const MODEL_ID = 'anthropic.claude-3-haiku-20240307-v1:0';
-
-// In-memory storage for conversations (you can migrate to database later)
-const conversations = new Map();
 
 // Initialize deployment generator
 const deploymentGenerator = new DeploymentGenerator();
@@ -120,17 +122,46 @@ ${JSON.stringify(userInfo)}`;
 
 
 /**
- * Start a new conversation
+ * Start a new conversation or recover existing one
  */
 exports.startConversation = async (req, res) => {
-  const { userInfo } = req.body;
+  const { userInfo, conversationId: existingConversationId } = req.body;
   
   try {
-    const conversationId = uuidv4();
+    // If conversation ID provided, try to recover existing session
+    if (existingConversationId) {
+      const sessionValidation = await sessionManager.validateSession(existingConversationId);
+      
+      if (sessionValidation.valid) {
+        const existingConversation = await conversationStorage.loadConversation(existingConversationId);
+        
+        if (existingConversation) {
+          console.log(`Recovered existing conversation: ${existingConversationId}`);
+          
+          return res.json({
+            success: true,
+            data: {
+              conversationId: existingConversationId,
+              message: 'Welcome back! Your conversation has been restored.',
+              isRecovered: true,
+              messageCount: existingConversation.messages.length,
+              extractedConfig: existingConversation.extractedConfig
+            }
+          });
+        }
+      }
+      
+      // If recovery failed, log the reason and create new conversation
+      console.log(`Failed to recover conversation ${existingConversationId}: ${sessionValidation.reason || 'conversation not found'}`);
+    }
+
+    // Create new session and conversation
+    const sessionResult = await sessionManager.createSession(userInfo);
+    const conversationId = sessionResult.conversationId;
     const systemPrompt = await getSystemPrompt(userInfo);
     
     // Initialize conversation with enhanced context
-    conversations.set(conversationId, {
+    const conversationData = {
       id: conversationId,
       userInfo,
       messages: [],
@@ -143,7 +174,10 @@ exports.startConversation = async (req, res) => {
       systemPrompt,
       createdAt: new Date(),
       lastUpdated: new Date()
-    });
+    };
+
+    // Save conversation to storage
+    await conversationStorage.saveConversation(conversationId, conversationData);
 
     const welcomeMessage = `Hi! I'm here to help you set up Ceneca for your infrastructure. I'll ask you some questions about your setup to create a personalized deployment package.
 
@@ -153,7 +187,9 @@ To get started, could you tell me about your current data infrastructure? What d
       success: true,
       data: {
         conversationId,
-        message: welcomeMessage
+        message: welcomeMessage,
+        isRecovered: false,
+        storageType: redisService.isAvailable() ? 'redis' : 'memory'
       }
     });
   } catch (error) {
@@ -172,7 +208,16 @@ exports.sendMessage = async (req, res) => {
   const { conversationId, message } = req.body;
   
   try {
-    const conversation = conversations.get(conversationId);
+    // Validate session and load conversation
+    const sessionValidation = await sessionManager.validateSession(conversationId);
+    if (!sessionValidation.valid) {
+      return res.status(404).json({
+        success: false,
+        message: `Session invalid: ${sessionValidation.reason}`
+      });
+    }
+
+    const conversation = await conversationStorage.loadConversation(conversationId);
     if (!conversation) {
       return res.status(404).json({
         success: false,
@@ -181,17 +226,23 @@ exports.sendMessage = async (req, res) => {
     }
     
     // Add user message
-    conversation.messages.push({
+    const userMessage = {
       role: 'user',
       content: message,
       timestamp: new Date()
-    });
+    };
+
+    await conversationStorage.addMessage(conversationId, userMessage);
+
+    // Update conversation object for processing
+    conversation.messages.push(userMessage);
 
     // Regenerate system prompt based on user's first message to filter relevant requirements
     let systemPrompt = conversation.systemPrompt;
     if (conversation.messages.length === 1) {
       // This is the first user message, regenerate system prompt with filtered requirements
       systemPrompt = await getSystemPrompt(conversation.userInfo, message);
+      await conversationStorage.updateConversation(conversationId, { systemPrompt });
       conversation.systemPrompt = systemPrompt;
     }
 
@@ -226,22 +277,24 @@ exports.sendMessage = async (req, res) => {
       };
     }
     
-    // Add AI response to conversation
-    conversation.messages.push({
+    // Add AI response to conversation storage
+    const assistantMessage = {
       role: 'assistant',
       content: response.content,
       timestamp: new Date(),
       toolCalls: response.toolCalls || []
-    });
+    };
+
+    await conversationStorage.addMessage(conversationId, assistantMessage);
 
     // Extract configuration from the conversation
     const extractedConfig = deploymentGenerator.conversationExtractor.extractFromConversation(
-      conversation.messages, 
+      [...conversation.messages, assistantMessage], 
       conversation.extractedConfig
     );
     
-    conversation.extractedConfig = extractedConfig;
-    conversation.lastUpdated = new Date();
+    // Update extracted config in storage
+    await conversationStorage.updateExtractedConfig(conversationId, extractedConfig);
 
     res.json({
       success: true,
@@ -249,7 +302,8 @@ exports.sendMessage = async (req, res) => {
         message: response.content,
         extractedConfig: extractedConfig,
         conversationId: conversationId,
-        toolCalls: response.toolCalls || []
+        toolCalls: response.toolCalls || [],
+        storageType: redisService.isAvailable() ? 'redis' : 'memory'
       }
     });
 
@@ -269,7 +323,16 @@ exports.sendMessageStream = async (req, res) => {
   const { conversationId, message } = req.body;
   
   try {
-    const conversation = conversations.get(conversationId);
+    // Validate session and load conversation
+    const sessionValidation = await sessionManager.validateSession(conversationId);
+    if (!sessionValidation.valid) {
+      return res.status(404).json({
+        success: false,
+        message: `Session invalid: ${sessionValidation.reason}`
+      });
+    }
+
+    const conversation = await conversationStorage.loadConversation(conversationId);
     if (!conversation) {
       return res.status(404).json({
         success: false,
@@ -287,17 +350,23 @@ exports.sendMessageStream = async (req, res) => {
     });
     
     // Add user message
-    conversation.messages.push({
+    const userMessage = {
       role: 'user',
       content: message,
       timestamp: new Date()
-    });
+    };
+
+    await conversationStorage.addMessage(conversationId, userMessage);
+
+    // Update conversation object for processing
+    conversation.messages.push(userMessage);
 
     // Regenerate system prompt based on user's first message to filter relevant requirements
     let systemPrompt = conversation.systemPrompt;
     if (conversation.messages.length === 1) {
       // This is the first user message, regenerate system prompt with filtered requirements
       systemPrompt = await getSystemPrompt(conversation.userInfo, message);
+      await conversationStorage.updateConversation(conversationId, { systemPrompt });
       conversation.systemPrompt = systemPrompt;
     }
 
@@ -377,22 +446,24 @@ exports.sendMessageStream = async (req, res) => {
         };
       }
       
-      // Add AI response to conversation
-      conversation.messages.push({
+      // Add AI response to conversation storage
+      const assistantMessage = {
         role: 'assistant',
         content: response.content,
         timestamp: new Date(),
         toolCalls: response.toolCalls || []
-      });
+      };
+
+      await conversationStorage.addMessage(conversationId, assistantMessage);
 
       // Extract configuration from the conversation
       const extractedConfig = deploymentGenerator.conversationExtractor.extractFromConversation(
-        conversation.messages, 
+        [...conversation.messages, assistantMessage], 
         conversation.extractedConfig
       );
       
-      conversation.extractedConfig = extractedConfig;
-      conversation.lastUpdated = new Date();
+      // Update extracted config in storage
+      await conversationStorage.updateExtractedConfig(conversationId, extractedConfig);
 
       // Send completion message
       res.write(`data: ${JSON.stringify({
@@ -400,7 +471,8 @@ exports.sendMessageStream = async (req, res) => {
         message: response.content,
         extractedConfig: extractedConfig,
         conversationId: conversationId,
-        toolCalls: response.toolCalls || []
+        toolCalls: response.toolCalls || [],
+        storageType: redisService.isAvailable() ? 'redis' : 'memory'
       })}\n\n`);
       
     } catch (streamError) {
@@ -435,7 +507,16 @@ exports.generateFiles = async (req, res) => {
   const { conversationId } = req.body;
   
   try {
-    const conversation = conversations.get(conversationId);
+    // Validate session and load conversation
+    const sessionValidation = await sessionManager.validateSession(conversationId);
+    if (!sessionValidation.valid) {
+      return res.status(404).json({
+        success: false,
+        message: `Session invalid: ${sessionValidation.reason}`
+      });
+    }
+
+    const conversation = await conversationStorage.loadConversation(conversationId);
     if (!conversation) {
       return res.status(404).json({
         success: false,
@@ -449,9 +530,13 @@ exports.generateFiles = async (req, res) => {
       conversation.extractedConfig
     );
 
-    // Store the generated package in conversation for download
-    conversation.generatedPackage = result.deploymentPackage;
-    conversation.lastUpdated = new Date();
+    // Store the generated package in conversation storage
+    const deploymentPath = `deploy-packages/${conversationId}`;
+    await conversationStorage.updateGeneratedPackage(
+      conversationId, 
+      result.deploymentPackage, 
+      deploymentPath
+    );
 
     res.json({
       success: true,
@@ -459,7 +544,9 @@ exports.generateFiles = async (req, res) => {
         message: `Successfully generated ${Object.keys(result.deploymentPackage.files).length} deployment files`,
         filesGenerated: Object.keys(result.deploymentPackage.files),
         confidence: result.extractedConfig.confidence,
-        metadata: result.metadata
+        metadata: result.metadata,
+        deploymentPath: deploymentPath,
+        storageType: redisService.isAvailable() ? 'redis' : 'memory'
       }
     });
 
@@ -479,7 +566,16 @@ exports.downloadDeploymentPackage = async (req, res) => {
   const { conversationId } = req.params;
   
   try {
-    const conversation = conversations.get(conversationId);
+    // Validate session and load conversation
+    const sessionValidation = await sessionManager.validateSession(conversationId);
+    if (!sessionValidation.valid) {
+      return res.status(404).json({
+        success: false,
+        message: `Session invalid: ${sessionValidation.reason}`
+      });
+    }
+
+    const conversation = await conversationStorage.loadConversation(conversationId);
     if (!conversation || !conversation.generatedPackage) {
       return res.status(404).json({
         success: false,
@@ -493,6 +589,7 @@ exports.downloadDeploymentPackage = async (req, res) => {
     let packageContent = `# Ceneca Deployment Package
 # Generated on: ${deploymentPackage.metadata.generatedAt}
 # Files included: ${Object.keys(deploymentPackage.files).length}
+# Storage: ${redisService.isAvailable() ? 'Redis' : 'Memory'}
 
 `;
 
@@ -526,7 +623,16 @@ exports.getConversation = async (req, res) => {
   const { conversationId } = req.params;
   
   try {
-    const conversation = conversations.get(conversationId);
+    // Validate session and load conversation
+    const sessionValidation = await sessionManager.validateSession(conversationId);
+    if (!sessionValidation.valid) {
+      return res.status(404).json({
+        success: false,
+        message: `Session invalid: ${sessionValidation.reason}`
+      });
+    }
+
+    const conversation = await conversationStorage.loadConversation(conversationId);
     if (!conversation) {
       return res.status(404).json({
         success: false,
@@ -542,7 +648,9 @@ exports.getConversation = async (req, res) => {
         extractedConfig: conversation.extractedConfig,
         hasGeneratedPackage: !!conversation.generatedPackage,
         createdAt: conversation.createdAt,
-        lastUpdated: conversation.lastUpdated
+        lastUpdated: conversation.lastUpdated,
+        deploymentPath: conversation.deploymentPath,
+        storageType: redisService.isAvailable() ? 'redis' : 'memory'
       }
     });
   } catch (error) {
@@ -668,6 +776,91 @@ exports.testToolsDirect = async (req, res) => {
 };
 
 /**
+ * Session management endpoints
+ */
+exports.validateSession = async (req, res) => {
+  const { conversationId } = req.params;
+  
+  try {
+    const validation = await sessionManager.validateSession(conversationId);
+    
+    if (validation.valid) {
+      const sessionInfo = await sessionManager.getSessionInfo(conversationId);
+      res.json({
+        success: true,
+        data: {
+          valid: true,
+          sessionInfo: sessionInfo
+        }
+      });
+    } else {
+      res.status(404).json({
+        success: false,
+        data: {
+          valid: false,
+          reason: validation.reason
+        }
+      });
+    }
+  } catch (error) {
+    console.error('Error validating session:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to validate session'
+    });
+  }
+};
+
+/**
+ * List active sessions (for debugging/monitoring)
+ */
+exports.listSessions = async (req, res) => {
+  try {
+    const sessions = await sessionManager.getActiveSessions();
+    const stats = await sessionManager.getSessionStats();
+    
+    res.json({
+      success: true,
+      data: {
+        sessions: sessions,
+        stats: stats
+      }
+    });
+  } catch (error) {
+    console.error('Error listing sessions:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to list sessions'
+    });
+  }
+};
+
+/**
+ * Cleanup expired sessions manually
+ */
+exports.cleanupSessions = async (req, res) => {
+  try {
+    const sessionsCleaned = await sessionManager.cleanupExpiredSessions();
+    const conversationsCleaned = await conversationStorage.cleanupOldConversations();
+    
+    res.json({
+      success: true,
+      data: {
+        message: `Cleanup completed: ${sessionsCleaned} sessions, ${conversationsCleaned} conversations`,
+        sessionsCleaned: sessionsCleaned,
+        conversationsCleaned: conversationsCleaned
+      }
+    });
+  } catch (error) {
+    console.error('Error during cleanup:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to cleanup sessions'
+    });
+  }
+};
+
+/**
  * Health check for chat system
  */
 exports.healthCheck = async (req, res) => {
@@ -676,13 +869,23 @@ exports.healthCheck = async (req, res) => {
     const deploymentInitialized = deploymentGenerator.isInitialized;
     const bedrockToolsInitialized = bedrockToolsAgent.isInitialized;
     
+    // Get Redis and session statistics
+    const redisStatus = redisService.getStatus();
+    const sessionStats = await sessionManager.getSessionStats();
+    const storageStats = await conversationStorage.getStorageStats();
+
     // Get basic system info
     const systemInfo = {
       chatSystem: 'operational',
       deploymentGenerator: deploymentInitialized ? 'initialized' : 'initializing',
       bedrockToolsAgent: bedrockToolsInitialized ? 'initialized' : 'initializing',
       toolsAvailable: bedrockToolsInitialized,
-      conversationsActive: conversations.size,
+      
+      // Redis and storage information
+      redis: redisStatus,
+      sessions: sessionStats,
+      storage: storageStats,
+      
       timestamp: new Date().toISOString()
     };
 
@@ -712,9 +915,13 @@ exports.healthCheck = async (req, res) => {
       systemInfo.primaryAgent = 'basic-bedrock';
     }
 
+    // Determine overall health based on critical systems
+    const isHealthy = systemInfo.chatSystem === 'operational' && 
+                     (redisStatus.connected || redisStatus.fallbackMode);
+
     res.json({
       success: true,
-      status: 'healthy',
+      status: isHealthy ? 'healthy' : 'degraded',
       data: systemInfo
     });
   } catch (error) {

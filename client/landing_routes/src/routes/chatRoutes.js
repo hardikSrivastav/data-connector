@@ -32,4 +32,9 @@ router.get('/test-tools', chatController.testTools);
 // Test tools directly without any agent
 router.get('/test-tools-direct', chatController.testToolsDirect);
 
+// Session management endpoints
+router.get('/session/:conversationId/validate', chatController.validateSession);
+router.get('/sessions', chatController.listSessions);
+router.post('/sessions/cleanup', chatController.cleanupSessions);
+
 module.exports = router; 
