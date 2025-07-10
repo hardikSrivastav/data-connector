@@ -293,14 +293,23 @@ exports.sendMessage = async (req, res) => {
       conversation.extractedConfig
     );
     
+    // Parse deployment progress from AI response
+    const deploymentProgress = promptRenderer.parseDeploymentProgress(response.content);
+    
+    // Merge deployment progress into extracted config
+    const mergedConfig = {
+      ...extractedConfig,
+      ...deploymentProgress
+    };
+    
     // Update extracted config in storage
-    await conversationStorage.updateExtractedConfig(conversationId, extractedConfig);
+    await conversationStorage.updateExtractedConfig(conversationId, mergedConfig);
 
     res.json({
       success: true,
       data: {
         message: response.content,
-        extractedConfig: extractedConfig,
+        extractedConfig: mergedConfig,
         conversationId: conversationId,
         toolCalls: response.toolCalls || [],
         storageType: redisService.isAvailable() ? 'redis' : 'memory'
@@ -462,14 +471,23 @@ exports.sendMessageStream = async (req, res) => {
         conversation.extractedConfig
       );
       
+      // Parse deployment progress from AI response
+      const deploymentProgress = promptRenderer.parseDeploymentProgress(response.content);
+      
+      // Merge deployment progress into extracted config
+      const mergedConfig = {
+        ...extractedConfig,
+        ...deploymentProgress
+      };
+      
       // Update extracted config in storage
-      await conversationStorage.updateExtractedConfig(conversationId, extractedConfig);
+      await conversationStorage.updateExtractedConfig(conversationId, mergedConfig);
 
       // Send completion message
       res.write(`data: ${JSON.stringify({
         type: 'complete',
         message: response.content,
-        extractedConfig: extractedConfig,
+        extractedConfig: mergedConfig,
         conversationId: conversationId,
         toolCalls: response.toolCalls || [],
         storageType: redisService.isAvailable() ? 'redis' : 'memory'
@@ -872,6 +890,63 @@ exports.cleanupSessions = async (req, res) => {
     res.status(500).json({
       success: false,
       message: 'Failed to cleanup sessions'
+    });
+  }
+};
+
+/**
+ * Destroy a session and its associated conversation data
+ */
+exports.destroySession = async (req, res) => {
+  const { conversationId } = req.body;
+  
+  try {
+    if (!conversationId) {
+      return res.status(400).json({
+        success: false,
+        message: 'Conversation ID is required'
+      });
+    }
+
+    // Validate session exists before destroying
+    const sessionValidation = await sessionManager.validateSession(conversationId);
+    
+    if (!sessionValidation.valid) {
+      return res.status(404).json({
+        success: false,
+        message: 'Session not found or already expired',
+        reason: sessionValidation.reason
+      });
+    }
+
+    // Destroy the session and conversation data
+    const destroyed = await sessionManager.destroySession(conversationId);
+    
+    if (destroyed) {
+      // Also clean up conversation data
+      await conversationStorage.deleteConversation(conversationId);
+      
+      console.log(`Successfully destroyed session: ${conversationId}`);
+      
+      res.json({
+        success: true,
+        data: {
+          message: 'Session destroyed successfully',
+          conversationId
+        }
+      });
+    } else {
+      res.status(500).json({
+        success: false,
+        message: 'Failed to destroy session'
+      });
+    }
+    
+  } catch (error) {
+    console.error('Error destroying session:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to destroy session'
     });
   }
 };

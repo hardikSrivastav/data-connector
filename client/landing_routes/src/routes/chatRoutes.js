@@ -35,6 +35,7 @@ router.get('/test-tools-direct', chatController.testToolsDirect);
 // Session management endpoints
 router.post('/validate-session', chatController.validateSession);
 router.get('/session/:conversationId/validate', chatController.validateSession);
+router.post('/destroy-session', chatController.destroySession);
 router.get('/sessions', chatController.listSessions);
 router.post('/sessions/cleanup', chatController.cleanupSessions);
 

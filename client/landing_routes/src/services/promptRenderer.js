@@ -23,11 +23,14 @@ class PromptRenderer {
 
   /**
    * Render the deployment assistant system prompt
+   * The assistant is configured to be the sole creator of deployment files,
+   * gathering all necessary information before creating production-ready configurations.
+   * 
    * @param {Object} context - Template context variables
    * @param {Array} context.availableTools - Array of available tools with name and description
    * @param {Object} context.userInfo - User context information
    * @param {string} context.userMessage - Current user message for contextual hints
-   * @param {Object} context.contextualRequirements - Discovered requirements organized by category
+   * @param {Object} context.contextualRequirements - Discovered requirements for information gathering
    * @returns {string} Rendered system prompt
    */
   renderDeploymentAssistant(context) {
@@ -56,9 +59,12 @@ class PromptRenderer {
 
   /**
    * Extract contextual requirements from user message and conversation history
+   * This helps the deployment assistant understand what information it needs to gather
+   * from the user before creating the deployment package.
+   * 
    * @param {string} userMessage - Current user message
    * @param {Array} conversationHistory - Previous conversation messages
-   * @returns {Object} Categorized requirements
+   * @returns {Object} Categorized requirements for information gathering
    */
   extractContextualRequirements(userMessage, conversationHistory = []) {
     const requirements = {
@@ -137,6 +143,46 @@ class PromptRenderer {
     return Object.fromEntries(
       Object.entries(requirements).filter(([key, value]) => value.length > 0)
     );
+  }
+
+  /**
+   * Parse deployment progress and files information from assistant response
+   * @param {string} responseContent - The assistant's response content
+   * @returns {Object} Parsed deployment progress information
+   */
+  parseDeploymentProgress(responseContent) {
+    try {
+      // Look for JSON blocks in the response content
+      const jsonBlockRegex = /```json\s*(\{[\s\S]*?\})\s*```/g;
+      let match;
+      
+      while ((match = jsonBlockRegex.exec(responseContent)) !== null) {
+        try {
+          const parsed = JSON.parse(match[1]);
+          if (parsed.deploymentProgress !== undefined && parsed.deploymentFiles) {
+            return {
+              deploymentProgress: parsed.deploymentProgress,
+              deploymentFiles: parsed.deploymentFiles
+            };
+          }
+        } catch (e) {
+          // Skip invalid JSON blocks
+          continue;
+        }
+      }
+      
+      // If no valid JSON block found, return default
+      return {
+        deploymentProgress: 0,
+        deploymentFiles: []
+      };
+    } catch (error) {
+      console.warn('Failed to parse deployment progress from response:', error);
+      return {
+        deploymentProgress: 0,
+        deploymentFiles: []
+      };
+    }
   }
 }
 

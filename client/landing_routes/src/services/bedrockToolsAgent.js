@@ -281,12 +281,17 @@ class BedrockToolsAgent {
           const toolResults = await this.executeTools(toolCalls);
           
           // Create frontend-friendly tool calls with results (don't mutate original)
-          const frontendToolCalls = toolCalls.map((toolCall, i) => ({
-            name: toolCall.name,
-            id: toolCall.id,
-            input: toolCall.input,
-            result: toolResults[i] ? toolResults[i].content : undefined
-          }));
+          const frontendToolCalls = toolCalls.map((toolCall, i) => {
+            const toolResult = toolResults[i];
+            console.log(`[processMessage] Frontend tool call mapping - Tool: ${toolCall.name}, ID: ${toolCall.id}, Result exists: ${!!toolResult}, Result content: ${toolResult ? toolResult.content?.substring(0, 100) : 'N/A'}`);
+            
+            return {
+              name: toolCall.name,
+              id: toolCall.id,
+              input: toolCall.input,
+              result: toolResult ? toolResult.content : undefined
+            };
+          });
           
           // Add to allToolCalls for frontend
           allToolCalls.push(...frontendToolCalls);
@@ -408,19 +413,33 @@ class BedrockToolsAgent {
           continue;
         }
 
-        // Execute the tool
-        const result = await tool._call(toolCall.input.input || JSON.stringify(toolCall.input));
+        // Execute the tool - handle input parsing more robustly
+        let toolInput;
+        if (toolCall.input && toolCall.input.input) {
+          // Input is nested (from Bedrock's expected format)
+          toolInput = toolCall.input.input;
+        } else if (typeof toolCall.input === 'string') {
+          // Input is already a string
+          toolInput = toolCall.input;
+        } else {
+          // Input is an object, stringify it
+          toolInput = JSON.stringify(toolCall.input);
+        }
+        
+        console.log(`Tool ${toolCall.name} input:`, toolInput);
+        const result = await tool._call(toolInput);
+        console.log(`Tool ${toolCall.name} result length:`, result ? result.length : 0);
         
         // Truncate very long results to prevent token overflow
         let truncatedResult = result;
-        if (result.length > 10000) {
+        if (result && result.length > 10000) {
           truncatedResult = result.substring(0, 10000) + '\n...[Result truncated to prevent token overflow]';
         }
         
         toolResults.push({
           type: 'tool_result',
           tool_use_id: toolCall.id,
-          content: truncatedResult
+          content: truncatedResult || ''
         });
         
       } catch (error) {
@@ -471,12 +490,17 @@ class BedrockToolsAgent {
           const toolResults = await this.executeTools(toolCalls);
           
           // Create frontend-friendly tool calls with results (don't mutate original)
-          const frontendToolCalls = toolCalls.map((toolCall, i) => ({
-            name: toolCall.name,
-            id: toolCall.id,
-            input: toolCall.input,
-            result: toolResults[i] ? toolResults[i].content : undefined
-          }));
+          const frontendToolCalls = toolCalls.map((toolCall, i) => {
+            const toolResult = toolResults[i];
+            console.log(`[processMessageStream] Frontend tool call mapping - Tool: ${toolCall.name}, ID: ${toolCall.id}, Result exists: ${!!toolResult}, Result content: ${toolResult ? toolResult.content?.substring(0, 100) : 'N/A'}`);
+            
+            return {
+              name: toolCall.name,
+              id: toolCall.id,
+              input: toolCall.input,
+              result: toolResult ? toolResult.content : undefined
+            };
+          });
           
           // Add to allToolCalls for frontend
           allToolCalls.push(...frontendToolCalls);

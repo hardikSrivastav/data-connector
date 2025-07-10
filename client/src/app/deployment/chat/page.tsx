@@ -7,7 +7,7 @@ import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
 import { toast } from "sonner";
-import { Send, Bot, User, FileText, Database, Shield, Settings, CheckCircle, Menu } from "lucide-react";
+import { Send, Bot, User, FileText, Database, Shield, Settings, CheckCircle, Menu, RotateCcw } from "lucide-react";
 import { Navbar } from "@/components/navbar";
 import Image from "next/image";
 import { MessageRenderer } from "@/components/message-renderer";
@@ -31,6 +31,16 @@ interface ExtractedConfig {
   auth?: string;
   environment?: string;
   scale?: string;
+  deploymentProgress?: number; // Add deployment progress tracking
+  deploymentFiles?: DeploymentFile[]; // Add file tracking
+}
+
+interface DeploymentFile {
+  name: string;
+  status: 'not_started' | 'in_progress' | 'completed';
+  fieldsTotal: number;
+  fieldsCompleted: number;
+  missingFields: string[];
 }
 
 interface ProgressStep {
@@ -56,6 +66,9 @@ export default function ChatDeploymentPage() {
   const [navbarVisible, setNavbarVisible] = useState(false);
   const [currentStage, setCurrentStage] = useState<string>("Ready to configure your deployment");
   const [isToolSidebarOpen, setIsToolSidebarOpen] = useState(false);
+  const [deploymentProgress, setDeploymentProgress] = useState(0);
+  const [deploymentFiles, setDeploymentFiles] = useState<DeploymentFile[]>([]);
+  const [showFilesSidebar, setShowFilesSidebar] = useState(false);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
@@ -141,6 +154,16 @@ export default function ChatDeploymentPage() {
     }
   }, [isGeneratingFiles, isStreaming, messages.length]);
 
+  // Update deployment progress when extracted config changes
+  useEffect(() => {
+    if (extractedConfig.deploymentProgress !== undefined) {
+      setDeploymentProgress(extractedConfig.deploymentProgress);
+    }
+    if (extractedConfig.deploymentFiles) {
+      setDeploymentFiles(extractedConfig.deploymentFiles);
+    }
+  }, [extractedConfig]);
+
   const startConversation = async () => {
     setIsLoading(true);
     try {
@@ -214,6 +237,73 @@ export default function ChatDeploymentPage() {
     }
     
     return toolCalls;
+  };
+
+    // Function to detect and clean progress JSON from streaming content
+  const processProgressInContent = (content: string): string => {
+    // Detect if we're in the middle of streaming progress JSON
+    const hasProgressKeywords = content.includes('"deploymentProgress"') || 
+                               content.includes('"deploymentFiles"') ||
+                               content.includes('fieldsTotal') ||
+                               content.includes('fieldsCompleted') ||
+                               content.includes('missingFields');
+    
+    if (hasProgressKeywords) {
+      // Try to find complete JSON blocks first
+      const findCompleteJsonBlocks = (text: string): string[] => {
+        const blocks: string[] = [];
+        let braceCount = 0;
+        let start = -1;
+        
+        for (let i = 0; i < text.length; i++) {
+          if (text[i] === '{') {
+            if (braceCount === 0) {
+              start = i;
+            }
+            braceCount++;
+          } else if (text[i] === '}') {
+            braceCount--;
+            if (braceCount === 0 && start !== -1) {
+              const block = text.substring(start, i + 1);
+              if (block.includes('"deploymentProgress"')) {
+                blocks.push(block);
+              }
+            }
+          }
+        }
+        return blocks;
+      };
+      
+      const completeBlocks = findCompleteJsonBlocks(content);
+      
+      if (completeBlocks.length > 0) {
+        // We have complete JSON, let it be parsed normally
+        return content;
+      } else {
+        // We're streaming partial JSON - replace the entire JSON portion with a single placeholder
+        
+        // Find the start of the JSON block
+        let jsonStart = -1;
+        for (let i = 0; i < content.length; i++) {
+          if (content[i] === '{' && content.substring(i).includes('"deploymentProgress"')) {
+            jsonStart = i;
+            break;
+          }
+        }
+        
+        if (jsonStart !== -1) {
+          // Replace everything from the JSON start to the end with the placeholder
+          const beforeJson = content.substring(0, jsonStart);
+          return beforeJson + '\n\n⚡ **Updating deployment progress...**';
+        } else {
+          // Fallback: look for any progress-related content and replace it
+          const progressRegex = /\{[^}]*(?:"deploymentProgress"|"deploymentFiles"|"fieldsTotal"|"fieldsCompleted"|"missingFields")[^}]*$/g;
+          return content.replace(progressRegex, '\n\n⚡ **Updating deployment progress...**');
+        }
+      }
+    }
+    
+    return content;
   };
 
   const sendMessage = async () => {
@@ -332,9 +422,11 @@ export default function ChatDeploymentPage() {
                 
                 if (data.type === 'chunk') {
                   flushSync(() => {
-                    setStreamingContent(data.fullContent);
+                    // Process progress JSON before displaying
+                    const processedContent = processProgressInContent(data.fullContent);
+                    setStreamingContent(processedContent);
                     // Parse tool calls from the current content
-                    const parsedToolCalls = parseToolCallsFromContent(data.fullContent);
+                    const parsedToolCalls = parseToolCallsFromContent(processedContent);
                     setStreamingToolCalls(parsedToolCalls);
                   });
                 } else if (data.type === 'tool_call') {
@@ -380,13 +472,41 @@ export default function ChatDeploymentPage() {
       }
       
       if (isCompleted && completedData) {
+        // Ensure all tool calls found in the message content are preserved
+        const toolCallsFromContent = parseToolCallsFromContent(completedData.message);
+        const completeToolCalls = completedData.toolCalls || [];
+        
+        // Merge tool calls from content with complete data, preferring complete data
+        const mergedToolCalls = toolCallsFromContent.map(parsedTool => {
+          const completeTool = completeToolCalls.find((ct: ToolCall) => ct.id === parsedTool.id);
+          return completeTool || parsedTool;
+        });
+        
+        // Add any additional tool calls from complete data that weren't in content
+        completeToolCalls.forEach((completeTool: ToolCall) => {
+          if (!mergedToolCalls.find(mt => mt.id === completeTool.id)) {
+            mergedToolCalls.push(completeTool);
+          }
+        });
+        
         setMessages(prev => [...prev, {
           role: 'assistant',
           content: completedData.message,
           timestamp: new Date(),
-          toolCalls: completedData.toolCalls || []
+          toolCalls: mergedToolCalls
         }]);
-        setExtractedConfig(completedData.extractedConfig);
+        
+        // Update extracted config and progress tracking
+        const newConfig = completedData.extractedConfig || {};
+        setExtractedConfig(newConfig);
+        
+        // Update progress and files if provided
+        if (newConfig.deploymentProgress !== undefined) {
+          setDeploymentProgress(newConfig.deploymentProgress);
+        }
+        if (newConfig.deploymentFiles) {
+          setDeploymentFiles(newConfig.deploymentFiles);
+        }
       }
       
       setStreamingContent("");
@@ -505,7 +625,34 @@ export default function ChatDeploymentPage() {
     }
   };
 
-  const startNewConversation = () => {
+  const startNewConversation = async () => {
+    // If we have an active conversation, destroy it on the backend first
+    if (conversationId) {
+      try {
+        const backendUrl = process.env.NODE_ENV === 'production' 
+          ? 'http://localhost:3001/api/chat/destroy-session'
+          : 'http://localhost:3001/api/chat/destroy-session';
+          
+        const response = await fetch(backendUrl, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            conversationId
+          })
+        });
+
+        if (response.ok) {
+          console.log(`Successfully destroyed session ${conversationId} on backend`);
+        } else {
+          console.warn(`Failed to destroy session ${conversationId} on backend`);
+        }
+      } catch (error) {
+        console.error('Error destroying session on backend:', error);
+      }
+    }
+
     // Clear localStorage
     localStorage.removeItem('deployment-conversation-id');
     
@@ -522,7 +669,23 @@ export default function ChatDeploymentPage() {
     setIsStreaming(false);
     setIsLoading(false);
     
+    // Hide navbar if it's visible
+    setShowNavbar(false);
+    setTimeout(() => setNavbarVisible(false), 300);
+    
     console.log('Started new conversation - cleared all state and localStorage');
+    toast.success("Conversation reset successfully");
+  };
+
+  // Calculate border progress for visual indicator
+  const getBorderStyle = (progress: number) => {
+    const angle = (progress / 100) * 360;
+    
+    return {
+      background: `conic-gradient(from 0deg, #7b35b8 ${angle}deg, transparent ${angle}deg)`,
+      padding: '3px',
+      borderRadius: '16px'
+    };
   };
 
   return (
@@ -533,6 +696,57 @@ export default function ChatDeploymentPage() {
           showNavbar ? 'opacity-100 translate-y-0' : 'opacity-0 -translate-y-full'
         }`}>
           <Navbar />
+        </div>
+      )}
+
+      {/* Files Sidebar */}
+      {showFilesSidebar && deploymentFiles.length > 0 && (
+        <div className="fixed left-0 top-0 h-full w-80 bg-white border-r border-gray-200 shadow-lg z-40 overflow-y-auto">
+          <div className="p-4 border-b border-gray-200">
+            <div className="flex items-center justify-between">
+              <h3 className="text-lg font-medium font-baskerville">Deployment Files</h3>
+              <button
+                onClick={() => setShowFilesSidebar(false)}
+                className="text-gray-400 hover:text-gray-600"
+              >
+                ✕
+              </button>
+            </div>
+            <div className="text-sm text-gray-600 mt-1 font-baskerville">
+              {deploymentProgress.toFixed(0)}% Complete
+            </div>
+          </div>
+          <div className="p-4 space-y-3">
+            {deploymentFiles.map((file, index) => (
+              <div key={index} className="border border-gray-200 rounded-lg p-3">
+                <div className="flex items-center justify-between mb-2">
+                  <span className="font-medium text-sm font-baskerville">{file.name}</span>
+                  <div className={`w-3 h-3 rounded-full ${
+                    file.status === 'completed' ? 'bg-green-500' :
+                    file.status === 'in_progress' ? 'bg-yellow-500' :
+                    'bg-gray-300'
+                  }`} />
+                </div>
+                <div className="text-xs text-gray-600 mb-1 font-baskerville">
+                  {file.fieldsCompleted}/{file.fieldsTotal} fields completed
+                </div>
+                <div className="w-full bg-gray-200 rounded-full h-1.5">
+                  <div 
+                    className="bg-purple-600 h-1.5 rounded-full transition-all duration-300"
+                    style={{ width: `${(file.fieldsCompleted / file.fieldsTotal) * 100}%` }}
+                  />
+                </div>
+                {file.missingFields.length > 0 && (
+                  <div className="mt-2">
+                    <div className="text-xs text-gray-500 font-baskerville">Missing:</div>
+                    <div className="text-xs text-red-600 font-baskerville">
+                      {file.missingFields.join(', ')}
+                    </div>
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
         </div>
       )}
 
@@ -575,17 +789,22 @@ export default function ChatDeploymentPage() {
             </button>
           </div>
 
-          {/* Input Area - Large and Centered */}
+          {/* Input Area - Large and Centered with Progress Border */}
           <div className="w-full max-w-2xl relative">
-            <textarea
-              value={currentMessage}
-              onChange={(e) => setCurrentMessage(e.target.value)}
-              onKeyDown={handleKeyDown}
-              placeholder="Describe your business scenario: What data sources will you connect? How many users? What's your primary use case for Ceneca?"
-              className="w-full min-h-[150px] max-h-[400px] bg-white border-1 border-gray-800 text-base px-6 py-4 pr-20 pb-16 rounded-2xl focus:outline-none resize-none placeholder-gray-500 disabled:opacity-50 shadow-lg transition-all font-baskerville"
-              disabled={isLoading || isStreaming}
-              rows={3}
-            />
+            <div 
+              style={deploymentProgress > 0 ? getBorderStyle(deploymentProgress) : {}}
+              className="rounded-2xl"
+            >
+              <textarea
+                value={currentMessage}
+                onChange={(e) => setCurrentMessage(e.target.value)}
+                onKeyDown={handleKeyDown}
+                placeholder="Describe your business scenario: What data sources will you connect? How many users? What's your primary use case for Ceneca?"
+                className="w-full min-h-[150px] max-h-[400px] bg-white border-1 border-gray-800 text-base px-6 py-4 pr-20 pb-16 rounded-2xl focus:outline-none resize-none placeholder-gray-500 disabled:opacity-50 shadow-lg transition-all font-baskerville"
+                disabled={isLoading || isStreaming}
+                rows={3}
+              />
+            </div>
             <Button 
               onClick={sendMessage}
               disabled={isLoading || isStreaming || !currentMessage.trim()}
@@ -610,7 +829,7 @@ export default function ChatDeploymentPage() {
           {/* Messages Area - 80% of available space */}
           <div className={`flex-1 px-6 pt-4 overflow-y-auto transition-all duration-300 ${
             isToolSidebarOpen ? 'mr-96' : ''
-          }`} style={{
+          } ${showFilesSidebar ? 'ml-80' : ''}`} style={{
             height: '80%',
             maxHeight: navbarVisible ? 'calc(85vh - 120px)' : '85vh',
             marginTop: navbarVisible ? '120px' : '0px'
@@ -717,19 +936,24 @@ export default function ChatDeploymentPage() {
 
 
           {/* Input Area - Fixed at bottom */}
-          <div className={`border-gray-200 bg-white px-6 pt-2 transition-all duration-300 ${
+          <div className={`border-gray-200 px-6 pt-2 transition-all duration-300 ${
             isToolSidebarOpen ? 'mr-96' : ''
-          }`}>
+          } ${showFilesSidebar ? 'ml-80' : ''}`}>
             <div className="max-w-5xl mx-auto relative" style={{width: '80%'}}>
-              <textarea
-                value={currentMessage}
-                onChange={(e) => setCurrentMessage(e.target.value)}
-                onKeyDown={handleKeyDown}
-                placeholder="Continue the conversation..."
-                className="w-full min-h-[100px] max-h-[200px] bg-white border-1 border-gray-900 text-base px-4 py-3 pr-16 rounded-2xl focus:outline-none resize-none placeholder-gray-500 disabled:opacity-50 shadow-xl transition-all font-baskerville"
-                disabled={isLoading || isStreaming}
-                rows={2}
-              />
+              <div 
+                style={deploymentProgress > 0 ? getBorderStyle(deploymentProgress) : {}}
+                className="rounded-2xl"
+              >
+                <textarea
+                  value={currentMessage}
+                  onChange={(e) => setCurrentMessage(e.target.value)}
+                  onKeyDown={handleKeyDown}
+                  placeholder="Continue the conversation..."
+                  className="w-full min-h-[100px] max-h-[200px] bg-white border-1 border-gray-900 text-base px-4 py-3 pr-16 rounded-2xl focus:outline-none resize-none placeholder-gray-500 disabled:opacity-50 shadow-xl transition-all font-baskerville"
+                  disabled={isLoading || isStreaming}
+                  rows={2}
+                />
+              </div>
               <Button 
                 onClick={sendMessage}
                 disabled={isLoading || isStreaming || !currentMessage.trim()}
@@ -740,12 +964,34 @@ export default function ChatDeploymentPage() {
             </div>
           </div>
 
-          {/* Logo button - Bottom Right */}
-          <button
-            onClick={toggleNavbar}
-            className="fixed bottom-6 right-6 hover:opacity-80 transition-opacity z-10"
-          >
-            <div className="w-12 h-12 duration-300 bg-white border border-gray-900 rounded-full flex items-center justify-center shadow-lg">
+          {/* Logo button and Files toggle - Bottom Right */}
+          <div className="fixed bottom-6 right-6 flex flex-col gap-3 z-10">
+            {/* Files toggle button */}
+            {deploymentFiles.length > 0 && (
+              <button
+                onClick={() => setShowFilesSidebar(!showFilesSidebar)}
+                className={`w-12 h-12 ${showFilesSidebar ? 'bg-purple-100 border-purple-300' : 'bg-gray-50 border-gray-200'} hover:bg-purple-100 border hover:border-purple-300 rounded-full flex items-center justify-center shadow-lg transition-all duration-200`}
+                title="View deployment files"
+              >
+                <FileText className={`h-5 w-5 ${showFilesSidebar ? 'text-purple-600' : 'text-gray-600'}`} />
+              </button>
+            )}
+            
+            {/* Reset button - only show when we have messages */}
+            {messages.length > 0 && (
+              <button
+                onClick={startNewConversation}
+                className="w-12 h-12 bg-red-50 hover:bg-red-100 border border-red-200 hover:border-red-300 rounded-full flex items-center justify-center shadow-lg transition-all duration-200"
+                title="Reset conversation"
+              >
+                <RotateCcw className="h-5 w-5 text-red-600" />
+              </button>
+            )}
+            
+            <button
+              onClick={toggleNavbar}
+              className="w-12 h-12 duration-300 bg-white border border-gray-900 rounded-full flex items-center justify-center shadow-lg hover:opacity-80 transition-opacity"
+            >
               <Image
                 src="/ceneca-light.png"
                 alt="Ceneca"
@@ -753,8 +999,8 @@ export default function ChatDeploymentPage() {
                 height={30}
                 className="rounded-lg grayscale"
               />
-            </div>
-          </button>
+            </button>
+          </div>
         </div>
       )}
 

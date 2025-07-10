@@ -6,14 +6,17 @@ import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
 import { oneLight } from 'react-syntax-highlighter/dist/esm/styles/prism';
 import { ToolPill } from "./tool-pill";
 import { ToolDetailSidebar } from "./tool-detail-sidebar";
+import { ProgressPill } from "./progress-pill";
 
 interface ParsedContent {
-  type: 'text' | 'tool' | 'result';
+  type: 'text' | 'tool' | 'result' | 'progress';
   content: string;
   toolName?: string;
   toolId?: string;
   input?: string;
   result?: string;
+  progress?: number;
+  deploymentFiles?: any[];
 }
 
 interface MessageRendererProps {
@@ -103,46 +106,123 @@ export const MessageRenderer: React.FC<MessageRendererProps> = ({
       });
     });
 
+    // Helper function to detect and parse progress JSON
+    const parseProgressJSON = (content: string): { progress: number; deploymentFiles?: any[]; jsonMatch?: string } | null => {
+      try {
+        // Find all potential JSON blocks by looking for { and matching closing }
+        const findJsonBlocks = (text: string): string[] => {
+          const blocks: string[] = [];
+          let braceCount = 0;
+          let start = -1;
+          
+          for (let i = 0; i < text.length; i++) {
+            if (text[i] === '{') {
+              if (braceCount === 0) {
+                start = i;
+              }
+              braceCount++;
+            } else if (text[i] === '}') {
+              braceCount--;
+              if (braceCount === 0 && start !== -1) {
+                const block = text.substring(start, i + 1);
+                if (block.includes('"deploymentProgress"')) {
+                  blocks.push(block);
+                }
+              }
+            }
+          }
+          return blocks;
+        };
+        
+        const jsonBlocks = findJsonBlocks(content);
+        
+        for (const block of jsonBlocks) {
+          try {
+            const parsed = JSON.parse(block);
+            if (parsed.deploymentProgress !== undefined) {
+              return {
+                progress: parsed.deploymentProgress,
+                deploymentFiles: parsed.deploymentFiles,
+                jsonMatch: block
+              };
+            }
+          } catch (e) {
+            // Continue to next block
+          }
+        }
+      } catch (e) {
+        // Ignore JSON parsing errors
+      }
+      return null;
+    };
+
+    // First, check for progress JSON and replace it
+    let processedText = text;
+    const progressData = parseProgressJSON(text);
+    if (progressData && progressData.jsonMatch) {
+      // Remove the specific JSON match from the text
+      processedText = text.replace(progressData.jsonMatch, '').trim();
+      
+      // Add progress pill
+      parts.push({
+        type: 'progress',
+        content: '',
+        progress: progressData.progress,
+        deploymentFiles: progressData.deploymentFiles
+      });
+    }
+
     // Updated regex patterns for simplified markers
     const allMarkersRegex = /\[(?:TOOL|RESULT):([^:]+):([^\]]+)\]/g;
     let lastIndex = 0;
     const processedTools = new Set<string>();
 
     let match;
-    while ((match = allMarkersRegex.exec(text)) !== null) {
+    while ((match = allMarkersRegex.exec(processedText)) !== null) {
       const [fullMatch, toolName, toolId] = match;
       const start = match.index;
 
       // Add text before the marker
       if (start > lastIndex) {
-        const textContent = text.slice(lastIndex, start);
+        const textContent = processedText.slice(lastIndex, start);
         if (textContent.trim()) {
           parts.push({ type: 'text', content: textContent });
         }
       }
 
-      // Add tool pill (only once per tool)
-      if (!processedTools.has(toolId)) {
-        const toolData = toolMap.get(toolId);
-        if (toolData) {
-          parts.push({
-            type: 'tool',
-            content: '',
-            toolName: toolData.toolName,
-            toolId: toolData.toolId,
-            input: toolData.input ? JSON.stringify(toolData.input) : undefined,
-            result: toolData.result
-          });
-          processedTools.add(toolId);
-        }
+          // Add tool pill (only once per tool)
+    if (!processedTools.has(toolId)) {
+      const toolData = toolMap.get(toolId);
+      if (toolData) {
+        parts.push({
+          type: 'tool',
+          content: '',
+          toolName: toolData.toolName,
+          toolId: toolData.toolId,
+          input: toolData.input ? JSON.stringify(toolData.input) : undefined,
+          result: toolData.result
+        });
+        processedTools.add(toolId);
+      } else {
+        // Fallback: show basic tool info even without complete data
+        parts.push({
+          type: 'tool',
+          content: '',
+          toolName: toolName,
+          toolId: toolId,
+          input: undefined,
+          result: undefined
+        });
+        processedTools.add(toolId);
       }
+    }
 
       lastIndex = start + fullMatch.length;
     }
 
     // Add remaining text
-    if (lastIndex < text.length) {
-      const textContent = text.slice(lastIndex);
+    if (lastIndex < processedText.length) {
+      const textContent = processedText.slice(lastIndex);
       if (textContent.trim()) {
         parts.push({ type: 'text', content: textContent });
       }
@@ -220,6 +300,21 @@ export const MessageRenderer: React.FC<MessageRendererProps> = ({
                   result={part.result}
                   isCompleted={!!part.result}
                   onClick={() => handleToolClick(part.toolName!, part.toolId!, part.input, part.result)}
+                />
+              </span>
+            );
+          } else if (part.type === 'progress') {
+            const completedFiles = part.deploymentFiles?.filter(f => f.status === 'completed')?.length || 0;
+            const totalFiles = part.deploymentFiles?.length || 0;
+            return (
+              <span key={index} className="inline-block mx-1 my-0.5">
+                <ProgressPill
+                  progress={part.progress || 0}
+                  filesCompleted={completedFiles}
+                  totalFiles={totalFiles}
+                  onClick={() => {
+                    // Could open files sidebar or show more details
+                  }}
                 />
               </span>
             );

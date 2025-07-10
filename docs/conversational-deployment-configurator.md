@@ -26,40 +26,40 @@ Create a **technical consultant AI** that:
 - Understands infrastructure contexts and constraints
 - Can answer technical questions about deployment options
 - Extracts requirements through natural conversation
-- Generates personalized deployment files using battle-tested templates
+- **UPDATES existing template files in `/deploy-reference` with user's specific information**
 
 ### Conversation Flow Example
 ```
-Bot: "Hey! I'm here to help you set up Ceneca for your infrastructure. What's your current setup looking like?"
+User: "im using postgres and mongo"
 
-User: "We have PostgreSQL and MongoDB, and we're using Okta for SSO"
+Bot: "Perfect! Let me check what deployment templates we have available and update them for PostgreSQL and MongoDB."
 
-Bot: "Great! PostgreSQL and MongoDB - solid choices. With Okta, are you looking to have different access levels for different teams, or is this more of a single-team deployment?"
+[🔧 list_deployment_files]
+[🔧 introspect_file config.yaml]
 
-User: "Actually, can you explain what SSO options are available and why I'd choose one over another?"
+Bot: "I found the config.yaml template. I can see it has placeholders for database connections. Let me update it with PostgreSQL and MongoDB settings."
 
-Bot: "Absolutely! For enterprise deployments, you have several SSO options:
-- **Okta**: Best for orgs already using Okta, supports advanced features like group-based access
-- **Azure AD**: Great if you're in Microsoft ecosystem, handles both authentication and directory services
-- **Google Workspace**: Perfect for Google-first organizations, simple setup
-- **Auth0**: Most flexible, good for custom requirements
+[🔧 edit_file config.yaml]
 
-Since you mentioned Okta, I'm guessing you're already using it company-wide. The main advantage is your users won't need new credentials, and you can use existing security groups for access control.
+Bot: "Great! I've updated config.yaml with PostgreSQL and MongoDB configurations. Now let me update the Docker Compose file to include both databases."
 
-What's your team size looking like? This helps me recommend the right access model."
+[🔧 introspect_file ceneca-docker-compose.yml]
+[🔧 edit_file ceneca-docker-compose.yml]
 
-User: "About 50 people, mostly data analysts and a few admins"
+Bot: "Perfect! I've updated your deployment files:
+- ✅ config.yaml now includes PostgreSQL and MongoDB connection settings
+- ✅ ceneca-docker-compose.yml now includes both database services
 
-Bot: "Perfect size for role-based access. I'll configure Okta with analyst and admin roles. For your databases - are they on-prem or cloud? This affects network configuration."
+Do you need any authentication setup (like Google SSO, Azure AD) or are you good to deploy with these database configs?"
 ```
 
 ### Key Advantages
 
-1. **Natural Discovery**: Users can ask questions and explore options organically
-2. **Contextual Guidance**: AI explains the "why" behind recommendations
-3. **Adaptive Flow**: Conversation adapts to user's knowledge level and specific needs
-4. **Bi-directional**: User can ask questions, AI can probe for requirements
-5. **Personalized Output**: Results are tailored to the specific infrastructure and use case
+1. **Immediate Action**: AI starts updating files as soon as user mentions their setup
+2. **Direct File Updates**: Works with existing battle-tested templates in `/deploy-reference`
+3. **Tool Transparency**: Users see exactly what tools are being used and what files are being modified
+4. **Minimal Steps**: Get from "I use postgres and mongo" to configured deployment files in 2-3 tool calls
+5. **Real Templates**: Updates actual production-ready deployment files, not generated ones
 
 ## Technical Architecture
 
@@ -167,32 +167,32 @@ Bot: "Perfect size for role-based access. I'll configure Okta with analyst and a
 
 ## Critical Technical Decisions
 
-### 1. Template-Based vs AI Generation
+### 1. Direct File Updates vs Template Generation
 
-**Decision: Use Template-Based Generation**
+**Decision: Direct Updates to Existing Files**
 
-**Why Templates Win:**
-- **Reliability**: Deployment files must be bulletproof - one syntax error breaks everything
-- **Maintainability**: Much easier to update templates than retrain AI on new file formats
-- **Consistency**: Templates are battle-tested and guaranteed to work
-- **Validation**: Can validate template outputs against known schemas
-- **Version Control**: Templates can be versioned and tracked
-- **Cost**: Template filling is instant and cheap vs expensive AI generation
+**Why Direct Updates Win:**
+- **Simplicity**: No template engines, just direct file editing with AI tools
+- **Reliability**: Work with actual files in `/deploy-reference` that are already battle-tested
+- **Transparency**: Users can see exactly what's being modified in real-time
+- **Speed**: No template processing overhead - directly edit the files
+- **Maintainability**: Changes to deployment files immediately reflected
+- **Trust**: Users see the actual files being updated, not generated output
 
 **Implementation:**
 ```javascript
-// Template processing example
-const templateEngine = new Jinja2Engine();
-const deployTemplate = templateEngine.load('/deploy/docker-compose.yml.j2');
+// Direct file update approach
+// 1. List available files
+const files = await listDeploymentFiles();
 
-const userConfig = {
-  databases: ['postgresql', 'mongodb'],
-  auth_provider: 'okta',
-  ssl_enabled: true,
-  team_size: 50
-};
+// 2. Inspect current config
+const currentConfig = await introspectFile('config.yaml');
 
-const dockerCompose = templateEngine.render(deployTemplate, userConfig);
+// 3. Update with user values
+await editFile('config.yaml', {
+  postgresql_uri: 'postgresql://user:pass@localhost:5432/db',
+  mongodb_uri: 'mongodb://localhost:27017/ceneca'
+});
 ```
 
 ### 2. Conversation Management Architecture
