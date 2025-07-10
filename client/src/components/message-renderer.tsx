@@ -156,6 +156,29 @@ export const MessageRenderer: React.FC<MessageRendererProps> = ({
       return null;
     };
 
+    // Helper function to remove tool parameter JSON from text
+    const removeToolParameterJSON = (content: string): string => {
+      // Remove JSON blocks that look like tool parameters
+      const toolParamPatterns = [
+        // Pattern for tool parameters like { "filePath": "...", "replacements": {...}, ... }
+        /\{\s*"filePath"[\s\S]*?\}\s*(?=\n|$)/g,
+        // Pattern for package tool parameters like { "packageName": "...", "includeBackups": ... }
+        /\{\s*"packageName"[\s\S]*?\}\s*(?=\n|$)/g,
+        // Pattern for general tool JSON parameters (more cautious)
+        /\{\s*"[^"]*":\s*"[^"]*"[\s\S]*?\}\s*(?=\n|$)/g
+      ];
+      
+      let cleaned = content;
+      for (const pattern of toolParamPatterns) {
+        cleaned = cleaned.replace(pattern, '').trim();
+      }
+      
+      // Clean up multiple consecutive newlines
+      cleaned = cleaned.replace(/\n\s*\n\s*\n/g, '\n\n');
+      
+      return cleaned;
+    };
+
     // First, check for progress JSON and replace it
     let processedText = text;
     const progressData = parseProgressJSON(text);
@@ -171,6 +194,9 @@ export const MessageRenderer: React.FC<MessageRendererProps> = ({
         deploymentFiles: progressData.deploymentFiles
       });
     }
+
+    // Remove tool parameter JSON from the processed text
+    processedText = removeToolParameterJSON(processedText);
 
     // Updated regex patterns for simplified markers
     const allMarkersRegex = /\[(?:TOOL|RESULT):([^:]+):([^\]]+)\]/g;

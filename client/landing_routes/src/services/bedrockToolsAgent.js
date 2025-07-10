@@ -3,7 +3,8 @@ const {
   IntrospectFileTool, 
   EditFileTool, 
   ListDeploymentFilesTool, 
-  CreateDeploymentFileTool 
+  CreateDeploymentFileTool,
+  PackageDeploymentFilesTool
 } = require('./langgraphTools');
 
 class BedrockToolsAgent {
@@ -40,7 +41,8 @@ class BedrockToolsAgent {
         new IntrospectFileTool(),
         new EditFileTool(),
         new ListDeploymentFilesTool(),
-        new CreateDeploymentFileTool()
+        new CreateDeploymentFileTool(),
+        new PackageDeploymentFilesTool()
       ];
 
       this.isInitialized = true;

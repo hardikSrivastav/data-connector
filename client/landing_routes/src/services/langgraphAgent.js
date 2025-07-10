@@ -6,7 +6,8 @@ const {
   IntrospectFileTool, 
   EditFileTool, 
   ListDeploymentFilesTool, 
-  CreateDeploymentFileTool 
+  CreateDeploymentFileTool,
+  PackageDeploymentFilesTool
 } = require('./langgraphTools');
 
 class LangGraphAgent {
@@ -37,7 +38,8 @@ class LangGraphAgent {
         new IntrospectFileTool(),
         new EditFileTool(),
         new ListDeploymentFilesTool(),
-        new CreateDeploymentFileTool()
+        new CreateDeploymentFileTool(),
+        new PackageDeploymentFilesTool()
       ];
 
       // Bind tools to the model

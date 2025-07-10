@@ -230,9 +230,113 @@ class CreateDeploymentFileTool extends Tool {
   }
 }
 
+/**
+ * Tool for packaging deployment files for download
+ */
+class PackageDeploymentFilesTool extends Tool {
+  constructor() {
+    super();
+    this.name = 'package_deployment_files';
+    this.description = `
+      Package all deployment files for download when deployment is 100% complete.
+      Input should be a JSON object with:
+      - packageName: name for the deployment package (e.g., "ceneca-deployment")
+      - includeBackups: boolean (default false) whether to include backup files
+      Returns package information and download details.
+    `;
+  }
+
+  async _call(input) {
+    try {
+      const { packageName = 'ceneca-deployment', includeBackups = false } = JSON.parse(input);
+      
+      const baseDir = path.join(__dirname, '..', 'deploy-reference');
+      const packageDir = path.join(__dirname, '..', 'packages');
+      
+      // Ensure packages directory exists
+      try {
+        await fs.mkdir(packageDir, { recursive: true });
+      } catch (error) {
+        // Directory might already exist
+      }
+
+      // Get all deployment files
+      const files = await fs.readdir(baseDir);
+      const allowedExtensions = ['.yaml', '.yml', '.json', '.conf', '.env', '.sh', '.md'];
+      
+      let deploymentFiles = files.filter(file => {
+        const ext = path.extname(file);
+        const isAllowed = allowedExtensions.includes(ext);
+        const isBackup = file.includes('.backup.');
+        
+        if (includeBackups) {
+          return isAllowed;
+        } else {
+          return isAllowed && !isBackup;
+        }
+      });
+
+      if (deploymentFiles.length === 0) {
+        return 'Error: No deployment files found to package';
+      }
+
+      // Create package timestamp
+      const timestamp = new Date().toISOString().replace(/[:.]/g, '-').split('T')[0];
+      const packageId = `${packageName}-${timestamp}`;
+      const packagePath = path.join(packageDir, packageId);
+      
+      // Create package directory
+      await fs.mkdir(packagePath, { recursive: true });
+
+      // Copy files to package directory
+      const copiedFiles = [];
+      for (const file of deploymentFiles) {
+        try {
+          const sourcePath = path.join(baseDir, file);
+          const destPath = path.join(packagePath, file);
+          
+          const content = await fs.readFile(sourcePath);
+          await fs.writeFile(destPath, content);
+          
+          copiedFiles.push(file);
+        } catch (error) {
+          console.warn(`Failed to copy ${file}: ${error.message}`);
+        }
+      }
+
+      // Create package manifest
+      const manifest = {
+        packageName: packageId,
+        createdAt: new Date().toISOString(),
+        files: copiedFiles,
+        totalFiles: copiedFiles.length,
+        downloadPath: `/api/download/${packageId}`
+      };
+
+      await fs.writeFile(
+        path.join(packagePath, 'package-manifest.json'), 
+        JSON.stringify(manifest, null, 2)
+      );
+
+      return `Deployment package created successfully!
+
+Package Details:
+- Package ID: ${packageId}
+- Files included: ${copiedFiles.length}
+- Files: ${copiedFiles.join(', ')}
+
+Your deployment package is ready for download. The package contains all your configured deployment files and is ready for immediate deployment.`;
+
+    } catch (parseError) {
+      return `Error creating package: ${parseError.message}`;
+    }
+  }
+}
+
 module.exports = {
   IntrospectFileTool,
   EditFileTool,
   ListDeploymentFilesTool,
-  CreateDeploymentFileTool
+  CreateDeploymentFileTool,
+  PackageDeploymentFilesTool
 }; 

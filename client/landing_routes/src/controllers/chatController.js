@@ -3,6 +3,9 @@ const { BedrockRuntimeClient, InvokeModelCommand, InvokeModelWithResponseStreamC
 const DeploymentGenerator = require('../services/deploymentGenerator');
 const BedrockToolsAgent = require('../services/bedrockToolsAgent');
 const PromptRenderer = require('../services/promptRenderer');
+const fs = require('fs').promises;
+const path = require('path');
+const archiver = require('archiver');
 
 // Redis-based persistence services
 const sessionManager = require('../services/sessionManager');
@@ -947,6 +950,89 @@ exports.destroySession = async (req, res) => {
     res.status(500).json({
       success: false,
       message: 'Failed to destroy session'
+    });
+  }
+};
+
+/**
+ * Download packaged deployment files created by the PackageDeploymentFilesTool
+ */
+exports.downloadPackage = async (req, res) => {
+  const { packageId } = req.params;
+  
+  try {
+    if (!packageId) {
+      return res.status(400).json({
+        success: false,
+        message: 'Package ID is required'
+      });
+    }
+
+    // Security: validate package ID format
+    if (!/^[a-zA-Z0-9\-_]+$/.test(packageId)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid package ID format'
+      });
+    }
+
+    const packagesDir = path.join(__dirname, '..', 'packages');
+    const packagePath = path.join(packagesDir, packageId);
+    
+    // Check if package exists
+    try {
+      await fs.access(packagePath);
+    } catch (error) {
+      return res.status(404).json({
+        success: false,
+        message: 'Package not found'
+      });
+    }
+
+    // Read package manifest
+    const manifestPath = path.join(packagePath, 'package-manifest.json');
+    let manifest;
+    try {
+      const manifestContent = await fs.readFile(manifestPath, 'utf8');
+      manifest = JSON.parse(manifestContent);
+    } catch (error) {
+      return res.status(500).json({
+        success: false,
+        message: 'Package manifest not found or corrupted'
+      });
+    }
+
+    // Set response headers for ZIP download
+    res.setHeader('Content-Type', 'application/zip');
+    res.setHeader('Content-Disposition', `attachment; filename="${packageId}.zip"`);
+
+    // Create ZIP stream
+    const archive = archiver('zip', {
+      zlib: { level: 9 }
+    });
+
+    // Pipe archive to response
+    archive.pipe(res);
+
+    // Add all files to the ZIP
+    const files = await fs.readdir(packagePath);
+    for (const file of files) {
+      const filePath = path.join(packagePath, file);
+      const stats = await fs.stat(filePath);
+      
+      if (stats.isFile()) {
+        archive.file(filePath, { name: file });
+      }
+    }
+
+    // Finalize the archive
+    await archive.finalize();
+
+  } catch (error) {
+    console.error('Error downloading package:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to download package'
     });
   }
 };

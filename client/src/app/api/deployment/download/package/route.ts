@@ -706,20 +706,6 @@ AWS_REGION=us-east-1
 
 export async function GET(request: NextRequest) {
   try {
-    // Extract license key from Authorization header
-    const authHeader = request.headers.get('Authorization');
-    if (!authHeader || !authHeader.startsWith('Bearer ')) {
-      return NextResponse.json({ error: 'License key required' }, { status: 401 });
-    }
-
-    const licenseKey = authHeader.replace('Bearer ', '');
-    
-    // Validate license key
-    const isValidLicense = await validateLicense(licenseKey);
-    if (!isValidLicense) {
-      return NextResponse.json({ error: 'Invalid license key' }, { status: 403 });
-    }
-
     // Create ZIP file
     const zip = new JSZip();
     

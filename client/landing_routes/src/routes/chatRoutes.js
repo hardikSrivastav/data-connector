@@ -20,6 +20,9 @@ router.post('/generate-files', chatController.generateFiles);
 // Download deployment package
 router.get('/download/:conversationId', chatController.downloadDeploymentPackage);
 
+// Download packaged deployment files
+router.get('/download-package/:packageId', chatController.downloadPackage);
+
 // Get deployment template information (for debugging/testing)
 router.get('/templates', chatController.getTemplateInfo);
 

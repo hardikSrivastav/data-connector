@@ -1,7 +1,7 @@
 "use client";
 
 import React from "react";
-import { X, ChevronDown, ChevronRight } from "lucide-react";
+import { X, ChevronDown, ChevronRight, Download } from "lucide-react";
 
 interface ToolDetail {
   toolName: string;
@@ -24,6 +24,7 @@ export const ToolDetailSidebar: React.FC<ToolDetailSidebarProps> = ({
 }) => {
   const [showInput, setShowInput] = React.useState(false);
   const [showResult, setShowResult] = React.useState(false);
+  const [isDownloading, setIsDownloading] = React.useState(false);
 
   if (!toolDetail) return null;
 
@@ -35,8 +36,41 @@ export const ToolDetailSidebar: React.FC<ToolDetailSidebarProps> = ({
     }
   };
 
+  const handleDownload = async () => {
+    setIsDownloading(true);
+    
+    try {
+      // Trigger download without auth
+      const response = await fetch(`/api/deployment/download/package`, {
+        method: 'GET',
+      });
+
+      if (!response.ok) {
+        throw new Error(`Download failed: ${response.status}`);
+      }
+
+      // Create blob and download
+      const blob = await response.blob();
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `ceneca-deployment-package.zip`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      window.URL.revokeObjectURL(url);
+    } catch (error) {
+      console.error('Download error:', error);
+      // You might want to show an error toast here
+    } finally {
+      setIsDownloading(false);
+    }
+  };
+
   // Consistent monospace font stack
   const monospaceFont = 'ui-monospace, SFMono-Regular, "SF Mono", Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace';
+
+  const isDownloadTool = toolDetail.toolName === 'package_deployment_files' && toolDetail.isCompleted && toolDetail.result;
 
   return (
     <div
@@ -160,6 +194,26 @@ export const ToolDetailSidebar: React.FC<ToolDetailSidebarProps> = ({
             {toolDetail.isCompleted ? 'Completed' : 'In Progress'}
           </div>
         </div>
+
+        {/* Download Button */}
+        {isDownloadTool && (
+          <div className="mt-4">
+            <button
+              onClick={handleDownload}
+              disabled={isDownloading}
+              className={`
+                flex items-center gap-2 w-full justify-center py-2 px-4 
+                ${isDownloading 
+                  ? 'bg-gray-100 text-gray-500 cursor-not-allowed' 
+                  : 'bg-green-100 hover:bg-green-200 text-green-700'} 
+                rounded-lg transition-colors
+              `}
+            >
+              <Download className="w-4 h-4" />
+              <span>{isDownloading ? 'Downloading...' : 'Download Package'}</span>
+            </button>
+          </div>
+        )}
       </div>
     </div>
   );

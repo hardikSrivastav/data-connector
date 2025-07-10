@@ -241,12 +241,34 @@ export default function ChatDeploymentPage() {
 
     // Function to detect and clean progress JSON from streaming content
   const processProgressInContent = (content: string): string => {
+    // First, remove tool parameter JSON blocks
+    const removeToolParamJSON = (text: string): string => {
+      const toolParamPatterns = [
+        /\{\s*"filePath"[\s\S]*?\}\s*(?=\n|$)/g,
+        /\{\s*"packageName"[\s\S]*?\}\s*(?=\n|$)/g,
+        /\{\s*"replacements"[\s\S]*?\}\s*(?=\n|$)/g,
+      ];
+      
+      let cleaned = text;
+      for (const pattern of toolParamPatterns) {
+        cleaned = cleaned.replace(pattern, '').trim();
+      }
+      
+      // Clean up multiple consecutive newlines
+      cleaned = cleaned.replace(/\n\s*\n\s*\n/g, '\n\n');
+      
+      return cleaned;
+    };
+    
+    // Remove tool parameters first
+    let processedContent = removeToolParamJSON(content);
+    
     // Detect if we're in the middle of streaming progress JSON
-    const hasProgressKeywords = content.includes('"deploymentProgress"') || 
-                               content.includes('"deploymentFiles"') ||
-                               content.includes('fieldsTotal') ||
-                               content.includes('fieldsCompleted') ||
-                               content.includes('missingFields');
+    const hasProgressKeywords = processedContent.includes('"deploymentProgress"') || 
+                               processedContent.includes('"deploymentFiles"') ||
+                               processedContent.includes('fieldsTotal') ||
+                               processedContent.includes('fieldsCompleted') ||
+                               processedContent.includes('missingFields');
     
     if (hasProgressKeywords) {
       // Try to find complete JSON blocks first
@@ -274,18 +296,18 @@ export default function ChatDeploymentPage() {
         return blocks;
       };
       
-      const completeBlocks = findCompleteJsonBlocks(content);
+      const completeBlocks = findCompleteJsonBlocks(processedContent);
       
       if (completeBlocks.length > 0) {
         // We have complete JSON, let it be parsed normally
-        return content;
+        return processedContent;
       } else {
         // We're streaming partial JSON - replace the entire JSON portion with a single placeholder
         
         // Find the start of the JSON block
         let jsonStart = -1;
-        for (let i = 0; i < content.length; i++) {
-          if (content[i] === '{' && content.substring(i).includes('"deploymentProgress"')) {
+        for (let i = 0; i < processedContent.length; i++) {
+          if (processedContent[i] === '{' && processedContent.substring(i).includes('"deploymentProgress"')) {
             jsonStart = i;
             break;
           }
@@ -293,17 +315,17 @@ export default function ChatDeploymentPage() {
         
         if (jsonStart !== -1) {
           // Replace everything from the JSON start to the end with the placeholder
-          const beforeJson = content.substring(0, jsonStart);
+          const beforeJson = processedContent.substring(0, jsonStart);
           return beforeJson + '\n\n⚡ **Updating deployment progress...**';
         } else {
           // Fallback: look for any progress-related content and replace it
           const progressRegex = /\{[^}]*(?:"deploymentProgress"|"deploymentFiles"|"fieldsTotal"|"fieldsCompleted"|"missingFields")[^}]*$/g;
-          return content.replace(progressRegex, '\n\n⚡ **Updating deployment progress...**');
+          return processedContent.replace(progressRegex, '\n\n⚡ **Updating deployment progress...**');
         }
       }
     }
     
-    return content;
+    return processedContent;
   };
 
   const sendMessage = async () => {
