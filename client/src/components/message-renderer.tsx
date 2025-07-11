@@ -17,6 +17,7 @@ interface ParsedContent {
   result?: string;
   progress?: number;
   deploymentFiles?: any[];
+  isCompleted?: boolean; // Added for tool pills
 }
 
 interface MessageRendererProps {
@@ -97,7 +98,19 @@ export const MessageRenderer: React.FC<MessageRendererProps> = ({
     
     // Create a map of tool data from the toolCalls prop
     const toolMap = new Map<string, { toolName: string; toolId: string; input?: any; result?: string }>();
+    
+    // Log all tool calls received
+    console.group('Tool Calls Processing');
+    console.log('Received tool calls:', toolCalls);
+    
     toolCalls.forEach(toolCall => {
+      console.log(`Processing tool call:`, {
+        name: toolCall.name,
+        id: toolCall.id,
+        input: toolCall.input,
+        result: toolCall.result
+      });
+      
       toolMap.set(toolCall.id, {
         toolName: toolCall.name,
         toolId: toolCall.id,
@@ -105,6 +118,25 @@ export const MessageRenderer: React.FC<MessageRendererProps> = ({
         result: toolCall.result
       });
     });
+    console.groupEnd();
+
+    // Helper function to check if a tool is completed
+    const isToolCompleted = (toolId: string): boolean => {
+      const toolData = toolMap.get(toolId);
+      return !!(toolData?.result && toolData.result !== 'Processing...');
+    };
+
+    // Helper function to format tool input for display
+    const formatToolInput = (input: any): string => {
+      try {
+        if (typeof input === 'string') {
+          return input;
+        }
+        return JSON.stringify(input, null, 2);
+      } catch (e) {
+        return String(input);
+      }
+    };
 
     // Helper function to detect and parse progress JSON
     const parseProgressJSON = (content: string): { progress: number; deploymentFiles?: any[]; jsonMatch?: string } | null => {
@@ -203,10 +235,20 @@ export const MessageRenderer: React.FC<MessageRendererProps> = ({
     let lastIndex = 0;
     const processedTools = new Set<string>();
 
+    console.group('Tool Markers Processing');
+    console.log('Content to process:', processedText);
+    
     let match;
     while ((match = allMarkersRegex.exec(processedText)) !== null) {
       const [fullMatch, toolName, toolId] = match;
       const start = match.index;
+      
+      console.log('Found tool marker:', {
+        fullMatch,
+        toolName,
+        toolId,
+        position: start
+      });
 
       // Add text before the marker
       if (start > lastIndex) {
@@ -216,35 +258,46 @@ export const MessageRenderer: React.FC<MessageRendererProps> = ({
         }
       }
 
-          // Add tool pill (only once per tool)
-    if (!processedTools.has(toolId)) {
-      const toolData = toolMap.get(toolId);
-      if (toolData) {
-        parts.push({
-          type: 'tool',
-          content: '',
-          toolName: toolData.toolName,
-          toolId: toolData.toolId,
-          input: toolData.input ? JSON.stringify(toolData.input) : undefined,
-          result: toolData.result
+      // Add tool pill (only once per tool)
+      if (!processedTools.has(toolId)) {
+        const toolData = toolMap.get(toolId);
+        console.log('Tool data for pill:', {
+          toolId,
+          foundInMap: !!toolData,
+          data: toolData
         });
-        processedTools.add(toolId);
-      } else {
-        // Fallback: show basic tool info even without complete data
-        parts.push({
-          type: 'tool',
-          content: '',
-          toolName: toolName,
-          toolId: toolId,
-          input: undefined,
-          result: undefined
-        });
-        processedTools.add(toolId);
+        
+        if (toolData) {
+          const toolPill: ParsedContent = {
+            type: 'tool',
+            content: '',
+            toolName: toolData.toolName,
+            toolId: toolData.toolId,
+            input: toolData.input ? formatToolInput(toolData.input) : undefined,
+            result: toolData.result,
+            isCompleted: isToolCompleted(toolId)
+          };
+          console.log('Created tool pill:', toolPill);
+          parts.push(toolPill);
+          processedTools.add(toolId);
+        } else {
+          // Fallback: show basic tool info even without complete data
+          parts.push({
+            type: 'tool',
+            content: '',
+            toolName: toolName,
+            toolId: toolId,
+            input: undefined,
+            result: undefined,
+            isCompleted: false
+          });
+          processedTools.add(toolId);
+        }
       }
-    }
 
       lastIndex = start + fullMatch.length;
     }
+    console.groupEnd();
 
     // Add remaining text
     if (lastIndex < processedText.length) {
@@ -253,6 +306,11 @@ export const MessageRenderer: React.FC<MessageRendererProps> = ({
         parts.push({ type: 'text', content: textContent });
       }
     }
+
+    // Log final parsed content
+    console.group('Final Parsed Content');
+    console.log('Parts:', parts);
+    console.groupEnd();
 
     return parts;
   };
@@ -265,7 +323,7 @@ export const MessageRenderer: React.FC<MessageRendererProps> = ({
       toolId,
       input,
       result,
-      isCompleted: !!result
+      isCompleted: !!result && result !== 'Processing...' // Only mark as completed if we have a real result
     });
     setSidebarOpen(true);
     onSidebarStateChange?.(true);
@@ -287,9 +345,19 @@ export const MessageRenderer: React.FC<MessageRendererProps> = ({
                 components={{
                   p: ({ children }) => <p className="mb-2 last:mb-0">{children}</p>,
                   strong: ({ children }) => <strong className="font-semibold text-gray-900">{children}</strong>,
-                  ul: ({ children }) => <ul className="list-disc list-inside mb-2 space-y-1">{children}</ul>,
-                  ol: ({ children }) => <ol className="list-decimal list-inside mb-2 space-y-1">{children}</ol>,
-                  li: ({ children }) => <li className="ml-0">{children}</li>,
+                  ul: ({ children }) => <ul className="list-disc pl-6 mb-2 space-y-1">{children}</ul>,
+                  ol: ({ children }) => <ol className="list-decimal pl-6 mb-2 space-y-1">{children}</ol>,
+                  li: ({ children, ...props }) => {
+                    // Check if this is a nested list item
+                    const hasNestedList = React.Children.toArray(children).some(
+                      child => React.isValidElement(child) && (child.type === 'ul' || child.type === 'ol')
+                    );
+                    return (
+                      <li className={`${hasNestedList ? 'mb-1' : ''}`} {...props}>
+                        {children}
+                      </li>
+                    );
+                  },
                   h1: ({ children }) => <h1 className="text-lg font-semibold mb-2 text-gray-900">{children}</h1>,
                   h2: ({ children }) => <h2 className="text-base font-semibold mb-2 text-gray-900">{children}</h2>,
                   h3: ({ children }) => <h3 className="text-md font-semibold mb-1 text-gray-900">{children}</h3>,
@@ -324,7 +392,7 @@ export const MessageRenderer: React.FC<MessageRendererProps> = ({
                   toolId={part.toolId!}
                   input={part.input}
                   result={part.result}
-                  isCompleted={!!part.result}
+                  isCompleted={part.isCompleted}
                   onClick={() => handleToolClick(part.toolName!, part.toolId!, part.input, part.result)}
                 />
               </span>

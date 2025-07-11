@@ -196,6 +196,12 @@ class ConversationStorage {
     }
 
     try {
+      console.log('Adding message to conversation:', {
+        conversationId,
+        messageContent: message.content,
+        toolCalls: message.toolCalls
+      });
+
       const conversationData = await this.loadConversation(conversationId);
       
       if (!conversationData) {
@@ -203,14 +209,68 @@ class ConversationStorage {
         return false;
       }
 
-      const updatedMessages = [...(conversationData.messages || []), {
+      // Process tool calls if they exist
+      const messageToAdd = {
         ...message,
-        timestamp: message.timestamp || new Date()
-      }];
+        timestamp: message.timestamp || new Date(),
+        toolCalls: message.toolCalls || []
+      };
 
-      return await this.updateConversation(conversationId, {
+      console.log('Processing message for storage:', {
+        originalMessage: message,
+        processedMessage: messageToAdd
+      });
+
+      // If there are tool calls, ensure they have proper structure
+      if (messageToAdd.toolCalls.length > 0) {
+        console.log('Processing tool calls:', messageToAdd.toolCalls);
+        
+        messageToAdd.toolCalls = messageToAdd.toolCalls.map(tool => {
+          const processedTool = {
+            name: tool.name,
+            id: tool.id,
+            input: tool.input || undefined,
+            result: tool.result || undefined
+          };
+          console.log('Processed tool call:', processedTool);
+          return processedTool;
+        });
+
+        // Add tool call markers to content if not already present
+        messageToAdd.toolCalls.forEach(tool => {
+          const toolMarker = `[TOOL:${tool.name}:${tool.id}]`;
+          const resultMarker = tool.result ? `[RESULT:${tool.name}:${tool.id}]` : '';
+          
+          console.log('Adding tool markers:', {
+            toolMarker,
+            resultMarker,
+            currentContent: messageToAdd.content
+          });
+
+          if (!messageToAdd.content.includes(toolMarker)) {
+            messageToAdd.content = `${messageToAdd.content}${toolMarker}`;
+            console.log('Added tool marker:', toolMarker);
+          }
+          if (tool.result && !messageToAdd.content.includes(resultMarker)) {
+            messageToAdd.content = `${messageToAdd.content}${resultMarker}`;
+            console.log('Added result marker:', resultMarker);
+          }
+        });
+      }
+
+      const updatedMessages = [...(conversationData.messages || []), messageToAdd];
+      console.log('Final message to store:', messageToAdd);
+
+      const success = await this.updateConversation(conversationId, {
         messages: updatedMessages
       });
+
+      console.log('Message storage result:', {
+        success,
+        messageCount: updatedMessages.length
+      });
+
+      return success;
     } catch (error) {
       console.error(`Error adding message to conversation ${conversationId}:`, error);
       return false;

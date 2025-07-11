@@ -99,12 +99,21 @@ class RedisService {
     }
 
     try {
+      console.log('Redis SET - Original value:', {
+        key,
+        value,
+        hasToolCalls: value?.messages?.some(m => m.toolCalls?.length > 0)
+      });
+
       const serializedValue = JSON.stringify(value);
+      console.log('Redis SET - Serialized value length:', serializedValue.length);
       
       if (ttl) {
         await this.client.setex(key, ttl, serializedValue);
+        console.log(`Redis SETEX - Key: ${key}, TTL: ${ttl}`);
       } else {
         await this.client.set(key, serializedValue);
+        console.log(`Redis SET - Key: ${key}`);
       }
       
       return true;
@@ -121,8 +130,25 @@ class RedisService {
     }
 
     try {
+      console.log(`Redis GET - Fetching key: ${key}`);
       const value = await this.client.get(key);
-      return value ? JSON.parse(value) : null;
+      
+      if (!value) {
+        console.log(`Redis GET - No value found for key: ${key}`);
+        return null;
+      }
+
+      console.log('Redis GET - Raw value length:', value.length);
+      const parsedValue = JSON.parse(value);
+      
+      console.log('Redis GET - Parsed value:', {
+        key,
+        messageCount: parsedValue?.messages?.length,
+        hasToolCalls: parsedValue?.messages?.some(m => m.toolCalls?.length > 0),
+        toolCallCount: parsedValue?.messages?.reduce((acc, m) => acc + (m.toolCalls?.length || 0), 0)
+      });
+
+      return parsedValue;
     } catch (error) {
       console.error('Redis GET error:', error.message);
       return null;

@@ -86,42 +86,81 @@ export default function ChatDeploymentPage() {
         try {
           // Validate the session with backend and load conversation history
           const backendUrl = process.env.NODE_ENV === 'production' 
-            ? 'http://localhost:3001/api/chat/validate-session'
-            : 'http://localhost:3001/api/chat/validate-session';
+            ? 'http://localhost:3001/api/chat/conversation/' + savedConversationId
+            : 'http://localhost:3001/api/chat/conversation/' + savedConversationId;
             
           const response = await fetch(backendUrl, {
-            method: 'POST',
+            method: 'GET',
             headers: {
               'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({
-              conversationId: savedConversationId
-            })
+            }
           });
 
           if (response.ok) {
             const data = await response.json();
-            if (data.success && data.conversation) {
+            if (data.success && data.data) {
               // Session is valid, restore the conversation
               setConversationId(savedConversationId);
               
-              // Restore messages from conversation history
-              if (data.conversation.messages && data.conversation.messages.length > 0) {
-                const formattedMessages = data.conversation.messages.map((msg: any) => ({
-                  role: msg.role,
-                  content: msg.content,
-                  timestamp: new Date(msg.timestamp),
-                  toolCalls: msg.toolCalls || []
-                }));
+              // Restore messages from conversation history with proper tool call processing
+              if (data.data.messages && data.data.messages.length > 0) {
+                console.log('Restoring messages from Redis:', data.data.messages);
+                const formattedMessages = data.data.messages.map((msg: any) => {
+                  // Process tool calls in the message content
+                  let processedContent = msg.content;
+                  const toolCalls = msg.toolCalls || [];
+                  
+                  console.log('Processing message:', {
+                    originalContent: msg.content,
+                    toolCalls: toolCalls
+                  });
+                  
+                  // Re-inject tool call markers into content if they exist
+                  toolCalls.forEach((tool: any) => {
+                    const toolMarker = `[TOOL:${tool.name}:${tool.id}]`;
+                    const resultMarker = tool.result ? `[RESULT:${tool.name}:${tool.id}]` : '';
+                    
+                    console.log('Processing tool call:', {
+                      tool,
+                      toolMarker,
+                      resultMarker,
+                      contentBeforeMarkers: processedContent
+                    });
+                    
+                    // Only add markers if they're not already in the content
+                    if (!processedContent.includes(toolMarker)) {
+                      processedContent = `${processedContent}${toolMarker}`;
+                      console.log('Added tool marker:', toolMarker);
+                    }
+                    if (tool.result && !processedContent.includes(resultMarker)) {
+                      processedContent = `${processedContent}${resultMarker}`;
+                      console.log('Added result marker:', resultMarker);
+                    }
+                  });
+                  
+                  console.log('Final processed message:', {
+                    processedContent,
+                    toolCalls
+                  });
+                  
+                  return {
+                    role: msg.role,
+                    content: processedContent,
+                    timestamp: new Date(msg.timestamp),
+                    toolCalls: toolCalls
+                  };
+                });
+                
+                console.log('Setting formatted messages:', formattedMessages);
                 setMessages(formattedMessages);
               }
               
               // Restore extracted config if available
-              if (data.conversation.metadata?.extractedConfig) {
-                setExtractedConfig(data.conversation.metadata.extractedConfig);
+              if (data.data.extractedConfig) {
+                setExtractedConfig(data.data.extractedConfig);
               }
               
-              console.log(`Restored conversation ${savedConversationId} with ${data.conversation.messages?.length || 0} messages`);
+              console.log(`Restored conversation ${savedConversationId} with ${data.data.messages?.length || 0} messages`);
             } else {
               // Session is invalid or expired, clear localStorage
               localStorage.removeItem('deployment-conversation-id');
@@ -211,6 +250,7 @@ export default function ChatDeploymentPage() {
     const toolMarkerRegex = /\[(?:TOOL|RESULT):([^:]+):([^\]]+)\]/g;
     let match;
     
+    // First pass: collect all tool calls
     while ((match = toolMarkerRegex.exec(content)) !== null) {
       const [fullMatch, toolName, toolId] = match;
       
@@ -218,20 +258,49 @@ export default function ChatDeploymentPage() {
       if (!processedToolIds.has(toolId)) {
         processedToolIds.add(toolId);
         
-        // Create placeholder tool call
+        // Try to find input JSON for this tool - look for any JSON-like content after the TOOL marker
+        // Updated regex to handle both inline and multiline JSON
+        const inputRegex = new RegExp(`\\[TOOL:${toolName}:${toolId}\\][\\s\\n]*?({[\\s\\S]*?})[\\s\\n]*?(?=\\[|$)`);
+        const inputMatch = content.match(inputRegex);
+        let input = undefined;
+        if (inputMatch && inputMatch[1]) {
+          try {
+            // Clean up the input string - remove any markdown code block markers
+            let cleanInput = inputMatch[1].replace(/```json\n?|\n?```/g, '').trim();
+            input = JSON.parse(cleanInput);
+            console.log('Parsed tool input for', toolName, toolId, ':', input);
+          } catch (e) {
+            console.error('Failed to parse tool input JSON for', toolName, toolId, ':', e);
+            console.log('Raw input:', inputMatch[1]);
+          }
+        } else {
+          console.log('No input found for tool', toolName, toolId);
+          console.log('Content around tool marker:', content.substring(
+            Math.max(0, content.indexOf(`[TOOL:${toolName}:${toolId}]`) - 50),
+            Math.min(content.length, content.indexOf(`[TOOL:${toolName}:${toolId}]`) + 200)
+          ));
+        }
+        
+        // Try to find result for this tool - look for any text between RESULT marker and next marker
+        const resultRegex = new RegExp(`\\[RESULT:${toolName}:${toolId}\\][\\s\\n]*([\\s\\S]*?)(?=\\[|$)`);
+        const resultMatch = content.match(resultRegex);
+        let result = undefined;
+        if (resultMatch && resultMatch[1]) {
+          result = resultMatch[1].trim();
+          console.log('Found result for tool', toolName, toolId);
+        } else {
+          console.log('No result found for tool', toolName, toolId);
+        }
+        
+        // Create tool call with complete data
         const toolCall: ToolCall = {
           name: toolName,
           id: toolId,
-          input: undefined, // Will be populated when complete data arrives
-          result: undefined // Will be populated when complete data arrives
+          input,
+          result
         };
         
-        // Check if we have a result marker for this tool
-        const resultMarker = `[RESULT:${toolName}:${toolId}]`;
-        if (content.includes(resultMarker)) {
-          toolCall.result = 'Processing...'; // Placeholder until real result arrives
-        }
-        
+        console.log('Created tool call:', toolCall);
         toolCalls.push(toolCall);
       }
     }
@@ -239,93 +308,38 @@ export default function ChatDeploymentPage() {
     return toolCalls;
   };
 
-    // Function to detect and clean progress JSON from streaming content
+  // Helper function to process progress JSON and clean content
   const processProgressInContent = (content: string): string => {
-    // First, remove tool parameter JSON blocks
-    const removeToolParamJSON = (text: string): string => {
-      const toolParamPatterns = [
-        /\{\s*"filePath"[\s\S]*?\}\s*(?=\n|$)/g,
-        /\{\s*"packageName"[\s\S]*?\}\s*(?=\n|$)/g,
-        /\{\s*"replacements"[\s\S]*?\}\s*(?=\n|$)/g,
-      ];
-      
-      let cleaned = text;
-      for (const pattern of toolParamPatterns) {
-        cleaned = cleaned.replace(pattern, '').trim();
-      }
-      
-      // Clean up multiple consecutive newlines
-      cleaned = cleaned.replace(/\n\s*\n\s*\n/g, '\n\n');
-      
-      return cleaned;
-    };
+    let processedContent = content;
+
+    // Find and process progress JSON
+    const progressRegex = /{[\s\S]*?"deploymentProgress"[\s\S]*?}/g;
+    const progressMatches = processedContent.match(progressRegex);
     
-    // Remove tool parameters first
-    let processedContent = removeToolParamJSON(content);
-    
-    // Detect if we're in the middle of streaming progress JSON
-    const hasProgressKeywords = processedContent.includes('"deploymentProgress"') || 
-                               processedContent.includes('"deploymentFiles"') ||
-                               processedContent.includes('fieldsTotal') ||
-                               processedContent.includes('fieldsCompleted') ||
-                               processedContent.includes('missingFields');
-    
-    if (hasProgressKeywords) {
-      // Try to find complete JSON blocks first
-      const findCompleteJsonBlocks = (text: string): string[] => {
-        const blocks: string[] = [];
-        let braceCount = 0;
-        let start = -1;
-        
-        for (let i = 0; i < text.length; i++) {
-          if (text[i] === '{') {
-            if (braceCount === 0) {
-              start = i;
-            }
-            braceCount++;
-          } else if (text[i] === '}') {
-            braceCount--;
-            if (braceCount === 0 && start !== -1) {
-              const block = text.substring(start, i + 1);
-              if (block.includes('"deploymentProgress"')) {
-                blocks.push(block);
-              }
-            }
+    if (progressMatches) {
+      progressMatches.forEach(match => {
+        try {
+          const progressData = JSON.parse(match);
+          if (progressData.deploymentProgress !== undefined) {
+            // Update extracted config with progress data
+            setExtractedConfig(prev => ({
+              ...prev,
+              deploymentProgress: progressData.deploymentProgress,
+              deploymentFiles: progressData.deploymentFiles
+            }));
+            // Remove the progress JSON from content
+            processedContent = processedContent.replace(match, '');
           }
+        } catch (e) {
+          // Invalid JSON, ignore
         }
-        return blocks;
-      };
-      
-      const completeBlocks = findCompleteJsonBlocks(processedContent);
-      
-      if (completeBlocks.length > 0) {
-        // We have complete JSON, let it be parsed normally
-        return processedContent;
-      } else {
-        // We're streaming partial JSON - replace the entire JSON portion with a single placeholder
-        
-        // Find the start of the JSON block
-        let jsonStart = -1;
-        for (let i = 0; i < processedContent.length; i++) {
-          if (processedContent[i] === '{' && processedContent.substring(i).includes('"deploymentProgress"')) {
-            jsonStart = i;
-            break;
-          }
-        }
-        
-        if (jsonStart !== -1) {
-          // Replace everything from the JSON start to the end with the placeholder
-          const beforeJson = processedContent.substring(0, jsonStart);
-          return beforeJson + '\n\n⚡ **Updating deployment progress...**';
-        } else {
-          // Fallback: look for any progress-related content and replace it
-          const progressRegex = /\{[^}]*(?:"deploymentProgress"|"deploymentFiles"|"fieldsTotal"|"fieldsCompleted"|"missingFields")[^}]*$/g;
-          return processedContent.replace(progressRegex, '\n\n⚡ **Updating deployment progress...**');
-        }
-      }
+      });
     }
+
+    // Clean up multiple consecutive newlines
+    processedContent = processedContent.replace(/\n\s*\n\s*\n/g, '\n\n');
     
-    return processedContent;
+    return processedContent.trim();
   };
 
   const sendMessage = async () => {
@@ -359,6 +373,8 @@ export default function ChatDeploymentPage() {
         }
 
         const data = await response.json();
+        console.log('Conversation started:', data);
+        
         currentConversationId = data.data.conversationId;
         setConversationId(currentConversationId);
         // Save conversation ID to localStorage for persistence
@@ -367,8 +383,8 @@ export default function ChatDeploymentPage() {
         }
         
       } catch (error) {
+        console.error('Error starting conversation:', error);
         toast.error("Failed to start conversation");
-        console.error('Error:', error);
         setIsLoading(false);
         return;
       } finally {
@@ -383,6 +399,11 @@ export default function ChatDeploymentPage() {
       content: currentMessage,
       timestamp: new Date()
     };
+
+    console.log('Sending message:', {
+      conversationId: currentConversationId,
+      message: userMessage
+    });
 
     setMessages(prev => [...prev, userMessage]);
     const messageToSend = currentMessage;
@@ -399,6 +420,12 @@ export default function ChatDeploymentPage() {
         ? 'http://localhost:3001/api/chat/message/stream'
         : 'http://localhost:3001/api/chat/message/stream';
         
+      console.log('Streaming request:', {
+        url: backendUrl,
+        conversationId: currentConversationId,
+        message: messageToSend
+      });
+
       const response = await fetch(backendUrl, {
         method: 'POST',
         headers: {
@@ -422,11 +449,16 @@ export default function ChatDeploymentPage() {
       const decoder = new TextDecoder();
       let buffer = '';
       
+      console.group('Streaming Response Processing');
+      
       try {
         while (true) {
           const { done, value } = await reader.read();
           
-          if (done) break;
+          if (done) {
+            console.log('Stream completed');
+            break;
+          }
           
           const chunk = decoder.decode(value, { stream: true });
           buffer += chunk;
@@ -442,41 +474,54 @@ export default function ChatDeploymentPage() {
                 const dataStr = line.slice(6);
                 const data = JSON.parse(dataStr);
                 
+                console.log('Received stream data:', {
+                  type: data.type,
+                  data: data
+                });
+                
                 if (data.type === 'chunk') {
                   flushSync(() => {
                     // Process progress JSON before displaying
                     const processedContent = processProgressInContent(data.fullContent);
                     setStreamingContent(processedContent);
-                    // Parse tool calls from the current content
+                    // Parse tool calls from the current content with input and results
                     const parsedToolCalls = parseToolCallsFromContent(processedContent);
+                    console.log('Updated streaming content:', {
+                      processedContent,
+                      parsedToolCalls
+                    });
                     setStreamingToolCalls(parsedToolCalls);
                   });
                 } else if (data.type === 'tool_call') {
-                  // Tool calls are now inline in the message content
+                  console.log('Tool call started:', data.tool);
                   toast.info(`🔧 Tool in use`);
                 } else if (data.type === 'tool_result') {
-                  // Tool results are now inline in the message content
+                  console.log('Tool call completed:', data.result);
                   toast.success(`✅ Tool completed`);
                 } else if (data.type === 'complete') {
+                  console.log('Response complete:', data);
                   isCompleted = true;
                   completedData = data;
-                  // Update streaming tool calls with the complete data - merge with existing parsed calls
+                  // Update streaming tool calls with the complete data
                   flushSync(() => {
                     const completeToolCalls = data.toolCalls || [];
                     const mergedToolCalls = completeToolCalls.map((completeTool: ToolCall) => {
-                      // Find existing parsed tool call or create new one
+                      // Find existing parsed tool call
                       const existingTool = parseToolCallsFromContent(data.message).find(
                         (t: ToolCall) => t.id === completeTool.id
                       );
                       return {
                         ...completeTool,
                         // Preserve any existing state but use complete data
-                        ...existingTool
+                        input: completeTool.input || existingTool?.input,
+                        result: completeTool.result || existingTool?.result
                       };
                     });
+                    console.log('Final tool calls:', mergedToolCalls);
                     setStreamingToolCalls(mergedToolCalls);
                   });
                 } else if (data.type === 'error') {
+                  console.error('Stream error:', data);
                   toast.error(data.message);
                   setStreamingContent("");
                   setStreamingToolCalls([]);
@@ -484,32 +529,48 @@ export default function ChatDeploymentPage() {
                   return;
                 }
               } catch (e) {
-                console.error('Error parsing streaming data:', e);
+                console.error('Error parsing streaming data:', e, '\nRaw line:', line);
               }
             }
           }
         }
       } finally {
+        console.groupEnd();
         reader.releaseLock();
       }
       
       if (isCompleted && completedData) {
-        // Ensure all tool calls found in the message content are preserved
+        console.group('Processing Complete Response');
+        
+        // First parse tool calls from the content
         const toolCallsFromContent = parseToolCallsFromContent(completedData.message);
+        console.log('Tool calls parsed from content:', toolCallsFromContent);
+        
+        // Get tool calls from the complete data
         const completeToolCalls = completedData.toolCalls || [];
+        console.log('Tool calls from complete data:', completeToolCalls);
         
-        // Merge tool calls from content with complete data, preferring complete data
-        const mergedToolCalls = toolCallsFromContent.map(parsedTool => {
-          const completeTool = completeToolCalls.find((ct: ToolCall) => ct.id === parsedTool.id);
-          return completeTool || parsedTool;
-        });
+        // Start with tool calls from content since they have the input/result data
+        let mergedToolCalls = [...toolCallsFromContent];
         
-        // Add any additional tool calls from complete data that weren't in content
+        // Add any tool calls from complete data that weren't found in content
         completeToolCalls.forEach((completeTool: ToolCall) => {
-          if (!mergedToolCalls.find(mt => mt.id === completeTool.id)) {
+          const existingTool = mergedToolCalls.find(mt => mt.id === completeTool.id);
+          if (!existingTool) {
             mergedToolCalls.push(completeTool);
+          } else {
+            // If tool exists, merge any additional data from complete tool
+            Object.assign(existingTool, {
+              ...existingTool,
+              ...completeTool,
+              // Preserve input/result from content if they exist
+              input: existingTool.input || completeTool.input,
+              result: existingTool.result || completeTool.result
+            });
           }
         });
+        
+        console.log('Final merged tool calls:', mergedToolCalls);
         
         setMessages(prev => [...prev, {
           role: 'assistant',
@@ -520,6 +581,7 @@ export default function ChatDeploymentPage() {
         
         // Update extracted config and progress tracking
         const newConfig = completedData.extractedConfig || {};
+        console.log('Updating config:', newConfig);
         setExtractedConfig(newConfig);
         
         // Update progress and files if provided
@@ -529,6 +591,8 @@ export default function ChatDeploymentPage() {
         if (newConfig.deploymentFiles) {
           setDeploymentFiles(newConfig.deploymentFiles);
         }
+
+        console.groupEnd();
       }
       
       setStreamingContent("");
@@ -536,8 +600,8 @@ export default function ChatDeploymentPage() {
       setIsStreaming(false);
       
     } catch (error) {
+      console.error('Error in message stream:', error);
       toast.error("Failed to send message");
-      console.error('Error:', error);
       setStreamingContent("");
       setStreamingToolCalls([]);
       setIsStreaming(false);
