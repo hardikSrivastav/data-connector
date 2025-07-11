@@ -98,19 +98,7 @@ export const MessageRenderer: React.FC<MessageRendererProps> = ({
     
     // Create a map of tool data from the toolCalls prop
     const toolMap = new Map<string, { toolName: string; toolId: string; input?: any; result?: string }>();
-    
-    // Log all tool calls received
-    console.group('Tool Calls Processing');
-    console.log('Received tool calls:', toolCalls);
-    
     toolCalls.forEach(toolCall => {
-      console.log(`Processing tool call:`, {
-        name: toolCall.name,
-        id: toolCall.id,
-        input: toolCall.input,
-        result: toolCall.result
-      });
-      
       toolMap.set(toolCall.id, {
         toolName: toolCall.name,
         toolId: toolCall.id,
@@ -118,7 +106,6 @@ export const MessageRenderer: React.FC<MessageRendererProps> = ({
         result: toolCall.result
       });
     });
-    console.groupEnd();
 
     // Helper function to check if a tool is completed
     const isToolCompleted = (toolId: string): boolean => {
@@ -235,20 +222,10 @@ export const MessageRenderer: React.FC<MessageRendererProps> = ({
     let lastIndex = 0;
     const processedTools = new Set<string>();
 
-    console.group('Tool Markers Processing');
-    console.log('Content to process:', processedText);
-    
     let match;
     while ((match = allMarkersRegex.exec(processedText)) !== null) {
       const [fullMatch, toolName, toolId] = match;
       const start = match.index;
-      
-      console.log('Found tool marker:', {
-        fullMatch,
-        toolName,
-        toolId,
-        position: start
-      });
 
       // Add text before the marker
       if (start > lastIndex) {
@@ -258,46 +235,37 @@ export const MessageRenderer: React.FC<MessageRendererProps> = ({
         }
       }
 
-      // Add tool pill (only once per tool)
-      if (!processedTools.has(toolId)) {
-        const toolData = toolMap.get(toolId);
-        console.log('Tool data for pill:', {
-          toolId,
-          foundInMap: !!toolData,
-          data: toolData
+          // Add tool pill (only once per tool)
+    if (!processedTools.has(toolId)) {
+      const toolData = toolMap.get(toolId);
+      if (toolData) {
+        parts.push({
+          type: 'tool',
+          content: '',
+          toolName: toolData.toolName,
+          toolId: toolData.toolId,
+          input: toolData.input ? formatToolInput(toolData.input) : undefined,
+          result: toolData.result,
+          isCompleted: isToolCompleted(toolId)
         });
-        
-        if (toolData) {
-          const toolPill: ParsedContent = {
-            type: 'tool',
-            content: '',
-            toolName: toolData.toolName,
-            toolId: toolData.toolId,
-            input: toolData.input ? formatToolInput(toolData.input) : undefined,
-            result: toolData.result,
-            isCompleted: isToolCompleted(toolId)
-          };
-          console.log('Created tool pill:', toolPill);
-          parts.push(toolPill);
-          processedTools.add(toolId);
-        } else {
-          // Fallback: show basic tool info even without complete data
-          parts.push({
-            type: 'tool',
-            content: '',
-            toolName: toolName,
-            toolId: toolId,
-            input: undefined,
-            result: undefined,
-            isCompleted: false
-          });
-          processedTools.add(toolId);
-        }
+        processedTools.add(toolId);
+      } else {
+        // Fallback: show basic tool info even without complete data
+        parts.push({
+          type: 'tool',
+          content: '',
+          toolName: toolName,
+          toolId: toolId,
+          input: undefined,
+          result: undefined,
+          isCompleted: false
+        });
+        processedTools.add(toolId);
       }
+    }
 
       lastIndex = start + fullMatch.length;
     }
-    console.groupEnd();
 
     // Add remaining text
     if (lastIndex < processedText.length) {
@@ -306,11 +274,6 @@ export const MessageRenderer: React.FC<MessageRendererProps> = ({
         parts.push({ type: 'text', content: textContent });
       }
     }
-
-    // Log final parsed content
-    console.group('Final Parsed Content');
-    console.log('Parts:', parts);
-    console.groupEnd();
 
     return parts;
   };

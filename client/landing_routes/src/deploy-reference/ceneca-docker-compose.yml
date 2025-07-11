@@ -1,45 +1,38 @@
-version: '3'
+version: '3.8'
 
-[object Object]:
-
-  ceneca:
-    image: ceneca/agent:latest
+services:
+  ceneca-agent:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    image: ceneca-agent:latest
+    container_name: ceneca-agent
     ports:
-      - 8080:8080
+      - "8787:8787"
+    volumes:
+      - ./config.yaml:/root/.data-connector/config.yaml
     environment:
-      - POSTGRES_URI=${POSTGRES_URI}
-      - MONGO_URI=${MONGO_URI}
-      - GA4_ID=${GA4_ID}
-      - GA4_API_SECRET=${GA4_API_SECRET}
-      - LLM_PROVIDER=chatgpt
-      - LLM_MODEL=gpt-4.1
-      - LOG_LEVEL=info
-    [object Object]:
-      - ceneca-data:/data
+      - AGENT_PORT=8787
+      - LLM_API_KEY=${LLM_API_KEY}
+    restart: unless-stopped
+    networks:
+      - ceneca-network
+      # Uncomment and modify to join your existing networks
+      - data-connector_connector-network
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    # Optional: Add host mappings if needed for DNS resolution
+    # extra_hosts:
+    #   - "db-postgres.internal:192.168.1.100"
+    #   - "db-mongo.internal:192.168.1.101"
+    #   - "db-qdrant.internal:192.168.1.102"
 
-  postgres:
-    image: postgres:13
-    environment:
-      - ceneca=ceneca
-      - ceneca=ceneca
-      - changeme=${changeme}
-    [object Object]:
-      - postgres-data:/var/lib/postgresql/data
-
-  mongo:
-    image: mongo:4.4
-    environment:
-      - MONGO_INITDB_DATABASE=ceneca
-      - MONGO_INITDB_ROOT_USERNAME=ceneca
-      - MONGO_INITDB_ROOT_PASSWORD=${MONGO_PASSWORD}
-    [object Object]:
-      - mongo-data:/data/db
-
-[object Object]:
-  ceneca-data:
-  postgres-data:
-  mongo-data:
-
-[object Object]:
-  default:
-    name: ceneca-network
+networks:
+  ceneca-network:
+    driver: bridge
+  # Uncomment and modify to reference your existing networks
+  data-connector_connector-network:
+    external: true 
