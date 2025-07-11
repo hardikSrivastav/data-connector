@@ -398,19 +398,40 @@ class BedrockToolsAgent {
   }
 
   async executeTools(toolCalls) {
+    const executionStartTime = Date.now();
     const toolResults = [];
     
-    for (const toolCall of toolCalls) {
+    console.log(`🚀 [BEDROCK_AGENT] Starting tool execution batch:`, {
+      totalTools: toolCalls.length,
+      tools: toolCalls.map(tc => ({ name: tc.name, id: tc.id })),
+      timestamp: new Date().toISOString()
+    });
+    
+    for (let i = 0; i < toolCalls.length; i++) {
+      const toolCall = toolCalls[i];
+      const toolStartTime = Date.now();
+      
       try {
-        console.log(`Executing tool: ${toolCall.name}`, toolCall.input);
+        console.log(`🔧 [BEDROCK_AGENT] Executing tool ${i + 1}/${toolCalls.length}:`, {
+          name: toolCall.name,
+          id: toolCall.id,
+          inputType: typeof toolCall.input,
+          inputLength: JSON.stringify(toolCall.input).length
+        });
         
         // Find the corresponding tool
         const tool = this.tools.find(t => t.name === toolCall.name);
         if (!tool) {
+          const errorMsg = `Error: Tool ${toolCall.name} not found`;
+          console.error(`❌ [BEDROCK_AGENT] Tool not found:`, {
+            toolName: toolCall.name,
+            availableTools: this.tools.map(t => t.name)
+          });
+          
           toolResults.push({
             type: 'tool_result',
             tool_use_id: toolCall.id,
-            content: `Error: Tool ${toolCall.name} not found`
+            content: errorMsg
           });
           continue;
         }
@@ -428,14 +449,38 @@ class BedrockToolsAgent {
           toolInput = JSON.stringify(toolCall.input);
         }
         
-        console.log(`Tool ${toolCall.name} input:`, toolInput);
+        console.log(`📤 [BEDROCK_AGENT] Tool input prepared:`, {
+          tool: toolCall.name,
+          id: toolCall.id,
+          inputLength: toolInput.length,
+          inputPreview: toolInput.substring(0, 100) + (toolInput.length > 100 ? '...' : '')
+        });
+        
+        // Execute the tool
         const result = await tool._call(toolInput);
-        console.log(`Tool ${toolCall.name} result length:`, result ? result.length : 0);
+        const toolDuration = Date.now() - toolStartTime;
+        
+        console.log(`📥 [BEDROCK_AGENT] Tool execution completed:`, {
+          tool: toolCall.name,
+          id: toolCall.id,
+          duration: `${toolDuration}ms`,
+          resultLength: result ? result.length : 0,
+          resultPreview: result ? result.substring(0, 200) + (result.length > 200 ? '...' : '') : 'null'
+        });
         
         // Truncate very long results to prevent token overflow
         let truncatedResult = result;
+        let wasTruncated = false;
         if (result && result.length > 10000) {
           truncatedResult = result.substring(0, 10000) + '\n...[Result truncated to prevent token overflow]';
+          wasTruncated = true;
+          
+          console.log(`✂️  [BEDROCK_AGENT] Result truncated:`, {
+            tool: toolCall.name,
+            id: toolCall.id,
+            originalLength: result.length,
+            truncatedLength: truncatedResult.length
+          });
         }
         
         toolResults.push({
@@ -444,8 +489,26 @@ class BedrockToolsAgent {
           content: truncatedResult || ''
         });
         
+        console.log(`✅ [BEDROCK_AGENT] Tool result prepared:`, {
+          tool: toolCall.name,
+          id: toolCall.id,
+          duration: `${toolDuration}ms`,
+          success: true,
+          resultLength: truncatedResult ? truncatedResult.length : 0,
+          wasTruncated: wasTruncated
+        });
+        
       } catch (error) {
-        console.error(`Error executing tool ${toolCall.name}:`, error);
+        const toolDuration = Date.now() - toolStartTime;
+        
+        console.error(`❌ [BEDROCK_AGENT] Tool execution failed:`, {
+          tool: toolCall.name,
+          id: toolCall.id,
+          duration: `${toolDuration}ms`,
+          error: error.message,
+          stack: error.stack
+        });
+        
         toolResults.push({
           type: 'tool_result',
           tool_use_id: toolCall.id,
@@ -453,6 +516,22 @@ class BedrockToolsAgent {
         });
       }
     }
+    
+    const totalDuration = Date.now() - executionStartTime;
+    
+    console.log(`🏁 [BEDROCK_AGENT] Tool execution batch completed:`, {
+      totalTools: toolCalls.length,
+      successfulTools: toolResults.filter(r => !r.content.startsWith('Error')).length,
+      failedTools: toolResults.filter(r => r.content.startsWith('Error')).length,
+      totalDuration: `${totalDuration}ms`,
+      averageDuration: `${Math.round(totalDuration / toolCalls.length)}ms`,
+      toolSummary: toolResults.map((result, i) => ({
+        tool: toolCalls[i].name,
+        id: toolCalls[i].id,
+        success: !result.content.startsWith('Error'),
+        resultLength: result.content.length
+      }))
+    });
     
     return toolResults;
   }

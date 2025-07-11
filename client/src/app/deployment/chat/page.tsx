@@ -7,7 +7,7 @@ import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
 import { toast } from "sonner";
-import { Send, Bot, User, FileText, Database, Shield, Settings, CheckCircle, Menu, RotateCcw } from "lucide-react";
+import { Send, Bot, User, FileText, Database, Shield, Settings, CheckCircle, Menu, RotateCcw, ChevronDown, ChevronRight, Copy } from "lucide-react";
 import { Navbar } from "@/components/navbar";
 import Image from "next/image";
 import { MessageRenderer } from "@/components/message-renderer";
@@ -41,6 +41,9 @@ interface DeploymentFile {
   fieldsTotal: number;
   fieldsCompleted: number;
   missingFields: string[];
+  content?: string;
+  category?: string;
+  description?: string;
 }
 
 interface ProgressStep {
@@ -48,6 +51,222 @@ interface ProgressStep {
   label: string;
   completed: boolean;
   current: boolean;
+}
+
+// Enhanced Files Sidebar Component
+interface EnhancedFilesSidebarProps {
+  isOpen: boolean;
+  onClose: () => void;
+  realDeploymentFiles: DeploymentFile[];
+  deploymentFiles: DeploymentFile[];
+  deploymentProgress: number;
+  filesLoading: boolean;
+  onRefresh: () => void;
+}
+
+function EnhancedFilesSidebar({ 
+  isOpen, 
+  onClose, 
+  realDeploymentFiles, 
+  deploymentFiles, 
+  deploymentProgress, 
+  filesLoading,
+  onRefresh 
+}: EnhancedFilesSidebarProps) {
+  const [expandedFiles, setExpandedFiles] = useState<Set<string>>(new Set());
+  const [selectedCategory, setSelectedCategory] = useState<string>('all');
+
+  // Use real deployment files if available, otherwise use sample files
+  const filesToShow = realDeploymentFiles.length > 0 ? realDeploymentFiles : deploymentFiles;
+
+  const toggleFileExpansion = (fileName: string) => {
+    const newExpanded = new Set(expandedFiles);
+    if (newExpanded.has(fileName)) {
+      newExpanded.delete(fileName);
+    } else {
+      newExpanded.add(fileName);
+    }
+    setExpandedFiles(newExpanded);
+  };
+
+  const copyToClipboard = (content: string) => {
+    navigator.clipboard.writeText(content);
+    toast.success("Copied to clipboard!");
+  };
+
+  // Group files by category
+  const categories = [...new Set(filesToShow.map(f => f.category || 'Other'))];
+  const filteredFiles = selectedCategory === 'all' 
+    ? filesToShow 
+    : filesToShow.filter(f => f.category === selectedCategory);
+
+  const getFileIcon = (fileName: string) => {
+    if (fileName.endsWith('.yml') || fileName.endsWith('.yaml')) return '🐳';
+    if (fileName.endsWith('.conf')) return '⚙️';
+    if (fileName.endsWith('.sh')) return '📜';
+    if (fileName.endsWith('.env')) return '🔐';
+    if (fileName.endsWith('.json')) return '📋';
+    return '📄';
+  };
+
+  const getLanguageFromFileName = (fileName: string) => {
+    if (fileName.endsWith('.yml') || fileName.endsWith('.yaml')) return 'yaml';
+    if (fileName.endsWith('.conf')) return 'nginx';
+    if (fileName.endsWith('.sh')) return 'bash';
+    if (fileName.endsWith('.env')) return 'bash';
+    if (fileName.endsWith('.json')) return 'json';
+    return 'text';
+  };
+
+  return (
+    <div className="fixed left-0 top-0 h-full w-96 bg-white border-r border-gray-200 shadow-lg z-40 flex flex-col">
+      {/* Header */}
+      <div className="p-4 border-b border-gray-200 flex-shrink-0">
+        <div className="flex items-center justify-between">
+          <h3 className="text-lg font-medium font-baskerville">Deployment Package</h3>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={onRefresh}
+              className="text-gray-400 hover:text-blue-600 transition-colors"
+              title="Refresh files from backend"
+            >
+              🔄
+            </button>
+            <button
+              onClick={onClose}
+              className="text-gray-400 hover:text-gray-600 transition-colors"
+            >
+              ✕
+            </button>
+          </div>
+        </div>
+        <div className="text-sm text-gray-600 mt-1 font-baskerville">
+          {realDeploymentFiles.length > 0 ? 
+            `${realDeploymentFiles.length} Real Files` : 
+            deploymentProgress > 0 ? `${deploymentProgress.toFixed(0)}% Complete` : 'Loading...'
+          }
+        </div>
+        
+        {/* Loading indicator */}
+        {filesLoading && (
+          <div className="mt-2 flex items-center gap-2">
+            <div className="w-2 h-2 bg-[#7b35b8] rounded-full animate-bounce"></div>
+            <div className="w-2 h-2 bg-[#7b35b8] rounded-full animate-bounce" style={{animationDelay: '0.1s'}}></div>
+            <div className="w-2 h-2 bg-[#7b35b8] rounded-full animate-bounce" style={{animationDelay: '0.2s'}}></div>
+            <span className="text-xs text-gray-500 font-baskerville">Loading files...</span>
+          </div>
+        )}
+        
+        {/* Category Filter */}
+        {filesToShow.length > 0 && (
+          <div className="mt-3">
+            <select 
+              value={selectedCategory}
+              onChange={(e) => setSelectedCategory(e.target.value)}
+              className="w-full text-sm border border-gray-300 rounded-md px-2 py-1 font-baskerville"
+            >
+              <option value="all">All Files ({filesToShow.length})</option>
+              {categories.map(category => (
+                <option key={category} value={category}>
+                  {category} ({filesToShow.filter(f => f.category === category).length})
+                </option>
+              ))}
+            </select>
+          </div>
+        )}
+      </div>
+
+      {/* Files List */}
+      <div className="flex-1 overflow-y-auto">
+        {filesToShow.length === 0 ? (
+          <div className="p-4 text-center text-gray-500 font-baskerville">
+            {filesLoading ? 'Loading deployment files...' : 'No deployment files available'}
+          </div>
+        ) : (
+          <div className="p-4 space-y-3">
+            {filteredFiles.map((file, index) => (
+              <div key={index} className="border border-gray-200 rounded-lg overflow-hidden">
+                {/* File Header */}
+                <div 
+                  className="p-3 bg-gray-50 cursor-pointer hover:bg-gray-100 transition-colors"
+                  onClick={() => toggleFileExpansion(file.name)}
+                >
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <span className="text-lg">{getFileIcon(file.name)}</span>
+                      <div>
+                        <div className="font-medium text-sm font-baskerville">{file.name}</div>
+                        {file.description && (
+                          <div className="text-xs text-gray-600 font-baskerville">{file.description}</div>
+                        )}
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <div className={`w-3 h-3 rounded-full ${
+                        file.status === 'completed' ? 'bg-green-500' :
+                        file.status === 'in_progress' ? 'bg-yellow-500' :
+                        'bg-gray-300'
+                      }`} />
+                      {expandedFiles.has(file.name) ? 
+                        <ChevronDown className="h-4 w-4" /> : 
+                        <ChevronRight className="h-4 w-4" />
+                      }
+                    </div>
+                  </div>
+                  
+                  {/* Progress Bar */}
+                  <div className="mt-2">
+                    <div className="flex justify-between text-xs text-gray-600 font-baskerville">
+                      <span>{file.fieldsCompleted}/{file.fieldsTotal} fields</span>
+                      <span>{Math.round((file.fieldsCompleted / file.fieldsTotal) * 100)}%</span>
+                    </div>
+                    <div className="w-full bg-gray-200 rounded-full h-1.5 mt-1">
+                      <div 
+                        className="bg-purple-600 h-1.5 rounded-full transition-all duration-300"
+                        style={{ width: `${(file.fieldsCompleted / file.fieldsTotal) * 100}%` }}
+                      />
+                    </div>
+                  </div>
+                </div>
+
+                {/* File Content */}
+                {expandedFiles.has(file.name) && file.content && (
+                  <div className="border-t border-gray-200">
+                    <div className="p-3 bg-gray-900 text-white">
+                      <div className="flex items-center justify-between mb-2">
+                        <span className="text-xs font-mono text-gray-400">
+                          {getLanguageFromFileName(file.name)}
+                        </span>
+                        <button
+                          onClick={() => copyToClipboard(file.content!)}
+                          className="text-gray-400 hover:text-white transition-colors"
+                          title="Copy to clipboard"
+                        >
+                          <Copy className="h-4 w-4" />
+                        </button>
+                      </div>
+                      <pre className="text-xs overflow-x-auto whitespace-pre-wrap font-mono leading-relaxed max-h-96 overflow-y-auto">
+                        <code>{file.content}</code>
+                      </pre>
+                    </div>
+                    
+                    {file.missingFields.length > 0 && (
+                      <div className="p-3 bg-red-50 border-t border-red-200">
+                        <div className="text-xs text-red-700 font-baskerville font-medium mb-1">Missing Fields:</div>
+                        <div className="text-xs text-red-600 font-baskerville">
+                          {file.missingFields.join(', ')}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  );
 }
 
 export default function ChatDeploymentPage() {
@@ -69,6 +288,8 @@ export default function ChatDeploymentPage() {
   const [deploymentProgress, setDeploymentProgress] = useState(0);
   const [deploymentFiles, setDeploymentFiles] = useState<DeploymentFile[]>([]);
   const [showFilesSidebar, setShowFilesSidebar] = useState(false);
+  const [realDeploymentFiles, setRealDeploymentFiles] = useState<DeploymentFile[]>([]);
+  const [filesLoading, setFilesLoading] = useState(false);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
@@ -76,6 +297,42 @@ export default function ChatDeploymentPage() {
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, streamingContent]);
+
+  // Fetch real deployment files from backend
+  const fetchDeploymentFiles = async () => {
+    setFilesLoading(true);
+    try {
+      const backendUrl = process.env.NODE_ENV === 'production' 
+        ? 'http://localhost:3001/api/chat/deployment-files'
+        : 'http://localhost:3001/api/chat/deployment-files';
+        
+      const response = await fetch(backendUrl, {
+        method: 'GET',
+        headers: {
+          'Content-Type': 'application/json',
+        }
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        if (data.success && data.data.files) {
+          setRealDeploymentFiles(data.data.files);
+          console.log('Loaded real deployment files:', data.data.files.length);
+        }
+      } else {
+        console.error('Failed to fetch deployment files');
+      }
+    } catch (error) {
+      console.error('Error fetching deployment files:', error);
+    } finally {
+      setFilesLoading(false);
+    }
+  };
+
+  // Load deployment files on component mount
+  useEffect(() => {
+    fetchDeploymentFiles();
+  }, []);
 
   // Restore conversation from localStorage on component mount
   useEffect(() => {
@@ -786,54 +1043,16 @@ export default function ChatDeploymentPage() {
       )}
 
       {/* Files Sidebar */}
-      {showFilesSidebar && deploymentFiles.length > 0 && (
-        <div className="fixed left-0 top-0 h-full w-80 bg-white border-r border-gray-200 shadow-lg z-40 overflow-y-auto">
-          <div className="p-4 border-b border-gray-200">
-            <div className="flex items-center justify-between">
-              <h3 className="text-lg font-medium font-baskerville">Deployment Files</h3>
-              <button
-                onClick={() => setShowFilesSidebar(false)}
-                className="text-gray-400 hover:text-gray-600"
-              >
-                ✕
-              </button>
-            </div>
-            <div className="text-sm text-gray-600 mt-1 font-baskerville">
-              {deploymentProgress.toFixed(0)}% Complete
-            </div>
-          </div>
-          <div className="p-4 space-y-3">
-            {deploymentFiles.map((file, index) => (
-              <div key={index} className="border border-gray-200 rounded-lg p-3">
-                <div className="flex items-center justify-between mb-2">
-                  <span className="font-medium text-sm font-baskerville">{file.name}</span>
-                  <div className={`w-3 h-3 rounded-full ${
-                    file.status === 'completed' ? 'bg-green-500' :
-                    file.status === 'in_progress' ? 'bg-yellow-500' :
-                    'bg-gray-300'
-                  }`} />
-                </div>
-                <div className="text-xs text-gray-600 mb-1 font-baskerville">
-                  {file.fieldsCompleted}/{file.fieldsTotal} fields completed
-                </div>
-                <div className="w-full bg-gray-200 rounded-full h-1.5">
-                  <div 
-                    className="bg-purple-600 h-1.5 rounded-full transition-all duration-300"
-                    style={{ width: `${(file.fieldsCompleted / file.fieldsTotal) * 100}%` }}
-                  />
-                </div>
-                {file.missingFields.length > 0 && (
-                  <div className="mt-2">
-                    <div className="text-xs text-gray-500 font-baskerville">Missing:</div>
-                    <div className="text-xs text-red-600 font-baskerville">
-                      {file.missingFields.join(', ')}
-                    </div>
-                  </div>
-                )}
-              </div>
-            ))}
-          </div>
-        </div>
+      {showFilesSidebar && (
+                 <EnhancedFilesSidebar 
+           isOpen={showFilesSidebar}
+           onClose={() => setShowFilesSidebar(false)}
+           realDeploymentFiles={realDeploymentFiles}
+           deploymentFiles={deploymentFiles}
+           deploymentProgress={deploymentProgress}
+           filesLoading={filesLoading}
+           onRefresh={fetchDeploymentFiles}
+         />
       )}
 
       {/* Progress Bar */}
@@ -877,10 +1096,6 @@ export default function ChatDeploymentPage() {
 
           {/* Input Area - Large and Centered with Progress Border */}
           <div className="w-full max-w-2xl relative">
-            <div 
-              style={deploymentProgress > 0 ? getBorderStyle(deploymentProgress) : {}}
-              className="rounded-2xl"
-            >
               <textarea
                 value={currentMessage}
                 onChange={(e) => setCurrentMessage(e.target.value)}
@@ -890,7 +1105,6 @@ export default function ChatDeploymentPage() {
                 disabled={isLoading || isStreaming}
                 rows={3}
               />
-            </div>
             <Button 
               onClick={sendMessage}
               disabled={isLoading || isStreaming || !currentMessage.trim()}
@@ -908,6 +1122,17 @@ export default function ChatDeploymentPage() {
               <div className="w-2 h-2 bg-[#7b35b8] rounded-full animate-bounce" style={{animationDelay: '0.2s'}}></div>
             </div>
           )}
+
+          {/* Files button - visible in initial state */}
+          <div className="fixed bottom-6 right-6 flex flex-col gap-3 z-10">
+            <button
+              onClick={() => setShowFilesSidebar(!showFilesSidebar)}
+              className={`w-12 h-12 ${showFilesSidebar ? 'bg-purple-100 border-purple-300' : 'bg-gray-50 border-gray-200'} hover:bg-purple-100 border hover:border-purple-300 rounded-full flex items-center justify-center shadow-lg transition-all duration-200`}
+              title="View deployment files"
+            >
+              <FileText className={`h-5 w-5 ${showFilesSidebar ? 'text-purple-600' : 'text-gray-600'}`} />
+            </button>
+          </div>
         </div>
       ) : (
         /* Conversation state - full height layout */
@@ -1026,10 +1251,7 @@ export default function ChatDeploymentPage() {
             isToolSidebarOpen ? 'mr-96' : ''
           } ${showFilesSidebar ? 'ml-80' : ''}`}>
             <div className="max-w-5xl mx-auto relative" style={{width: '80%'}}>
-              <div 
-                style={deploymentProgress > 0 ? getBorderStyle(deploymentProgress) : {}}
-                className="rounded-2xl"
-              >
+              
                 <textarea
                   value={currentMessage}
                   onChange={(e) => setCurrentMessage(e.target.value)}
@@ -1039,7 +1261,7 @@ export default function ChatDeploymentPage() {
                   disabled={isLoading || isStreaming}
                   rows={2}
                 />
-              </div>
+              
               <Button 
                 onClick={sendMessage}
                 disabled={isLoading || isStreaming || !currentMessage.trim()}
@@ -1052,16 +1274,14 @@ export default function ChatDeploymentPage() {
 
           {/* Logo button and Files toggle - Bottom Right */}
           <div className="fixed bottom-6 right-6 flex flex-col gap-3 z-10">
-            {/* Files toggle button */}
-            {deploymentFiles.length > 0 && (
-              <button
-                onClick={() => setShowFilesSidebar(!showFilesSidebar)}
-                className={`w-12 h-12 ${showFilesSidebar ? 'bg-purple-100 border-purple-300' : 'bg-gray-50 border-gray-200'} hover:bg-purple-100 border hover:border-purple-300 rounded-full flex items-center justify-center shadow-lg transition-all duration-200`}
-                title="View deployment files"
-              >
-                <FileText className={`h-5 w-5 ${showFilesSidebar ? 'text-purple-600' : 'text-gray-600'}`} />
-              </button>
-            )}
+            {/* Files toggle button - always visible */}
+            <button
+              onClick={() => setShowFilesSidebar(!showFilesSidebar)}
+              className={`w-12 h-12 ${showFilesSidebar ? 'bg-purple-100 border-purple-300' : 'bg-gray-50 border-gray-200'} hover:bg-purple-100 border hover:border-purple-300 rounded-full flex items-center justify-center shadow-lg transition-all duration-200`}
+              title="View deployment files"
+            >
+              <FileText className={`h-5 w-5 ${showFilesSidebar ? 'text-purple-600' : 'text-gray-600'}`} />
+            </button>
             
             {/* Reset button - only show when we have messages */}
             {messages.length > 0 && (

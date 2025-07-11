@@ -17,6 +17,9 @@ router.get('/conversation/:conversationId', chatController.getConversation);
 // Generate deployment files
 router.post('/generate-files', chatController.generateFiles);
 
+// Get deployment files for sidebar
+router.get('/deployment-files', chatController.getDeploymentFiles);
+
 // Download deployment package
 router.get('/download/:conversationId', chatController.downloadDeploymentPackage);
 

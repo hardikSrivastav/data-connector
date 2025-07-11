@@ -1038,6 +1038,156 @@ exports.downloadPackage = async (req, res) => {
 };
 
 /**
+ * Get deployment files with their content for the frontend sidebar
+ */
+exports.getDeploymentFiles = async (req, res) => {
+  try {
+    const { 
+      IntrospectFileTool, 
+      ListDeploymentFilesTool 
+    } = require('../services/langgraphTools');
+
+    // Get list of files
+    const listTool = new ListDeploymentFilesTool();
+    const listResult = await listTool._call('{}');
+    
+    // Parse the file list
+    const fileLines = listResult.split('\n').filter(line => line.startsWith('- '));
+    const fileNames = fileLines.map(line => line.replace('- ', '').trim());
+    
+    // Get content for each file
+    const introspectTool = new IntrospectFileTool();
+    const deploymentFiles = [];
+    
+    for (const fileName of fileNames) {
+      try {
+        const fileContent = await introspectTool._call(`{"filePath": "${fileName}"}`);
+        
+        // Extract just the content part (after "Contents:")
+        const contentMatch = fileContent.match(/Contents:\n([\s\S]*)/);
+        const content = contentMatch ? contentMatch[1] : fileContent;
+        
+        // Determine file category and status
+        const category = getFileCategory(fileName);
+        const description = getFileDescription(fileName);
+        const { fieldsTotal, fieldsCompleted, missingFields } = analyzeFileCompletion(content);
+        
+        deploymentFiles.push({
+          name: fileName,
+          status: fieldsCompleted === fieldsTotal ? 'completed' : 
+                 fieldsCompleted > 0 ? 'in_progress' : 'not_started',
+          fieldsTotal,
+          fieldsCompleted,
+          missingFields,
+          content,
+          category,
+          description
+        });
+        
+      } catch (error) {
+        console.error(`Error reading file ${fileName}:`, error);
+        // Add file without content if there's an error
+        deploymentFiles.push({
+          name: fileName,
+          status: 'not_started',
+          fieldsTotal: 1,
+          fieldsCompleted: 0,
+          missingFields: ['File could not be read'],
+          content: `Error reading file: ${error.message}`,
+          category: getFileCategory(fileName),
+          description: getFileDescription(fileName)
+        });
+      }
+    }
+    
+    res.json({
+      success: true,
+      data: {
+        files: deploymentFiles,
+        totalFiles: deploymentFiles.length,
+        timestamp: new Date().toISOString()
+      }
+    });
+    
+  } catch (error) {
+    console.error('Error getting deployment files:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to get deployment files: ' + error.message
+    });
+  }
+};
+
+// Helper functions for file analysis
+function getFileCategory(fileName) {
+  if (fileName.includes('docker-compose')) return 'Docker Configuration';
+  if (fileName.startsWith('auth-config')) return 'Authentication';
+  if (fileName.includes('nginx')) return 'Nginx Configuration';
+  if (fileName.includes('install') || fileName.includes('generate')) return 'Installation Scripts';
+  if (fileName.includes('config.yaml')) return 'Database Configuration';
+  if (fileName.includes('.env')) return 'Environment Configuration';
+  return 'Other';
+}
+
+function getFileDescription(fileName) {
+  const descriptions = {
+    'config.yaml': 'Main Ceneca configuration file',
+    'auth-config.yaml': 'Authentication and SSO configuration',
+    'auth-config-google.yaml': 'Google OAuth configuration',
+    'auth-config-azure.yaml': 'Azure AD configuration', 
+    'auth-config-auth0.yaml': 'Auth0 configuration',
+    'ceneca-docker-compose.yml': 'Docker composition for development',
+    'enterprise-docker-compose.yml': 'Docker composition for production',
+    'install.sh': 'Installation script for development',
+    'enterprise-install.sh': 'Installation script for production',
+    'generate-ssl-cert.sh': 'SSL certificate generation script',
+    'build-and-publish.sh': 'Build and publish script'
+  };
+  return descriptions[fileName] || `Configuration file: ${fileName}`;
+}
+
+function analyzeFileCompletion(content) {
+  // Count placeholders that need to be filled
+  const placeholderPatterns = [
+    /\${[^}]+}/g,           // ${VARIABLE} patterns
+    /your[_-]?[a-zA-Z0-9_-]*/gi, // "your_something" patterns
+    /\b[A-Z_]+_HERE\b/g,   // SOMETHING_HERE patterns
+    /localhost/g,          // localhost (should be replaced in production)
+    /example\.com/g,       // example.com patterns
+    /changeme/gi,          // changeme patterns
+    /replace[_-]?this/gi   // replace_this patterns
+  ];
+  
+  let totalFields = 0;
+  let missingFields = [];
+  
+  for (const pattern of placeholderPatterns) {
+    const matches = content.match(pattern);
+    if (matches) {
+      totalFields += matches.length;
+      missingFields.push(...matches);
+    }
+  }
+  
+  // Remove duplicates
+  missingFields = [...new Set(missingFields)];
+  
+  // If no placeholders found, assume it's a complete file
+  if (totalFields === 0) {
+    totalFields = 1;
+  }
+  
+  // Calculate completion (inverse of missing fields)
+  const fieldsCompleted = Math.max(0, totalFields - missingFields.length);
+  
+  return {
+    fieldsTotal: totalFields,
+    fieldsCompleted,
+    missingFields: missingFields.slice(0, 5) // Limit to first 5 for display
+  };
+}
+
+/**
  * Health check for chat system
  */
 exports.healthCheck = async (req, res) => {
