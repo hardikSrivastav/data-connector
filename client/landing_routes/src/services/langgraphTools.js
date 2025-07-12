@@ -307,8 +307,38 @@ class EditFileTool extends Tool {
         modifiedContentPreview: modifiedContent.substring(0, 200) + (modifiedContent.length > 200 ? '...' : '')
       });
 
-      // Calculate duration and mark success
+      // Calculate duration and check if any replacements were made
       logContext.duration = Date.now() - editStartTime;
+      
+              // STRICT MODE: Throw error if no replacements were made
+        if (totalReplacements === 0) {
+          logContext.success = false;
+          logContext.error = 'No replacements made - placeholders not found';
+          
+          console.error(`❌ [EDIT_FILE] EDIT FAILED - No replacements made:`, {
+            file: filePath,
+            searchedPlaceholders: Object.keys(replacements),
+            totalReplacements: totalReplacements,
+            duration: `${logContext.duration}ms`,
+            suggestion: 'Check that placeholders exist in the file and match exactly'
+          });
+          
+          // Clean up backup if it was created but no changes were made
+          if (backup && backupPath) {
+            try {
+              await fs.unlink(backupPath);
+              console.log(`🗑️  [EDIT_FILE] Cleaned up unnecessary backup: ${backupPath}`);
+            } catch (cleanupError) {
+              console.warn(`⚠️  [EDIT_FILE] Could not clean up backup: ${cleanupError.message}`);
+            }
+          }
+          
+          // THROW actual error so frontend treats it as failed, not completed
+          const errorMessage = `No replacements made in ${filePath}. None of the placeholders [${Object.keys(replacements).join(', ')}] were found in the file. Please check the exact placeholder names and try again.`;
+          throw new Error(errorMessage);
+        }
+      
+      // Success case: At least one replacement was made
       logContext.success = true;
 
       const successMessage = `Successfully updated ${filePath}. Made ${totalReplacements} replacements.${backup ? ' Backup created.' : ''}`;
@@ -328,18 +358,32 @@ class EditFileTool extends Tool {
 
       return successMessage;
 
-    } catch (parseError) {
-      logContext.error = `Parse error: ${parseError.message}`;
+    } catch (error) {
       logContext.duration = Date.now() - editStartTime;
       
-      console.error(`❌ [EDIT_FILE] Parse error:`, {
-        error: parseError.message,
-        duration: `${logContext.duration}ms`,
-        rawInput: input.substring(0, 200) + (input.length > 200 ? '...' : ''),
-        context: logContext
-      });
-      
-      return `Error parsing input: ${parseError.message}. Expected JSON with filePath and replacements properties.`;
+      // Check if this is our custom "no replacements" error
+      if (error.message.includes('None of the placeholders')) {
+        // This is our intentional failure - re-throw as is
+        logContext.error = error.message;
+        console.error(`❌ [EDIT_FILE] Tool execution failed:`, {
+          error: error.message,
+          duration: `${logContext.duration}ms`,
+          context: logContext
+        });
+        throw error; // Re-throw to let the frontend handle it properly
+      } else {
+        // This is a real parse/system error
+        logContext.error = `Parse error: ${error.message}`;
+        
+        console.error(`❌ [EDIT_FILE] Parse error:`, {
+          error: error.message,
+          duration: `${logContext.duration}ms`,
+          rawInput: input.substring(0, 200) + (input.length > 200 ? '...' : ''),
+          context: logContext
+        });
+        
+        return `Error parsing input: ${error.message}. Expected JSON with filePath and replacements properties.`;
+      }
     } finally {
       // Always log the final context for debugging
       console.log(`📋 [EDIT_FILE] Final operation context:`, logContext);

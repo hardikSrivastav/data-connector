@@ -6,7 +6,7 @@ default_database: postgres
 
 # PostgreSQL configuration
 postgres:
-  uri: "postgresql://user:password@your-postgres-host:5432/your_database"
+  uri: "postgresql://{{ POSTGRES_USERNAME }}:{{ POSTGRES_PASSWORD }}@{{ POSTGRES_HOST }}:5432/{{ POSTGRES_DATABASE }}"
   pool:
     max_connections: 10
     min_connections: 2
@@ -14,14 +14,14 @@ postgres:
 
 # MongoDB configuration
 mongodb:
-  uri: "mongodb://user:password@your-mongodb-host:27017/your_database?authSource=admin"
+  uri: "mongodb://{{ MONGODB_USERNAME }}:{{ MONGODB_PASSWORD }}@{{ MONGODB_HOST }}:27017/{{ MONGODB_DATABASE }}?authSource=admin"
   pool_size: 10
   connect_timeout_ms: 5000
 
 # Qdrant vector database configuration
 qdrant:
-  uri: "http://your-qdrant-host:6333"
-  api_key: "your-qdrant-api-key-if-needed"  # Optional
+  uri: "http://{{ QDRANT_HOST }}:6333"
+  api_key: "{{ QDRANT_API_KEY }}"  # Optional
 
 # LLM configuration
 llm:

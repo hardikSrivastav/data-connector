@@ -6,12 +6,12 @@ sso:
   # Azure AD Configuration
   oidc:
     provider: "azure"
-    client_id: "your-azure-application-id"
-    client_secret: "your-azure-client-secret"
-    # Replace {tenant-id} with your Azure AD tenant ID
-    issuer: "https://login.microsoftonline.com/{tenant-id}/v2.0"
-    discovery_url: "https://login.microsoftonline.com/{tenant-id}/v2.0/.well-known/openid-configuration"
-    redirect_uri: "https://your-ceneca-domain.com/authorization-code/callback"
+    client_id: "{{ AZURE_CLIENT_ID }}"
+    client_secret: "{{ AZURE_CLIENT_SECRET }}"
+    # Replace {{ AZURE_TENANT_ID }} with your Azure AD tenant ID
+    issuer: "https://login.microsoftonline.com/{{ AZURE_TENANT_ID }}/v2.0"
+    discovery_url: "https://login.microsoftonline.com/{{ AZURE_TENANT_ID }}/v2.0/.well-known/openid-configuration"
+    redirect_uri: "https://{{ YOUR_DOMAIN }}/authorization-code/callback"
     scopes: ["openid", "email", "profile", "Group.Read.All"]
     # Azure AD specific claim mappings
     claims_mapping:
@@ -22,7 +22,7 @@ sso:
 # Role mappings from Azure AD groups to Ceneca roles
 role_mappings:
   # Azure AD group object IDs or display names
-  "a1b2c3d4-e5f6-7890-abcd-ef1234567890": "admin"  # IT Admins group ID
+  "{{ AZURE_ADMIN_GROUP_ID }}": "admin"  # IT Admins group ID
   "Data Analysts": "analyst"  # Group display name
   "HR Team": "hr_read"
   "Finance Team": "finance_read" 

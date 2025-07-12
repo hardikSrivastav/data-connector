@@ -6,11 +6,11 @@ sso:
   # OIDC Configuration
   oidc:
     provider: "okta"
-    client_id: "0oaou6yw57ar5DgXn5d7"
-    client_secret: "gajT7kLkUb5GkMf3dGa9bzBli714jvtfXt3GEkewJIbhSd8jfTnsFTQjmEqoSopM"
-    issuer: "https://dev-21824006.okta.com"
-    discovery_url: "https://dev-21824006.okta.com/.well-known/openid-configuration"
-    redirect_uri: "https://ceneca.local/authorization-code/callback"
+    client_id: "{{ OKTA_CLIENT_ID }}"
+    client_secret: "{{ OKTA_CLIENT_SECRET }}"
+    issuer: "https://{{ OKTA_DOMAIN }}"
+    discovery_url: "https://{{ OKTA_DOMAIN }}/.well-known/openid-configuration"
+    redirect_uri: "https://{{ YOUR_DOMAIN }}/authorization-code/callback"
     scopes: ["openid", "email", "profile", "groups"]
     # Map claims to user attributes
     claims_mapping:

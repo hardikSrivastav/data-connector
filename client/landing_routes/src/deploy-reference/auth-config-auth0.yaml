@@ -6,12 +6,12 @@ sso:
   # Auth0 Configuration
   oidc:
     provider: "auth0"
-    client_id: "your-auth0-client-id"
-    client_secret: "your-auth0-client-secret"
-    # Replace {domain} with your Auth0 domain
-    issuer: "https://{domain}.auth0.com/"
-    discovery_url: "https://{domain}.auth0.com/.well-known/openid-configuration"
-    redirect_uri: "https://your-ceneca-domain.com/authorization-code/callback"
+    client_id: "{{ AUTH0_CLIENT_ID }}"
+    client_secret: "{{ AUTH0_CLIENT_SECRET }}"
+    # Replace {{ AUTH0_DOMAIN }} with your Auth0 domain
+    issuer: "https://{{ AUTH0_DOMAIN }}.auth0.com/"
+    discovery_url: "https://{{ AUTH0_DOMAIN }}.auth0.com/.well-known/openid-configuration"
+    redirect_uri: "https://{{ YOUR_DOMAIN }}/authorization-code/callback"
     scopes: ["openid", "email", "profile", "read:current_user"]
     # Auth0 specific claim mappings
     claims_mapping:

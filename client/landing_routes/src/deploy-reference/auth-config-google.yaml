@@ -6,11 +6,11 @@ sso:
   # Google Workspace Configuration
   oidc:
     provider: "google"
-    client_id: "your-google-client-id.apps.googleusercontent.com"
-    client_secret: "your-google-client-secret"
+    client_id: "{{ GOOGLE_CLIENT_ID }}.apps.googleusercontent.com"
+    client_secret: "{{ GOOGLE_CLIENT_SECRET }}"
     issuer: "https://accounts.google.com"
     discovery_url: "https://accounts.google.com/.well-known/openid-configuration"
-    redirect_uri: "https://your-ceneca-domain.com/authorization-code/callback"
+    redirect_uri: "https://{{ YOUR_DOMAIN }}/authorization-code/callback"
     scopes: ["openid", "email", "profile", "https://www.googleapis.com/auth/admin.directory.group.readonly"]
     # Google specific claim mappings
     claims_mapping:
@@ -21,7 +21,7 @@ sso:
 # Role mappings from Google groups to Ceneca roles
 role_mappings:
   # Google group email addresses
-  "data-analysts@yourcompany.com": "analyst"
-  "hr-team@yourcompany.com": "hr_read"
-  "finance-team@yourcompany.com": "finance_read"
-  "it-admins@yourcompany.com": "admin" 
+  "data-analysts@{{ COMPANY_DOMAIN }}": "analyst"
+  "hr-team@{{ COMPANY_DOMAIN }}": "hr_read"
+  "finance-team@{{ COMPANY_DOMAIN }}": "finance_read"
+  "it-admins@{{ COMPANY_DOMAIN }}": "admin" 

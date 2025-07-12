@@ -125,6 +125,17 @@ export const MessageRenderer: React.FC<MessageRendererProps> = ({
       }
     };
 
+    // Helper function to safely parse JSON with better error handling
+    const safeParseJSON = (text: string): any => {
+      try {
+        return JSON.parse(text);
+      } catch (e) {
+        // If JSON parsing fails, try to extract readable content
+        console.warn('JSON parsing failed:', e, 'Text:', text);
+        return null;
+      }
+    };
+
     // Helper function to detect and parse progress JSON
     const parseProgressJSON = (content: string): { progress: number; deploymentFiles?: any[]; jsonMatch?: string } | null => {
       try {
@@ -156,17 +167,13 @@ export const MessageRenderer: React.FC<MessageRendererProps> = ({
         const jsonBlocks = findJsonBlocks(content);
         
         for (const block of jsonBlocks) {
-          try {
-            const parsed = JSON.parse(block);
-            if (parsed.deploymentProgress !== undefined) {
-              return {
-                progress: parsed.deploymentProgress,
-                deploymentFiles: parsed.deploymentFiles,
-                jsonMatch: block
-              };
-            }
-          } catch (e) {
-            // Continue to next block
+          const parsed = safeParseJSON(block);
+          if (parsed && parsed.deploymentProgress !== undefined) {
+            return {
+              progress: parsed.deploymentProgress,
+              deploymentFiles: parsed.deploymentFiles,
+              jsonMatch: block
+            };
           }
         }
       } catch (e) {
@@ -175,27 +182,56 @@ export const MessageRenderer: React.FC<MessageRendererProps> = ({
       return null;
     };
 
-    // Helper function to remove tool parameter JSON from text
+    // Helper function to remove tool parameter JSON from text with better handling
     const removeToolParameterJSON = (content: string): string => {
-      // Remove JSON blocks that look like tool parameters
+      // Remove JSON blocks that look like tool parameters, but be more careful about malformed JSON
       const toolParamPatterns = [
-        // Pattern for tool parameters like { "filePath": "...", "replacements": {...}, ... }
-        /\{\s*"filePath"[\s\S]*?\}\s*(?=\n|$)/g,
-        // Pattern for package tool parameters like { "packageName": "...", "includeBackups": ... }
-        /\{\s*"packageName"[\s\S]*?\}\s*(?=\n|$)/g,
-        // Pattern for general tool JSON parameters (more cautious)
-        /\{\s*"[^"]*":\s*"[^"]*"[\s\S]*?\}\s*(?=\n|$)/g
+        // Pattern for tool parameters - look for complete JSON blocks
+        /\{\s*"[^"]*"[\s\S]*?\}\s*(?=\n|$)/g,
       ];
       
       let cleaned = content;
-      for (const pattern of toolParamPatterns) {
-        cleaned = cleaned.replace(pattern, '').trim();
+      
+      // Try to find and remove complete JSON blocks more safely
+      let braceCount = 0;
+      let start = -1;
+      let i = 0;
+      const toRemove: Array<{start: number, end: number}> = [];
+      
+      while (i < content.length) {
+        if (content[i] === '{') {
+          if (braceCount === 0) {
+            start = i;
+          }
+          braceCount++;
+        } else if (content[i] === '}') {
+          braceCount--;
+          if (braceCount === 0 && start !== -1) {
+            const block = content.substring(start, i + 1);
+            // Check if this looks like a tool parameter block
+            if (block.includes('"filePath"') || 
+                block.includes('"packageName"') || 
+                block.includes('"target_file"') ||
+                block.includes('"query"') ||
+                block.includes('"command"')) {
+              toRemove.push({start, end: i + 1});
+            }
+            start = -1;
+          }
+        }
+        i++;
+      }
+      
+      // Remove blocks in reverse order to maintain indices
+      for (let j = toRemove.length - 1; j >= 0; j--) {
+        const {start, end} = toRemove[j];
+        cleaned = cleaned.slice(0, start) + cleaned.slice(end);
       }
       
       // Clean up multiple consecutive newlines
       cleaned = cleaned.replace(/\n\s*\n\s*\n/g, '\n\n');
       
-      return cleaned;
+      return cleaned.trim();
     };
 
     // First, check for progress JSON and replace it
@@ -341,6 +377,14 @@ export const MessageRenderer: React.FC<MessageRendererProps> = ({
                   pre: ({ children }) => {
                     // For block code, return the children directly (CodeBlock handles its own wrapper)
                     return <>{children}</>;
+                  },
+                  // Better handling for tool results that contain file contents
+                  blockquote: ({ children }) => {
+                    return (
+                      <div className="bg-gray-50 border-l-4 border-gray-300 pl-4 py-2 my-2 text-sm">
+                        <div className="font-mono whitespace-pre-wrap">{children}</div>
+                      </div>
+                    );
                   },
                 }}
               >

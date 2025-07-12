@@ -7,7 +7,7 @@ services:
       - ./auth-config.yaml:/root/.data-connector/auth-config.yaml
     environment:
       - AGENT_PORT=8787
-      - LLM_API_KEY=${LLM_API_KEY}
+      - LLM_API_KEY={{ LLM_API_KEY_VALUE }}
       - AUTH_ENABLED=true
     restart: unless-stopped
     networks:
@@ -20,10 +20,10 @@ services:
         max-size: "10m"
         max-file: "3"
     # Optional: Add host mappings if needed for DNS resolution
-    # extra_hosts:
-    #   - "db-postgres.internal:192.168.1.100"
-    #   - "db-mongo.internal:192.168.1.101"
-    #   - "db-qdrant.internal:192.168.1.102"
+    extra_hosts:
+      - "{{ POSTGRES_HOST }}:{{ POSTGRES_HOST_IP }}"
+      - "{{ MONGODB_HOST }}:{{ MONGODB_HOST_IP }}"
+      - "{{ QDRANT_HOST }}:{{ QDRANT_HOST_IP }}"
 
   nginx:
     image: nginx:latest

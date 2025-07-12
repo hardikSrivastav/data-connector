@@ -28,12 +28,49 @@ export const ToolDetailSidebar: React.FC<ToolDetailSidebarProps> = ({
 
   if (!toolDetail) return null;
 
-  const formatJSON = (str: string) => {
+  const formatContent = (str: string, isInput: boolean = false) => {
     try {
-      return JSON.stringify(JSON.parse(str), null, 2);
-    } catch {
+      // First try to parse as JSON for proper formatting
+      const parsed = JSON.parse(str);
+      return JSON.stringify(parsed, null, 2);
+    } catch (e) {
+      // If JSON parsing fails, check if this looks like file content
+      if (!isInput && str.includes('File:') && str.includes('Contents:')) {
+        // This looks like read_file output, format it nicely
+        const lines = str.split('\n');
+        const formatted = lines.map(line => {
+          if (line.startsWith('File:')) {
+            return `📁 ${line}`;
+          } else if (line.startsWith('Contents:')) {
+            return `📄 ${line}`;
+          }
+          return line;
+        }).join('\n');
+        return formatted;
+      }
+      
+      // For other content, try to detect if it's structured data
+      if (str.includes('{') || str.includes('[')) {
+        // This might be malformed JSON, try to clean it up for display
+        console.warn('Malformed JSON detected, displaying as-is:', e);
+        return `⚠️ Malformed JSON detected:\n\n${str}`;
+      }
+      
+      // Return as-is for plain text
       return str;
     }
+  };
+
+  const getContentClass = (content: string, isInput: boolean = false) => {
+    if (!isInput && content.includes('File:') && content.includes('Contents:')) {
+      return "text-xs text-gray-700 overflow-x-auto whitespace-pre-wrap max-h-64 overflow-y-auto";
+    }
+    
+    if (content.includes('⚠️ Malformed JSON')) {
+      return "text-xs text-red-600 overflow-x-auto whitespace-pre-wrap max-h-64 overflow-y-auto";
+    }
+    
+    return "text-xs text-gray-700 overflow-x-auto whitespace-pre-wrap max-h-64 overflow-y-auto";
   };
 
   const handleDownload = async () => {
@@ -142,10 +179,10 @@ export const ToolDetailSidebar: React.FC<ToolDetailSidebarProps> = ({
             {showInput && (
               <div className="mt-2 bg-gray-50 p-3 rounded">
                 <pre 
-                  className="text-xs text-gray-700 overflow-x-auto whitespace-pre-wrap"
+                  className={getContentClass(toolDetail.input, true)}
                   style={{ fontFamily: monospaceFont }}
                 >
-                  {formatJSON(toolDetail.input)}
+                  {formatContent(toolDetail.input, true)}
                 </pre>
               </div>
             )}
@@ -171,10 +208,10 @@ export const ToolDetailSidebar: React.FC<ToolDetailSidebarProps> = ({
             {showResult && (
               <div className="mt-2 bg-gray-50 p-3 rounded">
                 <pre 
-                  className="text-xs text-gray-700 overflow-x-auto whitespace-pre-wrap max-h-64 overflow-y-auto"
+                  className={getContentClass(toolDetail.result)}
                   style={{ fontFamily: monospaceFont }}
                 >
-                  {toolDetail.result}
+                  {formatContent(toolDetail.result)}
                 </pre>
               </div>
             )}
