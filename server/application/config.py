@@ -2,7 +2,7 @@
 Configuration utilities for the application.
 """
 from functools import lru_cache
-from pydantic import BaseSettings
+from pydantic_settings import BaseSettings
 import os
 import sys
 

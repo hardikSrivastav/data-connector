@@ -697,6 +697,174 @@ async def introspect_shopify(source_id: str, uri: str, version: str = "1.0.0"):
         logger.error(f"Error introspecting Shopify {source_id}: {str(e)}")
         raise
 
+async def introspect_uniware(source_id: str, uri: str, version: str = "1.0.0"):
+    """
+    Introspect Uniware API and store its schema in the registry
+    
+    Args:
+        source_id: Unique identifier for this data source
+        uri: Uniware API URI
+        version: Version for this data source
+    """
+    logger.info(f"Introspecting Uniware API: {source_id}")
+    
+    # Register the data source
+    upsert_data_source(source_id, uri, "uniware", version)
+    
+    try:
+        # Import the Uniware adapter
+        from ..adapters.uniware import UniwareAdapter
+        
+        # Create adapter instance
+        adapter = UniwareAdapter(uri)
+        
+        # Get schema documents from the adapter
+        schema_docs = await adapter.introspect_schema()
+        
+        logger.info(f"Retrieved {len(schema_docs)} schema documents from Uniware")
+        
+        # Process the schema documents and store them in the registry
+        for doc in schema_docs:
+            table_name = doc.get("name")
+            if table_name:
+                schema_dict = {
+                    "fields": doc.get("fields", {}),
+                    "description": doc.get("description", ""),
+                    "endpoints": doc.get("endpoints", [])
+                }
+                upsert_table_meta(source_id, table_name, schema_dict, version)
+                logger.info(f"  - Added table: {table_name}")
+    
+    except Exception as e:
+        logger.error(f"Error introspecting Uniware {source_id}: {str(e)}")
+        raise
+
+async def introspect_payu(source_id: str, uri: str, version: str = "1.0.0"):
+    """
+    Introspect PayU API and store its schema in the registry
+    
+    Args:
+        source_id: Unique identifier for this data source
+        uri: PayU API URI
+        version: Version for this data source
+    """
+    logger.info(f"Introspecting PayU API: {source_id}")
+    
+    # Register the data source
+    upsert_data_source(source_id, uri, "payu", version)
+    
+    try:
+        # Import the PayU adapter
+        from ..adapters.payu import PayUAdapter
+        
+        # Create adapter instance
+        adapter = PayUAdapter(uri)
+        
+        # Get schema documents from the adapter
+        schema_docs = await adapter.introspect_schema()
+        
+        logger.info(f"Retrieved {len(schema_docs)} schema documents from PayU")
+        
+        # Process the schema documents and store them in the registry
+        for doc in schema_docs:
+            table_name = doc.get("name")
+            if table_name:
+                schema_dict = {
+                    "fields": doc.get("fields", {}),
+                    "description": doc.get("description", ""),
+                    "endpoints": doc.get("endpoints", [])
+                }
+                upsert_table_meta(source_id, table_name, schema_dict, version)
+                logger.info(f"  - Added table: {table_name}")
+    
+    except Exception as e:
+        logger.error(f"Error introspecting PayU {source_id}: {str(e)}")
+        raise
+
+async def introspect_easebuzz(source_id: str, uri: str, version: str = "1.0.0"):
+    """
+    Introspect Easebuzz API and store its schema in the registry
+    
+    Args:
+        source_id: Unique identifier for this data source
+        uri: Easebuzz API URI
+        version: Version for this data source
+    """
+    logger.info(f"Introspecting Easebuzz API: {source_id}")
+    
+    # Register the data source
+    upsert_data_source(source_id, uri, "easebuzz", version)
+    
+    try:
+        # Import the Easebuzz adapter
+        from ..adapters.easebuzz import EasebuzzAdapter
+        
+        # Create adapter instance
+        adapter = EasebuzzAdapter(uri)
+        
+        # Get schema documents from the adapter
+        schema_docs = await adapter.introspect_schema()
+        
+        logger.info(f"Retrieved {len(schema_docs)} schema documents from Easebuzz")
+        
+        # Process the schema documents and store them in the registry
+        for doc in schema_docs:
+            table_name = doc.get("name")
+            if table_name:
+                schema_dict = {
+                    "fields": doc.get("fields", {}),
+                    "description": doc.get("description", ""),
+                    "endpoints": doc.get("endpoints", [])
+                }
+                upsert_table_meta(source_id, table_name, schema_dict, version)
+                logger.info(f"  - Added table: {table_name}")
+    
+    except Exception as e:
+        logger.error(f"Error introspecting Easebuzz {source_id}: {str(e)}")
+        raise
+
+async def introspect_shiprocket(source_id: str, uri: str, version: str = "1.0.0"):
+    """
+    Introspect Shiprocket API and store its schema in the registry
+    
+    Args:
+        source_id: Unique identifier for this data source
+        uri: Shiprocket API URI
+        version: Version for this data source
+    """
+    logger.info(f"Introspecting Shiprocket API: {source_id}")
+    
+    # Register the data source
+    upsert_data_source(source_id, uri, "shiprocket", version)
+    
+    try:
+        # Import the Shiprocket adapter
+        from ..adapters.shiprocket import ShiprocketAdapter
+        
+        # Create adapter instance
+        adapter = ShiprocketAdapter(uri)
+        
+        # Get schema documents from the adapter
+        schema_docs = await adapter.introspect_schema()
+        
+        logger.info(f"Retrieved {len(schema_docs)} schema documents from Shiprocket")
+        
+        # Process the schema documents and store them in the registry
+        for doc in schema_docs:
+            table_name = doc.get("name")
+            if table_name:
+                schema_dict = {
+                    "fields": doc.get("fields", {}),
+                    "description": doc.get("description", ""),
+                    "endpoints": doc.get("endpoints", [])
+                }
+                upsert_table_meta(source_id, table_name, schema_dict, version)
+                logger.info(f"  - Added table: {table_name}")
+    
+    except Exception as e:
+        logger.error(f"Error introspecting Shiprocket {source_id}: {str(e)}")
+        raise
+
 async def run_introspection(
     data_sources: List[Dict[str, str]]
 ):
@@ -732,6 +900,14 @@ async def run_introspection(
             tasks.append(introspect_slack(source_id, uri, version))
         elif source_type == "shopify":
             tasks.append(introspect_shopify(source_id, uri, version))
+        elif source_type == "uniware":
+            tasks.append(introspect_uniware(source_id, uri, version))
+        elif source_type == "payu":
+            tasks.append(introspect_payu(source_id, uri, version))
+        elif source_type == "easebuzz":
+            tasks.append(introspect_easebuzz(source_id, uri, version))
+        elif source_type == "shiprocket":
+            tasks.append(introspect_shiprocket(source_id, uri, version))
         else:
             logger.warning(f"Unsupported data source type: {source_type}")
     

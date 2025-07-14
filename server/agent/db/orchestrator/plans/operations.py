@@ -489,6 +489,179 @@ class ShopifyOperation(Operation):
         return True
 
 
+@register_operation("uniware")
+class UniwareOperation(Operation):
+    """Operation for Uniware order management system"""
+    
+    def __init__(
+        self, 
+        id: str = None, 
+        source_id: str = None, 
+        endpoint: str = None,
+        query_params: Dict[str, Any] = None,
+        api_method: str = "GET",
+        limit: int = 100,
+        depends_on: List[str] = None,
+        metadata: Dict[str, Any] = None
+    ):
+        """
+        Initialize a Uniware operation
+        
+        Args:
+            id: Unique identifier for this operation
+            source_id: ID of the data source this operation targets
+            endpoint: Uniware API endpoint (e.g., 'orders', 'inventory', 'facilities')
+            query_params: Query parameters for the API request
+            api_method: HTTP method (GET, POST, etc.)
+            limit: Maximum number of records to return
+            depends_on: List of operation IDs this operation depends on
+            metadata: Additional metadata for this operation
+        """
+        super().__init__(id, source_id, depends_on, metadata)
+        self.endpoint = endpoint or "orders"
+        self.query_params = query_params or {}
+        self.api_method = api_method
+        self.limit = limit
+    
+    def get_adapter_params(self) -> Dict[str, Any]:
+        """Get parameters for the database adapter"""
+        return {
+            "endpoint": self.endpoint,
+            "params": self.query_params,
+            "method": self.api_method,
+            "limit": self.limit
+        }
+
+@register_operation("payu")
+class PayUOperation(Operation):
+    """Operation for PayU payment gateway"""
+    
+    def __init__(
+        self, 
+        id: str = None, 
+        source_id: str = None, 
+        endpoint: str = None,
+        query_params: Dict[str, Any] = None,
+        api_method: str = "GET",
+        limit: int = 100,
+        depends_on: List[str] = None,
+        metadata: Dict[str, Any] = None
+    ):
+        """
+        Initialize a PayU operation
+        
+        Args:
+            id: Unique identifier for this operation
+            source_id: ID of the data source this operation targets
+            endpoint: PayU API endpoint (e.g., 'transactions', 'settlements', 'refunds')
+            query_params: Query parameters for the API request
+            api_method: HTTP method (GET, POST, etc.)
+            limit: Maximum number of records to return
+            depends_on: List of operation IDs this operation depends on
+            metadata: Additional metadata for this operation
+        """
+        super().__init__(id, source_id, depends_on, metadata)
+        self.endpoint = endpoint or "transactions"
+        self.query_params = query_params or {}
+        self.api_method = api_method
+        self.limit = limit
+    
+    def get_adapter_params(self) -> Dict[str, Any]:
+        """Get parameters for the database adapter"""
+        return {
+            "endpoint": self.endpoint,
+            "params": self.query_params,
+            "method": self.api_method,
+            "limit": self.limit
+        }
+
+@register_operation("easebuzz")
+class EasebuzzOperation(Operation):
+    """Operation for Easebuzz payment gateway"""
+    
+    def __init__(
+        self, 
+        id: str = None, 
+        source_id: str = None, 
+        endpoint: str = None,
+        query_params: Dict[str, Any] = None,
+        api_method: str = "GET",
+        limit: int = 100,
+        depends_on: List[str] = None,
+        metadata: Dict[str, Any] = None
+    ):
+        """
+        Initialize an Easebuzz operation
+        
+        Args:
+            id: Unique identifier for this operation
+            source_id: ID of the data source this operation targets
+            endpoint: Easebuzz API endpoint (e.g., 'transactions', 'payouts', 'settlements')
+            query_params: Query parameters for the API request
+            api_method: HTTP method (GET, POST, etc.)
+            limit: Maximum number of records to return
+            depends_on: List of operation IDs this operation depends on
+            metadata: Additional metadata for this operation
+        """
+        super().__init__(id, source_id, depends_on, metadata)
+        self.endpoint = endpoint or "transactions"
+        self.query_params = query_params or {}
+        self.api_method = api_method
+        self.limit = limit
+    
+    def get_adapter_params(self) -> Dict[str, Any]:
+        """Get parameters for the database adapter"""
+        return {
+            "endpoint": self.endpoint,
+            "params": self.query_params,
+            "method": self.api_method,
+            "limit": self.limit
+        }
+
+@register_operation("shiprocket")
+class ShiprocketOperation(Operation):
+    """Operation for Shiprocket shipping and logistics"""
+    
+    def __init__(
+        self, 
+        id: str = None, 
+        source_id: str = None, 
+        endpoint: str = None,
+        query_params: Dict[str, Any] = None,
+        api_method: str = "GET",
+        limit: int = 100,
+        depends_on: List[str] = None,
+        metadata: Dict[str, Any] = None
+    ):
+        """
+        Initialize a Shiprocket operation
+        
+        Args:
+            id: Unique identifier for this operation
+            source_id: ID of the data source this operation targets
+            endpoint: Shiprocket API endpoint (e.g., 'shipments', 'tracking', 'couriers')
+            query_params: Query parameters for the API request
+            api_method: HTTP method (GET, POST, etc.)
+            limit: Maximum number of records to return
+            depends_on: List of operation IDs this operation depends on
+            metadata: Additional metadata for this operation
+        """
+        super().__init__(id, source_id, depends_on, metadata)
+        self.endpoint = endpoint or "shipments"
+        self.query_params = query_params or {}
+        self.api_method = api_method
+        self.limit = limit
+    
+    def get_adapter_params(self) -> Dict[str, Any]:
+        """Get parameters for the database adapter"""
+        return {
+            "endpoint": self.endpoint,
+            "params": self.query_params,
+            "method": self.api_method,
+            "limit": self.limit
+        }
+
+
 def initialize_operations(db_types: List[str]) -> None:
     """
     Initialize operation classes for all database types

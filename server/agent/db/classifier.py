@@ -47,6 +47,10 @@ class DatabaseClassifier:
             "qdrant": ["similar", "vector", "embedding", "semantic", "similarity", "neural"],
             "slack": ["message", "channel", "chat", "conversation", "slack", "communication"],
             "shopify": ["order", "product", "customer", "inventory", "checkout", "cart", "purchase", "sale", "revenue", "ecommerce", "e-commerce", "shopify", "store", "merchant", "variant", "fulfillment", "shipping", "billing", "payment", "discount", "coupon", "abandoned cart"],
+            "uniware": ["order", "inventory", "stock", "warehouse", "facility", "fulfillment", "returns", "unicommerce", "uniware", "order management", "wms", "oms"],
+            "payu": ["payment", "transaction", "settlement", "refund", "payu", "gateway", "merchant", "checkout", "billing", "revenue", "money", "finance"],
+            "easebuzz": ["payment", "transaction", "settlement", "refund", "payout", "easebuzz", "gateway", "instacollect", "transfer", "banking", "finance"],
+            "shiprocket": ["shipping", "logistics", "courier", "tracking", "delivery", "pickup", "awb", "shipment", "shiprocket", "ndr", "non-delivery"],
         }
         
         # Extend with keywords for any new database types from config

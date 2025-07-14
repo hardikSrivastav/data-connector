@@ -12,13 +12,13 @@ import logging
 import json
 import time
 import asyncio
-from typing import Dict, List, Any, Optional, Set, Tuple, Iterator
+from typing import Dict, List, Any, Optional, Set, Tuple, Iterator, Union
 import uuid
 from datetime import datetime
 
 from ...llm.client import get_llm_client
 from ..registry.integrations import registry_client
-from ..adapters import mongo, postgres, qdrant, slack, shopify
+from ..adapters import mongo, postgres, qdrant, slack, shopify, ga4, uniware, payu, easebuzz, shiprocket
 from ..adapters.base import DBAdapter
 from .result_aggregator import ResultAggregator, JoinType, AggregationFunction
 from .plans.base import QueryPlan, Operation, OperationStatus
@@ -88,37 +88,48 @@ class ImplementationAgent:
             "successful_operations": 0
         }
     
-    def get_adapter(self, source_type: str, connection_info: Dict[str, Any]) -> DBAdapter:
+    def get_adapter(self, source_type: str, connection_info: Optional[Union[str, Dict[str, Any]]] = None) -> DBAdapter:
         """
-        Get the appropriate adapter based on the source type.
+        Get the appropriate adapter for a data source.
         
         Args:
-            source_type: Type of data source (postgres, mongodb, qdrant, slack, etc.)
-            connection_info: Connection information for the data source
+            source_type: Type of data source
+            connection_info: Connection information (URI or dict with connection details)
             
         Returns:
-            Instance of the appropriate adapter
+            Initialized adapter instance
         """
+        if not source_type:
+            raise ValueError("source_type is required")
+            
+        # Get URI from connection_info if it's a dict
+        uri = connection_info.get("uri") if isinstance(connection_info, dict) else connection_info
+
+        if not uri:
+            raise ValueError(f"Missing URI in connection info for {source_type}")
+            
         if source_type.lower() == "postgres":
-            return postgres.PostgresAdapter(connection_info)
+            return postgres.PostgresAdapter(uri)
         elif source_type.lower() in ("mongodb", "mongo"):
-            # MongoDB adapter expects URI as string, not dict
-            if isinstance(connection_info, dict):
-                uri = connection_info.get("uri", "")
-                if not uri:
-                    raise ValueError("MongoDB connection info missing URI")
-                return mongo.MongoAdapter(uri)
-            else:
-                # connection_info is already a URI string
-                return mongo.MongoAdapter(connection_info)
+            return mongo.MongoAdapter(uri, **connection_info) if isinstance(connection_info, dict) else mongo.MongoAdapter(uri)
         elif source_type.lower() == "qdrant":
-            return qdrant.QdrantAdapter(connection_info)
+            return qdrant.QdrantAdapter(uri, **connection_info) if isinstance(connection_info, dict) else qdrant.QdrantAdapter(uri)
         elif source_type.lower() == "slack":
-            return slack.SlackAdapter(connection_info)
+            return slack.SlackAdapter(uri, **connection_info) if isinstance(connection_info, dict) else slack.SlackAdapter(uri)
         elif source_type.lower() == "shopify":
-            return shopify.ShopifyAdapter(connection_info)
+            return shopify.ShopifyAdapter(uri, **connection_info) if isinstance(connection_info, dict) else shopify.ShopifyAdapter(uri)
+        elif source_type.lower() == "ga4":
+            return ga4.GA4Adapter(uri, **connection_info) if isinstance(connection_info, dict) else ga4.GA4Adapter(uri)
+        elif source_type.lower() == "uniware":            
+            return uniware.UniwareAdapter(uri, **connection_info) if isinstance(connection_info, dict) else uniware.UniwareAdapter(uri)
+        elif source_type.lower() == "payu":
+            return payu.PayUAdapter(uri, **connection_info) if isinstance(connection_info, dict) else payu.PayUAdapter(uri)
+        elif source_type.lower() == "easebuzz":
+            return easebuzz.EasebuzzAdapter(uri, **connection_info) if isinstance(connection_info, dict) else easebuzz.EasebuzzAdapter(uri)
+        elif source_type.lower() == "shiprocket":
+            return shiprocket.ShiprocketAdapter(uri, **connection_info) if isinstance(connection_info, dict) else shiprocket.ShiprocketAdapter(uri)
         else:
-            raise ValueError(f"Unsupported data source type: {source_type}")
+            raise ValueError(f"Unsupported source type: {source_type}")
     
     async def _get_adapter(self, source_id: str) -> DBAdapter:
         """

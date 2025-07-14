@@ -1,4 +1,5 @@
-from pydantic import validator, BaseSettings
+from pydantic_settings import BaseSettings
+from pydantic import validator
 from typing import Optional, List, Dict, Any
 import os
 from dotenv import load_dotenv

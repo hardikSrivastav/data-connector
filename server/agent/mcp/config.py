@@ -1,4 +1,5 @@
-from pydantic import BaseSettings, Field, validator
+from pydantic_settings import BaseSettings
+from pydantic import Field, validator
 import os
 from typing import List, Optional, Dict, Any, Union
 import json

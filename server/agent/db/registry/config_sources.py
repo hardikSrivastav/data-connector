@@ -91,6 +91,50 @@ def get_data_sources():
                 "type": "shopify",
                 "version": "1.0.0"
             })
+            
+    # Uniware
+    if 'uniware' in yaml_config:
+        uniware_uri = yaml_config.get('uniware', {}).get('uri')
+        if uniware_uri:
+            sources.append({
+                "id": "uniware_main",
+                "uri": uniware_uri,
+                "type": "uniware",
+                "version": "1.0.0"
+            })
+            
+    # PayU
+    if 'payu' in yaml_config:
+        payu_uri = yaml_config.get('payu', {}).get('uri')
+        if payu_uri:
+            sources.append({
+                "id": "payu_main",
+                "uri": payu_uri,
+                "type": "payu",
+                "version": "1.0.0"
+            })
+            
+    # Easebuzz
+    if 'easebuzz' in yaml_config:
+        easebuzz_uri = yaml_config.get('easebuzz', {}).get('uri')
+        if easebuzz_uri:
+            sources.append({
+                "id": "easebuzz_main",
+                "uri": easebuzz_uri,
+                "type": "easebuzz",
+                "version": "1.0.0"
+            })
+            
+    # Shiprocket
+    if 'shiprocket' in yaml_config:
+        shiprocket_uri = yaml_config.get('shiprocket', {}).get('uri')
+        if shiprocket_uri:
+            sources.append({
+                "id": "shiprocket_main",
+                "uri": shiprocket_uri,
+                "type": "shiprocket",
+                "version": "1.0.0"
+            })
     
     return sources
 
@@ -157,6 +201,50 @@ def get_docker_data_sources():
                 "id": "shopify_main",
                 "uri": shopify_uri,
                 "type": "shopify",
+                "version": "1.0.0"
+            })
+            
+    # Uniware
+    if 'uniware' in yaml_config:
+        uniware_uri = yaml_config.get('uniware', {}).get('uri')
+        if uniware_uri:
+            sources.append({
+                "id": "uniware_main",
+                "uri": uniware_uri,
+                "type": "uniware",
+                "version": "1.0.0"
+            })
+            
+    # PayU
+    if 'payu' in yaml_config:
+        payu_uri = yaml_config.get('payu', {}).get('uri')
+        if payu_uri:
+            sources.append({
+                "id": "payu_main",
+                "uri": payu_uri,
+                "type": "payu",
+                "version": "1.0.0"
+            })
+            
+    # Easebuzz
+    if 'easebuzz' in yaml_config:
+        easebuzz_uri = yaml_config.get('easebuzz', {}).get('uri')
+        if easebuzz_uri:
+            sources.append({
+                "id": "easebuzz_main",
+                "uri": easebuzz_uri,
+                "type": "easebuzz",
+                "version": "1.0.0"
+            })
+            
+    # Shiprocket
+    if 'shiprocket' in yaml_config:
+        shiprocket_uri = yaml_config.get('shiprocket', {}).get('uri')
+        if shiprocket_uri:
+            sources.append({
+                "id": "shiprocket_main",
+                "uri": shiprocket_uri,
+                "type": "shiprocket",
                 "version": "1.0.0"
             })
     
