@@ -189,8 +189,8 @@ export async function POST(request: NextRequest) {
       excerpt: body.excerpt,
       content: body.content,
       author: {
-        name: "Ceneca Team",
-        email: "team@ceneca.ai",
+        name: "Hardik",
+        email: "hardik@ceneca.ai",
       },
       tags: body.tags,
       status: body.status,

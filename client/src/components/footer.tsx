@@ -38,6 +38,11 @@ export function Footer() {
                 </Link>
               </li>
               <li className="font-baskerville">
+                <Link href="/blog" className="hover:text-primary transition-colors">
+                  Blog
+                </Link>
+              </li>
+              <li className="font-baskerville">
                 <Link href="/contact" className="hover:text-primary transition-colors">
                   Contact
                 </Link>

@@ -38,11 +38,10 @@ Organizations that embrace AI-powered data analysis are seeing significant benef
 ## Looking Ahead
 
 The future of AI-powered data analysis is bright, with continued advances in machine learning, natural language processing, and automated reasoning promising even more powerful capabilities.`,
-    author: {
-      name: "Ceneca Team",
-      email: "team@ceneca.ai",
-    },
-    tags: ["AI", "Data Analysis", "Technology"],
+      author: {
+        name: "Hardik",
+        email: "hardik@ceneca.ai",
+      },    tags: ["AI", "Data Analysis", "Technology"],
     status: "published",
     publishedAt: "2024-01-15T10:00:00Z",
     createdAt: "2024-01-15T10:00:00Z",
@@ -91,11 +90,10 @@ Combine on-premise processing with selective cloud integration.
 ## Conclusion
 
 On-premise AI solutions offer the perfect balance of innovation and security for organizations with strict data requirements.`,
-    author: {
-      name: "Ceneca Team",
-      email: "team@ceneca.ai",
-    },
-    tags: ["Security", "On-Premise", "AI"],
+      author: {
+        name: "Hardik",
+        email: "hardik@ceneca.ai",
+      },    tags: ["Security", "On-Premise", "AI"],
     status: "published",
     publishedAt: "2024-01-10T14:30:00Z",
     createdAt: "2024-01-10T14:30:00Z",

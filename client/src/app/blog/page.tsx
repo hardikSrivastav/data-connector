@@ -5,7 +5,13 @@ import { Badge } from "@/components/ui/badge";
 
 export const metadata: Metadata = {
   title: "Blog",
-  description: "Latest insights and updates from Ceneca",
+  description: "Latest insights and updates from Ceneca on AI, data analysis, and on-premise solutions.",
+  keywords: ["Ceneca blog", "AI insights", "data analysis", "on-premise AI", "technology blog"],
+  openGraph: {
+    title: "Ceneca Blog | AI & Data Analysis Insights",
+    description: "Latest insights and updates from Ceneca on AI, data analysis, and on-premise solutions.",
+    type: "website",
+  },
 };
 
 // Mock data - replace with actual API call
@@ -16,8 +22,8 @@ const mockPosts = [
     slug: "future-ai-data-analysis",
     excerpt: "Exploring how artificial intelligence is revolutionizing the way we analyze and interpret data across industries.",
     author: {
-      name: "Ceneca Team",
-      email: "team@ceneca.ai",
+      name: "Hardik",
+      email: "hardik@ceneca.ai",
     },
     tags: ["AI", "Data Analysis", "Technology"],
     status: "published" as const,
@@ -33,8 +39,8 @@ const mockPosts = [
     slug: "secure-on-premise-ai",
     excerpt: "Learn how to implement AI solutions that keep your data secure within your own infrastructure.",
     author: {
-      name: "Ceneca Team",
-      email: "team@ceneca.ai",
+      name: "Hardik",
+      email: "hardik@ceneca.ai",
     },
     tags: ["Security", "On-Premise", "AI"],
     status: "published" as const,
@@ -68,7 +74,7 @@ export default function BlogPage() {
             </p>
           </div>
 
-          <div className="grid gap-8">
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
             {mockPosts.map((post) => (
               <Card key={post.id} className="bg-card/50 backdrop-blur-sm border border-muted rounded-xl shadow-xl hover:shadow-2xl transition-shadow">
                 <CardHeader>
