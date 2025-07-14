@@ -87,6 +87,12 @@ export function Navbar() {
                     >
                       Pricing
                     </Link>
+                    <Link 
+                      href="/blog" 
+                      className="text-lg font-medium hover:text-primary transition-colors py-1 px-3 hover:bg-accent/10 rounded-md font-baskerville"
+                    >
+                      Blog
+                    </Link>
                   </div>
                 </nav>
               )}
@@ -147,6 +153,13 @@ export function Navbar() {
                     onClick={() => setMobileMenuOpen(false)}
                   >
                     Pricing
+                  </Link>
+                  <Link 
+                    href="/blog" 
+                    className="text-lg font-medium hover:text-primary transition-colors py-2 px-3 hover:bg-accent/10 rounded-md font-baskerville"
+                    onClick={() => setMobileMenuOpen(false)}
+                  >
+                    Blog
                   </Link>
                 </nav>
               </motion.div>

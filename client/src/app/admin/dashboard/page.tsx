@@ -167,10 +167,15 @@ export default function AdminDashboardPage() {
     <div className="p-6 pt-36 bg-gradient-to-b from-background via-background/95 to-muted/10">
       <div className="max-w-6xl mx-auto space-y-6">
         <div className="flex justify-between items-center">
-          <h1 className="text-2xl font-bold">Waitlist Admin Dashboard</h1>
-          <Button onClick={handleLogout} variant="outline">
-            Logout
-          </Button>
+          <h1 className="text-2xl font-bold">Admin Dashboard</h1>
+          <div className="flex gap-2">
+            <Button onClick={() => router.push('/admin/blog')} variant="outline">
+              Manage Blog
+            </Button>
+            <Button onClick={handleLogout} variant="outline">
+              Logout
+            </Button>
+          </div>
         </div>
 
         <Card className="bg-card/50 backdrop-blur-sm border border-muted rounded-xl shadow-xl">
