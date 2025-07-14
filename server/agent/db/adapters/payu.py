@@ -292,34 +292,167 @@ class PayUAdapter(DBAdapter):
         return normalized
     
     async def introspect_schema(self) -> List[Dict[str, str]]:
-        """Return PayU schema information for the LLM"""
-        return [
-            {
-                'id': 'payu_transactions',
-                'content': '''PayU Transactions: Contains payment transaction information
-                Fields: id, payment_id, amount, status (success/failure/pending), payment_method, bank_ref_num, 
-                created_at, updated_at, customer_email, customer_phone, product_info, card_num, issuing_bank
+        """Dynamically introspect PayU schema by calling actual APIs"""
+        schema_docs = []
+        
+        try:
+            session = await self._get_session()
+            
+            # Test different PayU API endpoints to discover schema
+            endpoints_to_test = [
+                {
+                    'id': 'payu_transactions',
+                    'name': 'PayU Transactions',
+                    'endpoint': '/payment/op/getPaymentStatus',
+                    'command': 'get_payment_status',
+                    'description': 'Payment transaction information and status'
+                },
+                {
+                    'id': 'payu_settlements',
+                    'name': 'PayU Settlements', 
+                    'endpoint': '/payment/op/getSettlementStatus',
+                    'command': 'get_settlement_status',
+                    'description': 'Settlement and payout information'
+                },
+                {
+                    'id': 'payu_refunds',
+                    'name': 'PayU Refunds',
+                    'endpoint': '/payment/op/getRefundDetails', 
+                    'command': 'get_refund_details',
+                    'description': 'Refund and chargeback information'
+                }
+            ]
+            
+            for endpoint_info in endpoints_to_test:
+                try:
+                    # Make a test API call to discover response structure
+                    params = {
+                        'command': endpoint_info['command'],
+                        'var1': self.merchant_id or 'test_merchant'
+                    }
+                    params['hash'] = self._generate_hash(params)
+                    params['key'] = self.auth_config.get('merchant_key', 'test_key')
+                    
+                    async with session.post(
+                        f"{self.base_url}{endpoint_info['endpoint']}",
+                        data=params,
+                        headers={'Content-Type': 'application/x-www-form-urlencoded'}
+                    ) as response:
+                        
+                        if response.status == 200:
+                            try:
+                                data = await response.json()
+                                
+                                # Extract actual field structure from API response
+                                fields = self._extract_fields_from_response(data, endpoint_info['command'])
+                                
+                                content = f"""{endpoint_info['name']}: {endpoint_info['description']}
+                                
+Available Fields: {', '.join(fields)}
+
+API Endpoint: {endpoint_info['endpoint']}
+Command: {endpoint_info['command']}
+Response Format: JSON
+Authentication: Hash-based (key + command + var1 + salt)
+
+Use for: {endpoint_info['description']}
+Example queries: "Show {endpoint_info['name'].lower()}", "Recent {endpoint_info['name'].lower()}", "{endpoint_info['name']} by status"
+
+Note: This schema was discovered by calling the actual PayU API at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"""
+                                
+                                schema_docs.append({
+                                    'id': endpoint_info['id'],
+                                    'content': content
+                                })
+                                
+                                logger.info(f"Successfully introspected PayU {endpoint_info['name']} schema")
+                                
+                            except json.JSONDecodeError:
+                                # Handle non-JSON responses (like HTML error pages)
+                                logger.warning(f"PayU {endpoint_info['name']} returned non-JSON response")
+                                
+                                # Create basic schema from documentation
+                                content = f"""{endpoint_info['name']}: {endpoint_info['description']}
+                                
+API Endpoint: {endpoint_info['endpoint']}
+Command: {endpoint_info['command']}
+Status: API endpoint exists but returned non-JSON response
+Authentication: Hash-based (key + command + var1 + salt)
+
+Note: Schema structure needs merchant account for full introspection. This was discovered at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"""
+                                
+                                schema_docs.append({
+                                    'id': endpoint_info['id'],
+                                    'content': content
+                                })
+                        else:
+                            logger.warning(f"PayU {endpoint_info['name']} API returned {response.status}")
+                            
+                except Exception as e:
+                    logger.warning(f"Error introspecting PayU {endpoint_info['name']}: {e}")
+                    
+            # If no schemas were discovered, provide basic API structure
+            if not schema_docs:
+                schema_docs.append({
+                    'id': 'payu_api_structure',
+                    'content': f"""PayU API Structure: Payment gateway endpoints
+                    
+Base URL: {self.base_url}
+Authentication: Hash-based (SHA512)
+Available Endpoints:
+- /payment/op/getPaymentStatus (transactions)
+- /payment/op/getSettlementStatus (settlements)  
+- /payment/op/getRefundDetails (refunds)
+
+Hash Format: merchant_key|command|var1|salt
+Required Parameters: key, command, var1, hash
+
+Note: Full schema introspection requires valid merchant credentials. Discovered at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"""
+                })
                 
-                Use for: Payment tracking, transaction analysis, customer payments, payment method analysis
-                Example queries: "Show successful transactions", "Failed payments today", "Transactions by amount"'''
-            },
-            {
-                'id': 'payu_settlements',
-                'content': '''PayU Settlements: Contains settlement and payout information
-                Fields: id, amount, status, settlement_date, utr_number, bank_name, account_no, created_at
+        except Exception as e:
+            logger.error(f"Error during PayU schema introspection: {e}")
+            # Fallback to basic structure
+            schema_docs.append({
+                'id': 'payu_error_fallback',
+                'content': f"""PayU API (Connection Error): Payment gateway endpoints
                 
-                Use for: Settlement tracking, payout analysis, bank transfer status
-                Example queries: "Show recent settlements", "Settlement amounts", "UTR tracking"'''
-            },
-            {
-                'id': 'payu_refunds',
-                'content': '''PayU Refunds: Contains refund and chargeback information
-                Fields: id, transaction_id, payment_id, amount, status, refund_date, reason, bank_ref_num, created_at
-                
-                Use for: Refund tracking, chargeback analysis, customer service
-                Example queries: "Show pending refunds", "Refunds by reason", "Customer refund history"'''
-            }
-        ]
+Error: {str(e)}
+Base URL: {self.base_url}
+Status: Unable to connect for schema introspection
+
+Note: This indicates a connection issue. Check credentials and network connectivity."""
+            })
+            
+        return schema_docs
+    
+    def _extract_fields_from_response(self, data: Dict, command: str) -> List[str]:
+        """Extract field names from actual PayU API response"""
+        fields = set()
+        
+        def extract_keys(obj, prefix=''):
+            if isinstance(obj, dict):
+                for key, value in obj.items():
+                    field_name = f"{prefix}{key}" if prefix else key
+                    fields.add(field_name)
+                    if isinstance(value, (dict, list)) and len(str(value)) < 1000:  # Avoid deep recursion
+                        extract_keys(value, f"{field_name}.")
+            elif isinstance(obj, list) and obj:
+                # Sample first item in list
+                extract_keys(obj[0], prefix)
+        
+        # Extract fields from the response
+        extract_keys(data)
+        
+        # Add common PayU fields based on command type
+        if command == 'get_payment_status':
+            fields.update(['txnid', 'amount', 'status', 'email', 'phone', 'productinfo', 'mode'])
+        elif command == 'get_settlement_status':
+            fields.update(['settlement_id', 'amount', 'status', 'settlement_date', 'utr_number'])
+        elif command == 'get_refund_details':
+            fields.update(['refund_id', 'txnid', 'amount', 'status', 'refund_date'])
+            
+        return sorted(list(fields))
     
     async def test_connection(self) -> bool:
         """Test PayU connection"""

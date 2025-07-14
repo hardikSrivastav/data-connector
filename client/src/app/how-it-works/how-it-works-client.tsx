@@ -1,19 +1,39 @@
+"use client";
+
+import { motion, useInView } from "framer-motion";
 import { CliDemo } from "@/components/cli-demo";
+import { useRef } from "react";
 
 export default function HowItWorksClient() {
+  // Create refs for each feature section
+  const feature1Ref = useRef(null);
+  const feature2Ref = useRef(null);
+  const feature3Ref = useRef(null);
+  const feature4Ref = useRef(null);
+  
+  // Check if features are in view
+  const feature1InView = useInView(feature1Ref, { once: true, amount: 0.1 });
+  const feature2InView = useInView(feature2Ref, { once: true, amount: 0.1 });
+  const feature3InView = useInView(feature3Ref, { once: true, amount: 0.1 });
+  const feature4InView = useInView(feature4Ref, { once: true, amount: 0.1 });
 
   return (
     <div className="pt-40 bg-gradient-to-b from-background via-background/90 to-muted/20">
       {/* Hero Section */}
       <div className="container mx-auto px-4">
-        <div className="text-center mb-20">
+        <motion.div 
+          className="text-center mb-20"
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.5 }}
+        >
           <h1 className="text-7xl md:text-8xl font-bold mb-8 bg-clip-text text-transparent bg-gradient-to-r from-[#FFE1E0] via-[#9d4edd] to-[#ff006e] tracking-tight leading-normal">
             How It Works
           </h1>
           <p className="text-xl md:text-2xl text-muted-foreground max-w-3xl mx-auto font-baskerville leading-relaxed tracking-wide">
             A powerful on-premise AI data analysis solution that connects directly to your databases
           </p>
-        </div>
+        </motion.div>
         
         {/* Features Section - Single Column, More Artistic */}
         <div className="max-w-5xl mx-auto space-y-52 mb-20">

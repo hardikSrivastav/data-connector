@@ -311,43 +311,196 @@ class EasebuzzAdapter(DBAdapter):
         return normalized
     
     async def introspect_schema(self) -> List[Dict[str, str]]:
-        """Return Easebuzz schema information for the LLM"""
-        return [
-            {
-                'id': 'easebuzz_transactions',
-                'content': '''Easebuzz Transactions: Contains payment transaction information
-                Fields: id, payment_id, amount, status (success/failed/pending), payment_method, bank_ref_num, 
-                created_at, updated_at, customer_email, customer_phone, product_info, issuing_bank, pg_type
+        """Dynamically introspect Easebuzz schema by calling actual APIs"""
+        schema_docs = []
+        
+        try:
+            session = await self._get_session()
+            
+            # Test different Easebuzz API endpoints to discover schema
+            endpoints_to_test = [
+                {
+                    'id': 'easebuzz_transactions',
+                    'name': 'Easebuzz Transactions',
+                    'endpoint': '/v1/payment/status',
+                    'description': 'Payment transaction information and status'
+                },
+                {
+                    'id': 'easebuzz_settlements',
+                    'name': 'Easebuzz Settlements',
+                    'endpoint': '/v1/settlements',
+                    'description': 'Settlement and payout information'
+                },
+                {
+                    'id': 'easebuzz_refunds',
+                    'name': 'Easebuzz Refunds',
+                    'endpoint': '/v1/refunds',
+                    'description': 'Refund and chargeback information'
+                },
+                {
+                    'id': 'easebuzz_payouts',
+                    'name': 'Easebuzz Payouts',
+                    'endpoint': '/v1/payouts',
+                    'description': 'Payout and transfer information via InstaCollect'
+                }
+            ]
+            
+            for endpoint_info in endpoints_to_test:
+                try:
+                    # Make a test API call to discover response structure
+                    params = {
+                        'merchant_id': self.merchant_id or 'test_merchant'
+                    }
+                    params['hash'] = self._generate_hash(params)
+                    
+                    headers = {
+                        'Content-Type': 'application/json',
+                        'Authorization': f"Bearer {self.auth_config.get('api_key', 'test_key')}"
+                    }
+                    
+                    async with session.post(
+                        f"{self.base_url}{endpoint_info['endpoint']}",
+                        json=params,
+                        headers=headers
+                    ) as response:
+                        
+                        if response.status == 200:
+                            try:
+                                data = await response.json()
+                                
+                                # Extract actual field structure from API response
+                                fields = self._extract_fields_from_response(data, endpoint_info['endpoint'])
+                                
+                                content = f"""{endpoint_info['name']}: {endpoint_info['description']}
+                                
+Available Fields: {', '.join(fields)}
+
+API Endpoint: {endpoint_info['endpoint']}
+Method: POST
+Response Format: JSON
+Authentication: Bearer Token + Hash
+Merchant ID: {self.merchant_id}
+
+Use for: {endpoint_info['description']}
+Example queries: "Show {endpoint_info['name'].lower()}", "Recent {endpoint_info['name'].lower()}", "{endpoint_info['name']} by status"
+
+Note: This schema was discovered by calling the actual Easebuzz API at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"""
+                                
+                                schema_docs.append({
+                                    'id': endpoint_info['id'],
+                                    'content': content
+                                })
+                                
+                                logger.info(f"Successfully introspected Easebuzz {endpoint_info['name']} schema")
+                                
+                            except json.JSONDecodeError:
+                                logger.warning(f"Easebuzz {endpoint_info['name']} returned non-JSON response")
+                                
+                                # Create basic schema from documentation
+                                content = f"""{endpoint_info['name']}: {endpoint_info['description']}
+                                
+API Endpoint: {endpoint_info['endpoint']}
+Method: POST
+Status: API endpoint exists but returned non-JSON response
+Authentication: Bearer Token + Hash
+
+Note: Schema structure needs valid authentication for full introspection. This was discovered at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"""
+                                
+                                schema_docs.append({
+                                    'id': endpoint_info['id'],
+                                    'content': content
+                                })
+                                
+                        elif response.status == 401:
+                            logger.warning(f"Easebuzz {endpoint_info['name']} API returned 401 - authentication issue")
+                            
+                            content = f"""{endpoint_info['name']}: {endpoint_info['description']}
+                            
+API Endpoint: {endpoint_info['endpoint']}
+Method: POST
+Status: Authentication required
+Authentication: Bearer Token + SHA256 Hash
+Merchant ID: {self.merchant_id}
+
+Note: Valid API key and hash required for schema introspection. Discovered at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"""
+                            
+                            schema_docs.append({
+                                'id': endpoint_info['id'],
+                                'content': content
+                            })
+                            
+                        else:
+                            logger.warning(f"Easebuzz {endpoint_info['name']} API returned {response.status}")
+                            
+                except Exception as e:
+                    logger.warning(f"Error introspecting Easebuzz {endpoint_info['name']}: {e}")
+                    
+            # If no schemas were discovered, provide basic API structure
+            if not schema_docs:
+                schema_docs.append({
+                    'id': 'easebuzz_api_structure',
+                    'content': f"""Easebuzz API Structure: Payment gateway endpoints
+                    
+Base URL: {self.base_url}
+Authentication: Bearer Token + SHA256 Hash
+Merchant ID: {self.merchant_id}
+Available Endpoints:
+- /v1/payment/status (transactions)
+- /v1/settlements (settlements)
+- /v1/refunds (refunds)
+- /v1/payouts (payouts via InstaCollect)
+
+Hash Format: merchant_id|transaction_id|amount|secret_key (SHA256)
+Required Headers: Authorization: Bearer <api_key>, Content-Type: application/json
+
+Note: Full schema introspection requires valid API key and secret. Discovered at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"""
+                })
                 
-                Use for: Payment tracking, transaction analysis, customer payments, payment method analysis
-                Example queries: "Show successful transactions", "Failed payments today", "Transactions by amount"'''
-            },
-            {
-                'id': 'easebuzz_settlements',
-                'content': '''Easebuzz Settlements: Contains settlement and payout information
-                Fields: id, amount, status, settlement_date, utr_number, bank_name, account_no, created_at
+        except Exception as e:
+            logger.error(f"Error during Easebuzz schema introspection: {e}")
+            # Fallback to basic structure
+            schema_docs.append({
+                'id': 'easebuzz_error_fallback',
+                'content': f"""Easebuzz API (Connection Error): Payment gateway endpoints
                 
-                Use for: Settlement tracking, payout analysis, bank transfer status
-                Example queries: "Show recent settlements", "Settlement amounts", "UTR tracking"'''
-            },
-            {
-                'id': 'easebuzz_refunds',
-                'content': '''Easebuzz Refunds: Contains refund and chargeback information
-                Fields: id, transaction_id, payment_id, amount, status, refund_date, reason, bank_ref_num, created_at
-                
-                Use for: Refund tracking, chargeback analysis, customer service
-                Example queries: "Show pending refunds", "Refunds by reason", "Customer refund history"'''
-            },
-            {
-                'id': 'easebuzz_payouts',
-                'content': '''Easebuzz Payouts: Contains payout and transfer information via InstaCollect
-                Fields: id, beneficiary_name, account_number, ifsc_code, amount, status, payout_date, 
-                utr_number, bank_name, created_at
-                
-                Use for: Payout tracking, bank transfer management, beneficiary analysis
-                Example queries: "Show pending payouts", "Payouts by bank", "Transfer status"'''
-            }
-        ]
+Error: {str(e)}
+Base URL: {self.base_url}
+Status: Unable to connect for schema introspection
+
+Note: This indicates a connection or authentication issue. Check credentials and network connectivity."""
+            })
+            
+        return schema_docs
+    
+    def _extract_fields_from_response(self, data: Dict, endpoint: str) -> List[str]:
+        """Extract field names from actual Easebuzz API response"""
+        fields = set()
+        
+        def extract_keys(obj, prefix=''):
+            if isinstance(obj, dict):
+                for key, value in obj.items():
+                    field_name = f"{prefix}{key}" if prefix else key
+                    fields.add(field_name)
+                    if isinstance(value, (dict, list)) and len(str(value)) < 1000:  # Avoid deep recursion
+                        extract_keys(value, f"{field_name}.")
+            elif isinstance(obj, list) and obj:
+                # Sample first item in list
+                extract_keys(obj[0], prefix)
+        
+        # Extract fields from the response
+        extract_keys(data)
+        
+        # Add common Easebuzz fields based on endpoint type
+        if 'payment' in endpoint:
+            fields.update(['transaction_id', 'amount', 'status', 'customer_email', 'payment_method'])
+        elif 'settlements' in endpoint:
+            fields.update(['settlement_id', 'amount', 'status', 'settlement_date', 'utr_number'])
+        elif 'refunds' in endpoint:
+            fields.update(['refund_id', 'transaction_id', 'amount', 'status', 'refund_date'])
+        elif 'payouts' in endpoint:
+            fields.update(['payout_id', 'beneficiary_name', 'account_number', 'amount', 'status'])
+            
+        return sorted(list(fields))
     
     async def test_connection(self) -> bool:
         """Test Easebuzz connection"""

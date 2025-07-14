@@ -415,46 +415,205 @@ class UniwareAdapter(DBAdapter):
         return normalized
     
     async def introspect_schema(self) -> List[Dict[str, str]]:
-        """Return Uniware schema information for the LLM"""
-        return [
-            {
-                'id': 'uniware_orders',
-                'content': '''Uniware Orders: Contains e-commerce order information
-                Fields: id, order_code, channel, status (PENDING/COMPLETED/CANCELLED), total_amount, 
-                created_at, updated_at, customer_name, customer_email, customer_phone, items_count, 
-                shipping_method, payment_method
-                
-                Use for: Order tracking, sales analysis, customer orders, order status queries
-                Example queries: "Show orders from last week", "Find pending orders", "Orders by customer email"'''
-            },
-            {
-                'id': 'uniware_inventory',
-                'content': '''Uniware Inventory: Contains product inventory across facilities
-                Fields: id, sku, product_name, available_quantity, allocated_quantity, inventory_quantity,
-                facility_code, facility_name, last_updated
-                
-                Use for: Stock levels, inventory management, warehouse queries, product availability
-                Example queries: "Show low stock items", "Inventory by facility", "Product availability"'''
-            },
-            {
-                'id': 'uniware_fulfillment',
-                'content': '''Uniware Fulfillment: Contains shipping and fulfillment information
-                Fields: id, order_code, status, tracking_number, shipping_provider, shipped_date, 
-                delivery_date, expected_delivery, created_at, updated_at
-                
-                Use for: Shipment tracking, delivery status, logistics analysis
-                Example queries: "Track shipments", "Delivery performance", "Pending fulfillments"'''
-            },
-            {
-                'id': 'uniware_returns',
-                'content': '''Uniware Returns: Contains return and refund information
-                Fields: id, order_code, return_code, status, reason, return_date, refund_amount,
-                created_at, updated_at
-                
-                Use for: Return processing, refund tracking, return analytics
-                Example queries: "Show recent returns", "Returns by reason", "Refund amounts"'''
+        """Dynamically introspect Uniware schema by calling actual APIs"""
+        schema_docs = []
+        
+        try:
+            # Authenticate first
+            access_token = await self._authenticate()
+            session = await self._get_session()
+            
+            headers = {
+                'Authorization': f'Bearer {access_token}',
+                'Content-Type': 'application/json',
+                'X-Tenant-ID': self.tenant_id
             }
-        ]
+            
+            # Test different Uniware API endpoints to discover schema
+            endpoints_to_test = [
+                {
+                    'id': 'uniware_orders',
+                    'name': 'Uniware Orders',
+                    'endpoint': '/orders/get',
+                    'description': 'E-commerce order information and management'
+                },
+                {
+                    'id': 'uniware_inventory',
+                    'name': 'Uniware Inventory',
+                    'endpoint': '/inventory/get',
+                    'description': 'Product inventory across facilities'
+                },
+                {
+                    'id': 'uniware_fulfillment',
+                    'name': 'Uniware Fulfillment',
+                    'endpoint': '/fulfillment/get',
+                    'description': 'Shipping and fulfillment operations'
+                },
+                {
+                    'id': 'uniware_returns',
+                    'name': 'Uniware Returns',
+                    'endpoint': '/returns/get',
+                    'description': 'Return management and processing'
+                },
+                {
+                    'id': 'uniware_facilities',
+                    'name': 'Uniware Facilities',
+                    'endpoint': '/facilities/get',
+                    'description': 'Warehouse and facility information'
+                }
+            ]
+            
+            for endpoint_info in endpoints_to_test:
+                try:
+                    # Make a test API call with minimal parameters
+                    params = {'limit': 1}  # Get minimal data to discover structure
+                    
+                    async with session.get(
+                        f"{self.base_url}{endpoint_info['endpoint']}",
+                        headers=headers,
+                        params=params
+                    ) as response:
+                        
+                        if response.status == 200:
+                            try:
+                                data = await response.json()
+                                
+                                # Extract actual field structure from API response
+                                fields = self._extract_fields_from_response(data, endpoint_info['endpoint'])
+                                
+                                content = f"""{endpoint_info['name']}: {endpoint_info['description']}
+                                
+Available Fields: {', '.join(fields)}
+
+API Endpoint: {endpoint_info['endpoint']}
+Method: GET
+Response Format: JSON
+Authentication: OAuth2 Bearer Token
+Tenant ID: {self.tenant_id}
+
+Use for: {endpoint_info['description']}
+Example queries: "Show {endpoint_info['name'].lower()}", "Recent {endpoint_info['name'].lower()}", "{endpoint_info['name']} by status"
+
+Note: This schema was discovered by calling the actual Uniware API at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"""
+                                
+                                schema_docs.append({
+                                    'id': endpoint_info['id'],
+                                    'content': content
+                                })
+                                
+                                logger.info(f"Successfully introspected Uniware {endpoint_info['name']} schema")
+                                
+                            except json.JSONDecodeError:
+                                logger.warning(f"Uniware {endpoint_info['name']} returned non-JSON response")
+                                
+                                # Create basic schema from documentation
+                                content = f"""{endpoint_info['name']}: {endpoint_info['description']}
+                                
+API Endpoint: {endpoint_info['endpoint']}
+Method: GET
+Status: API endpoint exists but returned non-JSON response
+Authentication: OAuth2 Bearer Token
+
+Note: Schema structure needs valid authentication for full introspection. This was discovered at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"""
+                                
+                                schema_docs.append({
+                                    'id': endpoint_info['id'],
+                                    'content': content
+                                })
+                                
+                        elif response.status == 401:
+                            logger.warning(f"Uniware {endpoint_info['name']} API returned 401 - authentication issue")
+                            
+                            content = f"""{endpoint_info['name']}: {endpoint_info['description']}
+                            
+API Endpoint: {endpoint_info['endpoint']}
+Method: GET
+Status: Authentication required
+Authentication: OAuth2 Bearer Token
+Tenant ID: {self.tenant_id}
+
+Note: Valid OAuth2 credentials required for schema introspection. Discovered at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"""
+                            
+                            schema_docs.append({
+                                'id': endpoint_info['id'],
+                                'content': content
+                            })
+                            
+                        else:
+                            logger.warning(f"Uniware {endpoint_info['name']} API returned {response.status}")
+                            
+                except Exception as e:
+                    logger.warning(f"Error introspecting Uniware {endpoint_info['name']}: {e}")
+                    
+            # If no schemas were discovered, provide basic API structure
+            if not schema_docs:
+                schema_docs.append({
+                    'id': 'uniware_api_structure',
+                    'content': f"""Uniware API Structure: Order and warehouse management endpoints
+                    
+Base URL: {self.base_url}
+Authentication: OAuth2 Bearer Token
+Tenant ID: {self.tenant_id}
+Available Endpoints:
+- /orders/get (orders)
+- /inventory/get (inventory)
+- /fulfillment/get (fulfillment)
+- /returns/get (returns)
+- /facilities/get (facilities)
+
+OAuth2 Flow: POST /oauth/token
+Required Headers: Authorization: Bearer <token>, X-Tenant-ID: <tenant_id>
+
+Note: Full schema introspection requires valid OAuth2 credentials. Discovered at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"""
+                })
+                
+        except Exception as e:
+            logger.error(f"Error during Uniware schema introspection: {e}")
+            # Fallback to basic structure
+            schema_docs.append({
+                'id': 'uniware_error_fallback',
+                'content': f"""Uniware API (Connection Error): Order and warehouse management endpoints
+                
+Error: {str(e)}
+Base URL: {self.base_url}
+Status: Unable to connect for schema introspection
+
+Note: This indicates a connection or authentication issue. Check credentials and network connectivity."""
+            })
+            
+        return schema_docs
+    
+    def _extract_fields_from_response(self, data: Dict, endpoint: str) -> List[str]:
+        """Extract field names from actual Uniware API response"""
+        fields = set()
+        
+        def extract_keys(obj, prefix=''):
+            if isinstance(obj, dict):
+                for key, value in obj.items():
+                    field_name = f"{prefix}{key}" if prefix else key
+                    fields.add(field_name)
+                    if isinstance(value, (dict, list)) and len(str(value)) < 1000:  # Avoid deep recursion
+                        extract_keys(value, f"{field_name}.")
+            elif isinstance(obj, list) and obj:
+                # Sample first item in list
+                extract_keys(obj[0], prefix)
+        
+        # Extract fields from the response
+        extract_keys(data)
+        
+        # Add common Uniware fields based on endpoint type
+        if 'orders' in endpoint:
+            fields.update(['id', 'orderCode', 'status', 'totalAmount', 'createdAt', 'channel'])
+        elif 'inventory' in endpoint:
+            fields.update(['id', 'sku', 'availableQuantity', 'facilityCode', 'lastUpdated'])
+        elif 'fulfillment' in endpoint:
+            fields.update(['id', 'orderCode', 'status', 'trackingNumber', 'shippingProvider'])
+        elif 'returns' in endpoint:
+            fields.update(['id', 'orderCode', 'returnCode', 'status', 'reason', 'returnDate'])
+        elif 'facilities' in endpoint:
+            fields.update(['id', 'facilityCode', 'facilityName', 'address', 'city'])
+            
+        return sorted(list(fields))
     
     async def test_connection(self) -> bool:
         """Test Uniware connection"""
