@@ -32,7 +32,7 @@ declare global {
   }
 }
 
-function WaitlistForm() {
+function WaitlistFormContent() {
   const [isSubmitted, setIsSubmitted] = useState(false);
   const [isPaymentModalOpen, setIsPaymentModalOpen] = useState(false);
   const [userId, setUserId] = useState("");
@@ -325,14 +325,18 @@ function WaitlistForm() {
   );
 }
 
-export default function WaitlistPage() {
+function WaitlistForm() {
   return (
     <Suspense fallback={
       <div className="flex items-center justify-center h-screen">
         <div className="animate-pulse text-xl">Loading...</div>
       </div>
     }>
-      <WaitlistForm />
+      <WaitlistFormContent />
     </Suspense>
   );
+}
+
+export default function WaitlistPage() {
+  return <WaitlistForm />;
 } 

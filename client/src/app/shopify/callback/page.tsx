@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, Suspense } from 'react';
 import { useSearchParams } from 'next/navigation';
 
 // Type definitions
@@ -27,7 +27,7 @@ interface ErrorResponse {
 
 type CallbackResponse = SuccessResponse | ErrorResponse;
 
-export default function ShopifyCallbackPage() {
+function ShopifyCallbackContent() {
   const searchParams = useSearchParams();
   const [response, setResponse] = useState<CallbackResponse | null>(null);
   const [loading, setLoading] = useState(true);
@@ -188,5 +188,19 @@ export default function ShopifyCallbackPage() {
         </div>
       </div>
     </div>
+  );
+}
+
+export default function ShopifyCallbackPage() {
+  return (
+    <Suspense fallback={
+      <div className="flex items-center justify-center bg-gray-50">
+        <div className="text-center">
+          <p className="text-lg text-gray-600">Loading...</p>
+        </div>
+      </div>
+    }>
+      <ShopifyCallbackContent />
+    </Suspense>
   );
 } 
