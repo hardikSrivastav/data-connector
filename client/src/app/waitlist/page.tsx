@@ -1,6 +1,9 @@
 "use client";
 
 import { useState, useEffect, Suspense } from "react";
+
+// Force dynamic rendering for this page
+export const dynamic = 'force-dynamic';
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
