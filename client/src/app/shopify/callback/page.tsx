@@ -1,6 +1,7 @@
 'use client';
 
-import { useEffect, useState, Suspense } from 'react';
+import { Suspense } from 'react';
+import { useEffect, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
 
 // Force dynamic rendering for this page
@@ -30,6 +31,7 @@ interface ErrorResponse {
 
 type CallbackResponse = SuccessResponse | ErrorResponse;
 
+// Create a separate component for the search params logic
 function ShopifyCallbackContent() {
   const searchParams = useSearchParams();
   const [response, setResponse] = useState<CallbackResponse | null>(null);
@@ -194,15 +196,10 @@ function ShopifyCallbackContent() {
   );
 }
 
+// Main component wrapped in Suspense
 export default function ShopifyCallbackPage() {
   return (
-    <Suspense fallback={
-      <div className="flex items-center justify-center bg-gray-50">
-        <div className="text-center">
-          <p className="text-lg text-gray-600">Loading...</p>
-        </div>
-      </div>
-    }>
+    <Suspense fallback={<div>Loading...</div>}>
       <ShopifyCallbackContent />
     </Suspense>
   );

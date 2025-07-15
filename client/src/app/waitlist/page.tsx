@@ -35,7 +35,8 @@ declare global {
   }
 }
 
-function WaitlistFormContent() {
+// Create a separate component for the search params logic
+function WaitlistContent() {
   const [isSubmitted, setIsSubmitted] = useState(false);
   const [isPaymentModalOpen, setIsPaymentModalOpen] = useState(false);
   const [userId, setUserId] = useState("");
@@ -328,18 +329,11 @@ function WaitlistFormContent() {
   );
 }
 
-function WaitlistForm() {
+// Main component wrapped in Suspense
+export default function WaitlistPage() {
   return (
-    <Suspense fallback={
-      <div className="flex items-center justify-center h-screen">
-        <div className="animate-pulse text-xl">Loading...</div>
-      </div>
-    }>
-      <WaitlistFormContent />
+    <Suspense fallback={<div>Loading...</div>}>
+      <WaitlistContent />
     </Suspense>
   );
-}
-
-export default function WaitlistPage() {
-  return <WaitlistForm />;
 } 
