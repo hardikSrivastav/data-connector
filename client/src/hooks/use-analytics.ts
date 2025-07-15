@@ -15,7 +15,15 @@ export const GA_MEASUREMENT_ID = 'G-0KY7J773R1';
 
 export function useAnalytics() {
   const pathname = usePathname();
-  const searchParams = useSearchParams();
+  
+  // Wrap useSearchParams in try-catch to handle SSR
+  let searchParams;
+  try {
+    searchParams = useSearchParams();
+  } catch (error) {
+    // During SSR or when not in Suspense boundary, searchParams won't be available
+    searchParams = null;
+  }
 
   useEffect(() => {
     if (pathname && typeof window !== 'undefined' && window.gtag) {
@@ -40,4 +48,4 @@ export function useAnalytics() {
   };
 
   return { trackEvent };
-} 
+}
