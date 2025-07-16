@@ -5,6 +5,8 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { ArrowLeft } from "lucide-react";
 import { BlogPost } from "@/types/blog";
+import ReactMarkdown from 'react-markdown';
+import { ReactNode } from 'react';
 
 interface BlogPostPageProps {
   params: {
@@ -79,13 +81,6 @@ export default async function BlogPostPage({ params }: BlogPostPageProps) {
       <div className="container mx-auto px-4">
         <div className="max-w-4xl mx-auto">
           <div className="mb-8">
-            <Link href="/blog">
-              <Button variant="ghost" className="mb-6 font-baskerville">
-                <ArrowLeft className="w-4 h-4 mr-2" />
-                Back to Blog
-              </Button>
-            </Link>
-            
             <div className="flex flex-wrap gap-2 mb-4">
               {post.tags.map((tag) => (
                 <Badge key={tag} variant="secondary" className="font-baskerville">
@@ -110,9 +105,25 @@ export default async function BlogPostPage({ params }: BlogPostPageProps) {
           </div>
 
           <article className="prose prose-lg dark:prose-invert max-w-none prose-baskerville">
-            <div className="whitespace-pre-wrap">
+            <ReactMarkdown
+              components={{
+                h1: ({ children }: { children: ReactNode }) => <h1 className="text-3xl font-bold mb-4 font-baskerville">{children}</h1>,
+                h2: ({ children }: { children: ReactNode }) => <h2 className="text-2xl font-bold mb-3 mt-6 font-baskerville">{children}</h2>,
+                h3: ({ children }: { children: ReactNode }) => <h3 className="text-xl font-bold mb-2 mt-4 font-baskerville">{children}</h3>,
+                p: ({ children }: { children: ReactNode }) => <p className="mb-4 font-baskerville leading-relaxed">{children}</p>,
+                ul: ({ children }: { children: ReactNode }) => <ul className="list-disc ml-6 mb-4 font-baskerville">{children}</ul>,
+                ol: ({ children }: { children: ReactNode }) => <ol className="list-decimal ml-6 mb-4 font-baskerville">{children}</ol>,
+                li: ({ children }: { children: ReactNode }) => <li className="mb-1 font-baskerville">{children}</li>,
+                blockquote: ({ children }: { children: ReactNode }) => <blockquote className="border-l-4 border-primary pl-4 italic mb-4 font-baskerville">{children}</blockquote>,
+                code: ({ children }: { children: ReactNode }) => <code className="bg-muted px-1 py-0.5 rounded text-sm font-mono">{children}</code>,
+                pre: ({ children }: { children: ReactNode }) => <pre className="bg-muted p-4 rounded-lg overflow-x-auto mb-4 font-mono">{children}</pre>,
+                strong: ({ children }: { children: ReactNode }) => <strong className="font-bold font-baskerville">{children}</strong>,
+                em: ({ children }: { children: ReactNode }) => <em className="italic font-baskerville">{children}</em>,
+                a: ({ href, children }: { href?: string; children: ReactNode }) => <a href={href} className="text-primary hover:underline font-baskerville">{children}</a>,
+              }}
+            >
               {post.content}
-            </div>
+            </ReactMarkdown>
           </article>
 
           <div className="mt-12 pt-8 border-t border-muted">
