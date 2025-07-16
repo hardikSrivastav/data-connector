@@ -31,7 +31,7 @@ export async function GET(request: NextRequest) {
     const offset = parseInt(searchParams.get('offset') || '0');
 
     // Make request to backend to fetch blog posts from database
-    const response = await fetch(`${BACKEND_URL}/blog?status=${status || ''}&limit=${limit}&offset=${offset}`, {
+    const response = await fetch(`${BACKEND_URL}/blog`, {
       method: 'GET',
       headers: {
         'Content-Type': 'application/json',
@@ -45,6 +45,10 @@ export async function GET(request: NextRequest) {
     const data = await response.json();
     let filteredPosts = data.success ? data.data : [];
     
+    if (status) {
+      filteredPosts = filteredPosts.filter((post: BlogPost) => post.status === status);
+    }
+
     // Only return published posts for public access
     const isAdmin = verifyAdminToken(request);
     if (!isAdmin) {
@@ -129,4 +133,4 @@ export async function POST(request: NextRequest) {
       { status: 500 }
     );
   }
-}
+} 

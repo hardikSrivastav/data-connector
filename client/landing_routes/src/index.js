@@ -4,6 +4,7 @@ const cors = require('cors');
 const waitlistRoutes = require('./routes/waitlistRoutes');
 const paymentRoutes = require('./routes/paymentRoutes');
 const adminRoutes = require('./routes/adminRoutes');
+const blogRoutes = require('./routes/blogRoutes');
 // const chatRoutes = require('./routes/chatRoutes'); // Temporarily disabled
 const { sequelize } = require('./config/database');
 
@@ -22,6 +23,7 @@ app.use(express.json());
 app.use('/api/waitlist', waitlistRoutes);
 app.use('/api/payments', paymentRoutes);
 app.use('/api/admin', adminRoutes);
+app.use('/api/blog', blogRoutes);
 // app.use('/api/chat', chatRoutes); // Temporarily disabled
 
 // Health check

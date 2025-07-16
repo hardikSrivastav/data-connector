@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { BlogPost, UpdateBlogPostRequest } from "@/types/blog";
-import { getBlogPost, updateBlogPost, deleteBlogPost } from "@/lib/blog-data";
+
+// Database operations will be handled by the backend service
+const BACKEND_URL = process.env.NEXT_PUBLIC_API_URL || 'http://waitlist-backend:3001/api';
 
 function generateSlug(title: string): string {
   return title
@@ -26,15 +28,23 @@ export async function GET(
   { params }: { params: { id: string } }
 ) {
   try {
-    const post = getBlogPost(params.id);
-    
-    if (!post) {
+    const response = await fetch(`${BACKEND_URL}/blog/${params.id}`, {
+      method: 'GET',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+    });
+
+    if (!response.ok) {
       return NextResponse.json(
         { success: false, message: 'Blog post not found' },
         { status: 404 }
       );
     }
 
+    const data = await response.json();
+    const post = data.data;
+    
     // Only return published posts for public access
     const isAdmin = verifyAdminToken(request);
     if (!isAdmin && post.status !== 'published') {
@@ -79,18 +89,26 @@ export async function PUT(
       updatedAt: new Date().toISOString(),
     };
 
-    const updatedPost = updateBlogPost(params.id, updatedPostData);
-    
-    if (!updatedPost) {
+    const response = await fetch(`${BACKEND_URL}/blog/${params.id}`, {
+      method: 'PUT',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(updatedPostData),
+    });
+
+    if (!response.ok) {
       return NextResponse.json(
         { success: false, message: 'Blog post not found' },
         { status: 404 }
       );
     }
 
+    const data = await response.json();
+
     return NextResponse.json({
       success: true,
-      data: updatedPost,
+      data: data.data,
     });
   } catch (error) {
     console.error('Error updating blog post:', error);
@@ -113,9 +131,14 @@ export async function DELETE(
       );
     }
 
-    const deletedPost = deleteBlogPost(params.id);
-    
-    if (!deletedPost) {
+    const response = await fetch(`${BACKEND_URL}/blog/${params.id}`, {
+      method: 'DELETE',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+    });
+
+    if (!response.ok) {
       return NextResponse.json(
         { success: false, message: 'Blog post not found' },
         { status: 404 }
