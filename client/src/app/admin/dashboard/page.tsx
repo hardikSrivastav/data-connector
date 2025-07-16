@@ -69,26 +69,14 @@ export default function AdminDashboardPage() {
   const router = useRouter();
 
   useEffect(() => {
-    // Check if token exists
-    const token = localStorage.getItem("admin_token");
-    if (!token) {
-      router.push("/admin");
-      return;
-    }
-
     fetchWaitlist();
-  }, [router]);
+  }, []);
 
   const fetchWaitlist = async () => {
     setIsLoading(true);
     try {
-      const token = localStorage.getItem("admin_token");
-      
       const response = await fetch("/api/admin/waitlist", {
         method: "GET",
-        headers: {
-          Authorization: `Bearer ${token}`,
-        },
       });
 
       const data = await response.json();
@@ -97,11 +85,6 @@ export default function AdminDashboardPage() {
         setWaitlist(data.data);
       } else {
         toast.error(data.message || "Failed to fetch waitlist");
-        if (response.status === 401) {
-          // Unauthorized, redirect to login
-          localStorage.removeItem("admin_token");
-          router.push("/admin");
-        }
       }
     } catch (error) {
       console.error("Error fetching waitlist:", error);
@@ -127,13 +110,10 @@ export default function AdminDashboardPage() {
     if (!selectedEntry) return;
     
     try {
-      const token = localStorage.getItem("admin_token");
-      
       const response = await fetch(`/api/admin/waitlist/${selectedEntry.id}`, {
         method: "PATCH",
         headers: {
           "Content-Type": "application/json",
-          Authorization: `Bearer ${token}`,
         },
         body: JSON.stringify(formData),
       });
@@ -153,10 +133,7 @@ export default function AdminDashboardPage() {
     }
   };
 
-  const handleLogout = () => {
-    localStorage.removeItem("admin_token");
-    router.push("/admin");
-  };
+
 
   const formatDate = (dateString: string) => {
     const date = new Date(dateString);
@@ -172,9 +149,7 @@ export default function AdminDashboardPage() {
             <Button onClick={() => router.push('/admin/blog')} variant="outline">
               Manage Blog
             </Button>
-            <Button onClick={handleLogout} variant="outline">
-              Logout
-            </Button>
+
           </div>
         </div>
 

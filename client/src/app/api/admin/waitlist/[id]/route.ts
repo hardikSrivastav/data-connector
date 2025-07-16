@@ -8,25 +8,12 @@ export async function PATCH(
 ) {
   try {
     const { id } = params;
-    const authHeader = request.headers.get('authorization');
-    
-    if (!authHeader) {
-      return NextResponse.json(
-        { 
-          success: false, 
-          message: 'Authentication required'
-        },
-        { status: 401 }
-      );
-    }
-    
     const body = await request.json();
     
     const response = await fetch(`${API_BASE_URL}/admin/waitlist/${id}`, {
       method: 'PATCH',
       headers: {
         'Content-Type': 'application/json',
-        'Authorization': authHeader,
       },
       body: JSON.stringify(body),
     });

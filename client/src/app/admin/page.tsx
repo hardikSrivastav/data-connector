@@ -3,104 +3,71 @@
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Input } from "@/components/ui/input";
-import { toast } from "sonner";
 import { useRouter } from "next/navigation";
+import { Shield, Lock, Key } from "lucide-react";
 
 export default function AdminLoginPage() {
-  const [formData, setFormData] = useState({
-    email: "admin@ceneca.ai",
-    password: "adminPassword",
-  });
-  const [isLoading, setIsLoading] = useState(false);
+  const [showConfirmation, setShowConfirmation] = useState(true);
   const router = useRouter();
 
-  const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    setFormData({
-      ...formData,
-      [e.target.name]: e.target.value,
-    });
+  const handleAccess = () => {
+    router.push('/admin/dashboard');
   };
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setIsLoading(true);
+  const handleCancel = () => {
+    router.push('/');
+  };
 
-    try {
-      const response = await fetch('/api/admin/login', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify(formData), // Use hardcoded credentials for testing
-      });
-
-      console.log('Login response status:', response.status);
-      const data = await response.json();
-      console.log('Login response data:', data);
-
-      if (data.success) {
-        // Store token in localStorage
-        localStorage.setItem('admin_token', data.data.token);
-        
-        // Redirect to dashboard
-        router.push('/admin/dashboard');
-      } else {
-        toast.error(data.message || 'Invalid credentials');
-      }
-    } catch (error) {
-      console.error('Login error:', error);
-      toast.error('Login failed. Please try again.');
-    } finally {
-      setIsLoading(false);
+  if (!showConfirmation) {
+    return (
+      <div className="flex items-center justify-center min-h-screen bg-gradient-to-b from-background via-background/95 to-muted/10">
+        <div className="text-center">
+          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary mx-auto mb-4"></div>
+          <p className="text-muted-foreground">Redirecting to dashboard...</p>
+        </div>
+      </div>
+    );
     }
-  };
 
   return (
     <div className="flex items-center justify-center min-h-screen bg-gradient-to-b from-background via-background/95 to-muted/10">
       <Card className="w-full max-w-md bg-card/50 backdrop-blur-sm border border-muted rounded-xl shadow-xl">
-        <CardHeader className="space-y-1">
-          <CardTitle className="text-2xl font-bold text-center">Admin Login</CardTitle>
+        <CardHeader className="space-y-1 text-center">
+          <div className="flex justify-center mb-4">
+            <Shield className="w-16 h-16 text-primary" />
+          </div>
+          <CardTitle className="text-2xl font-bold">Admin Access</CardTitle>
+          <p className="text-muted-foreground">
+            You are about to access the admin dashboard
+          </p>
         </CardHeader>
-        <CardContent>
-          <form onSubmit={handleSubmit} className="space-y-4">
-            <div className="space-y-2">
-              <label htmlFor="email" className="text-sm font-medium">
-                Email
-              </label>
-              <Input
-                id="email"
-                name="email"
-                type="email"
-                value={formData.email}
-                onChange={handleChange}
-                required
-                placeholder="admin@ceneca.ai"
-                className="h-10 bg-background/80 border-muted"
-              />
+        <CardContent className="space-y-6">
+          <div className="bg-muted/20 p-4 rounded-lg border border-muted">
+            <div className="flex items-center gap-3 mb-3">
+              <Lock className="w-5 h-5 text-amber-500" />
+              <span className="font-medium">Admin Area</span>
             </div>
-            <div className="space-y-2">
-              <label htmlFor="password" className="text-sm font-medium">
-                Password
-              </label>
-              <Input
-                id="password"
-                name="password"
-                type="password"
-                value={formData.password}
-                onChange={handleChange}
-                required
-                className="h-10 bg-background/80 border-muted"
-              />
+            <p className="text-sm text-muted-foreground">
+              This area contains sensitive administrative functions including user management, waitlist control, and blog administration.
+            </p>
             </div>
+          
+          <div className="flex flex-col gap-3">
             <Button
-              type="submit"
-              disabled={isLoading}
-              className="w-full h-10 text-white bg-zinc-900 hover:bg-[#7b35b8] transition-all duration-300"
+              onClick={handleAccess}
+              className="w-full h-12 text-white bg-zinc-900 hover:bg-[#7b35b8] transition-all duration-300"
             >
-              {isLoading ? "Logging in..." : "Login"}
+              <Key className="w-4 h-4 mr-2" />
+              Yes, Access Admin Dashboard
             </Button>
-          </form>
+            <Button
+              onClick={handleCancel}
+              variant="outline"
+              className="w-full h-12"
+            >
+              Cancel
+            </Button>
+          </div>
         </CardContent>
       </Card>
     </div>

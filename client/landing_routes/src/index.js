@@ -4,12 +4,12 @@ const cors = require('cors');
 const waitlistRoutes = require('./routes/waitlistRoutes');
 const paymentRoutes = require('./routes/paymentRoutes');
 const adminRoutes = require('./routes/adminRoutes');
-const chatRoutes = require('./routes/chatRoutes');
+// const chatRoutes = require('./routes/chatRoutes'); // Temporarily disabled
 const { sequelize } = require('./config/database');
 
-// Redis services and cleanup
-const cleanupManager = require('./utils/cleanup');
-const redisService = require('./services/redisService');
+// Redis services and cleanup - temporarily disabled for admin-only functionality
+// const cleanupManager = require('./utils/cleanup');
+// const redisService = require('./services/redisService');
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -22,7 +22,7 @@ app.use(express.json());
 app.use('/api/waitlist', waitlistRoutes);
 app.use('/api/payments', paymentRoutes);
 app.use('/api/admin', adminRoutes);
-app.use('/api/chat', chatRoutes);
+// app.use('/api/chat', chatRoutes); // Temporarily disabled
 
 // Health check
 app.get('/health', (req, res) => {
@@ -39,17 +39,17 @@ async function startServer() {
     await sequelize.sync({ alter: true });
     console.log('Models synchronized with database.');
     
-    // Start cleanup tasks
-    cleanupManager.start();
-    console.log('Cleanup manager started.');
+    // Start cleanup tasks - temporarily disabled
+    // cleanupManager.start();
+    // console.log('Cleanup manager started.');
     
-    // Log initial system status
-    const redisStatus = redisService.getStatus();
-    console.log('Redis status:', redisStatus);
+    // Log initial system status - temporarily disabled
+    // const redisStatus = redisService.getStatus();
+    // console.log('Redis status:', redisStatus);
     
     app.listen(PORT, () => {
       console.log(`Server running on port ${PORT}`);
-      console.log('Chat persistence:', redisStatus.connected ? 'Redis' : 'In-memory fallback');
+      // console.log('Chat persistence:', redisStatus.connected ? 'Redis' : 'In-memory fallback');
     });
   } catch (error) {
     console.error('Unable to start the server:', error);

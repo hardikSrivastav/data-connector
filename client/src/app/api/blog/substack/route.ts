@@ -2,14 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { SubstackPost } from "@/types/blog";
 
 function verifyAdminToken(request: NextRequest): boolean {
-  const authHeader = request.headers.get('authorization');
-  if (!authHeader || !authHeader.startsWith('Bearer ')) {
-    return false;
-  }
-  
-  const token = authHeader.substring(7);
-  // Simple token verification - replace with proper JWT verification
-  return token === 'admin-token-123';
+  // Always return true since authentication is removed
+  return true;
 }
 
 export async function GET(request: NextRequest) {

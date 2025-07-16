@@ -4,46 +4,55 @@ import Link from "next/link";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { motion } from "framer-motion";
-
-// Mock data - replace with actual API call
-const mockPosts = [
-  {
-    id: "1",
-    title: "The Future of AI-Powered Data Analysis",
-    slug: "future-ai-data-analysis",
-    excerpt: "Exploring how artificial intelligence is revolutionizing the way we analyze and interpret data across industries.",
-    author: {
-      name: "Hardik",
-      email: "hardik@ceneca.ai",
-    },
-    tags: ["AI", "Data Analysis", "Technology"],
-    status: "published" as const,
-    publishedAt: "2024-01-15T10:00:00Z",
-    createdAt: "2024-01-15T10:00:00Z",
-    updatedAt: "2024-01-15T10:00:00Z",
-    readTime: 5,
-    source: "internal" as const,
-  },
-  {
-    id: "2",
-    title: "Building Secure On-Premise AI Solutions",
-    slug: "secure-on-premise-ai",
-    excerpt: "Learn how to implement AI solutions that keep your data secure within your own infrastructure.",
-    author: {
-      name: "Hardik",
-      email: "hardik@ceneca.ai",
-    },
-    tags: ["Security", "On-Premise", "AI"],
-    status: "published" as const,
-    publishedAt: "2024-01-10T14:30:00Z",
-    createdAt: "2024-01-10T14:30:00Z",
-    updatedAt: "2024-01-10T14:30:00Z",
-    readTime: 8,
-    source: "internal" as const,
-  },
-];
+import { useState, useEffect } from "react";
+import { BlogPost } from "@/types/blog";
 
 export default function BlogClient() {
+  const [posts, setPosts] = useState<BlogPost[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    fetchPosts();
+  }, []);
+
+  const fetchPosts = async () => {
+    setIsLoading(true);
+    setError(null);
+    try {
+      console.log("Fetching posts from API...");
+      const response = await fetch("/api/blog", {
+        method: "GET",
+        cache: "no-store", // Disable caching
+        headers: {
+          'Cache-Control': 'no-cache, no-store, must-revalidate',
+          'Pragma': 'no-cache',
+          'Expires': '0'
+        }
+      });
+
+      console.log("Response status:", response.status);
+      const data = await response.json();
+      console.log("API Response:", data); // Debug log
+      console.log("Number of posts received:", data.data?.posts?.length || 0);
+
+      if (data.success) {
+        // Filter only published posts for the public blog
+        const publishedPosts = data.data.posts.filter((post: BlogPost) => post.status === "published");
+        console.log("Published posts:", publishedPosts); // Debug log
+        console.log("Published posts titles:", publishedPosts.map((p: BlogPost) => p.title));
+        setPosts(publishedPosts);
+      } else {
+        setError(data.message || "Failed to fetch blog posts");
+      }
+    } catch (error) {
+      console.error("Error fetching blog posts:", error);
+      setError("Failed to fetch blog posts. Please try again.");
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
   const formatDate = (dateString: string) => {
     return new Date(dateString).toLocaleDateString("en-US", {
       year: "numeric",
@@ -51,6 +60,10 @@ export default function BlogClient() {
       day: "numeric",
     });
   };
+
+  // Add debug info to the render
+  console.log("Current posts state:", posts);
+  console.log("Posts count:", posts.length);
 
   return (
     <div className="pt-40 bg-gradient-to-b from-background via-background/90 to-muted/20">
@@ -76,7 +89,20 @@ export default function BlogClient() {
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.5, delay: 0.2 }}
           >
-            {mockPosts.map((post) => (
+            {isLoading ? (
+              <div className="col-span-full text-center py-12">
+                <p className="text-muted-foreground font-baskerville">Loading blog posts...</p>
+              </div>
+            ) : error ? (
+              <div className="col-span-full text-center py-12">
+                <p className="text-red-500 font-baskerville">{error}</p>
+              </div>
+            ) : posts.length === 0 ? (
+              <div className="col-span-full text-center py-12">
+                <p className="text-muted-foreground font-baskerville">No blog posts available yet.</p>
+              </div>
+            ) : (
+              posts.map((post) => (
               <Card key={post.id} className="bg-card/50 backdrop-blur-sm border border-muted rounded-xl shadow-xl hover:shadow-2xl transition-shadow">
                 <CardHeader>
                    <div className="flex flex-wrap gap-2 mb-3">
@@ -94,7 +120,7 @@ export default function BlogClient() {
                   <div className="flex items-center gap-4 text-sm text-muted-foreground font-baskerville">
                     <span>By {post.author.name}</span>
                     <span>•</span>
-                    <span>{formatDate(post.publishedAt!)}</span>
+                      <span>{formatDate(post.publishedAt || post.createdAt)}</span>
                     {post.readTime && (
                       <>
                         <span>•</span>
@@ -113,14 +139,9 @@ export default function BlogClient() {
                   </Link>
                 </CardContent>
               </Card>
-            ))}
+              ))
+            )}
           </motion.div>
-
-          {mockPosts.length === 0 && (
-            <div className="text-center py-12">
-              <p className="text-muted-foreground font-baskerville">No blog posts available yet.</p>
-            </div>
-          )}
         </div>
       </div>
       <div className="pb-20"></div>

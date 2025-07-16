@@ -50,26 +50,14 @@ export default function AdminBlogPage() {
   const router = useRouter();
 
   useEffect(() => {
-    // Check if token exists
-    const token = localStorage.getItem("admin_token");
-    if (!token) {
-      router.push("/admin");
-      return;
-    }
-
     fetchPosts();
-  }, [router]);
+  }, []);
 
   const fetchPosts = async () => {
     setIsLoading(true);
     try {
-      const token = localStorage.getItem("admin_token");
-      
       const response = await fetch("/api/blog", {
         method: "GET",
-        headers: {
-          Authorization: `Bearer ${token}`,
-        },
       });
 
       const data = await response.json();
@@ -78,10 +66,6 @@ export default function AdminBlogPage() {
         setPosts(data.data.posts);
       } else {
         toast.error(data.message || "Failed to fetch blog posts");
-        if (response.status === 401) {
-          localStorage.removeItem("admin_token");
-          router.push("/admin");
-        }
       }
     } catch (error) {
       console.error("Error fetching blog posts:", error);
@@ -122,7 +106,6 @@ export default function AdminBlogPage() {
     e.preventDefault();
     
     try {
-      const token = localStorage.getItem("admin_token");
       const tags = tagInput.split(",").map(tag => tag.trim()).filter(tag => tag);
       const requestData = { ...formData, tags };
       
@@ -132,7 +115,6 @@ export default function AdminBlogPage() {
           method: "PUT",
           headers: {
             "Content-Type": "application/json",
-            Authorization: `Bearer ${token}`,
           },
           body: JSON.stringify(requestData),
         });
@@ -141,7 +123,6 @@ export default function AdminBlogPage() {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
-            Authorization: `Bearer ${token}`,
           },
           body: JSON.stringify(requestData),
         });
@@ -168,13 +149,8 @@ export default function AdminBlogPage() {
     }
 
     try {
-      const token = localStorage.getItem("admin_token");
-      
       const response = await fetch(`/api/blog/${postId}`, {
         method: "DELETE",
-        headers: {
-          Authorization: `Bearer ${token}`,
-        },
       });
 
       const data = await response.json();
@@ -191,10 +167,7 @@ export default function AdminBlogPage() {
     }
   };
 
-  const handleLogout = () => {
-    localStorage.removeItem("admin_token");
-    router.push("/admin");
-  };
+
 
   const formatDate = (dateString: string) => {
     const date = new Date(dateString);
@@ -211,9 +184,7 @@ export default function AdminBlogPage() {
               <Plus className="w-4 h-4 mr-2" />
               New Post
             </Button>
-            <Button onClick={handleLogout} variant="outline">
-              Logout
-            </Button>
+
           </div>
         </div>
 
