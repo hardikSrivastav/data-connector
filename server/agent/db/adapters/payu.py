@@ -46,6 +46,130 @@ class PayUAdapter(DBAdapter):
         # Session management
         self.session = None
         
+        # Credentials management
+        self.credentials = None
+        self._load_credentials()
+        
+    def _load_credentials(self):
+        """Load PayU credentials from file"""
+        try:
+            # Get credentials directory
+            home_dir = Path.home()
+            credentials_dir = home_dir / ".data-connector"
+            credentials_file = credentials_dir / "payu_credentials.json"
+            
+            if credentials_file.exists():
+                with open(credentials_file, 'r') as f:
+                    self.credentials = json.load(f)
+                logger.info("Loaded PayU credentials")
+            else:
+                logger.info(f"PayU credentials file not found: {credentials_file}")
+                
+        except Exception as e:
+            logger.error(f"Error loading PayU credentials: {e}")
+            self.credentials = None
+    
+    def _save_credentials(self, credentials: Dict):
+        """Save PayU credentials to file"""
+        try:
+            # Get credentials directory
+            home_dir = Path.home()
+            credentials_dir = home_dir / ".data-connector"
+            credentials_dir.mkdir(exist_ok=True)
+            credentials_file = credentials_dir / "payu_credentials.json"
+            
+            with open(credentials_file, 'w') as f:
+                json.dump(credentials, f, indent=2)
+            
+            logger.info("Saved PayU credentials")
+            
+        except Exception as e:
+            logger.error(f"Error saving PayU credentials: {e}")
+    
+    async def authenticate(self, merchant_key: str, salt: str, merchant_id: Optional[str] = None, environment: str = "test"):
+        """
+        Authenticate with PayU using merchant credentials
+        
+        Args:
+            merchant_key: PayU merchant key
+            salt: PayU salt for hash generation
+            merchant_id: PayU merchant ID (optional)
+            environment: test or production
+        """
+        try:
+            # Store credentials
+            actual_merchant_id = merchant_id or self.merchant_id or "default_merchant"
+            credentials = {
+                'merchant_key': merchant_key,
+                'salt': salt,
+                'merchant_id': actual_merchant_id,
+                'environment': environment,
+                'authenticated_at': datetime.now().isoformat()
+            }
+            
+            # Test the credentials with a simple API call
+            session = await self._get_session()
+            
+            params = {
+                'command': 'verify_payment',
+                'var1': actual_merchant_id,
+                'key': merchant_key
+            }
+            
+            # Generate hash for verification
+            hash_string = f"{merchant_key}|verify_payment|{actual_merchant_id}|{salt}"
+            params['hash'] = hashlib.sha512(hash_string.encode()).hexdigest()
+            
+            # Use test endpoint for authentication verification
+            test_url = f"{self.base_url}/payment/op/getPaymentStatus"
+            
+            async with session.post(
+                test_url,
+                data=params,
+                headers={'Content-Type': 'application/x-www-form-urlencoded'}
+            ) as response:
+                
+                if response.status == 200:
+                    data = await response.json()
+                    
+                    # Check if authentication was successful
+                    if data.get('status') == 0 and 'invalid' in data.get('msg', '').lower():
+                        logger.error("PayU authentication failed: Invalid credentials")
+                        return False
+                    
+                    # Save credentials on successful authentication
+                    self.credentials = credentials
+                    self.auth_config = credentials
+                    self._save_credentials(credentials)
+                    
+                    logger.info("PayU authentication successful")
+                    return True
+                else:
+                    error_text = await response.text()
+                    logger.error(f"PayU authentication failed: {response.status} - {error_text}")
+                    return False
+                    
+        except Exception as e:
+            logger.error(f"PayU authentication error: {e}")
+            return False
+    
+    async def _authenticate(self) -> Optional[str]:
+        """Internal authentication method that returns credentials if valid"""
+        if not self.credentials:
+            logger.error("No PayU credentials available")
+            return None
+            
+        # Check if credentials are expired (24 hours)
+        if 'authenticated_at' in self.credentials:
+            auth_time = datetime.fromisoformat(self.credentials['authenticated_at'])
+            if datetime.now() - auth_time > timedelta(hours=24):
+                logger.warning("PayU credentials expired")
+                return None
+        
+        # Update auth_config with loaded credentials
+        self.auth_config = self.credentials
+        return self.credentials.get('merchant_key')
+
     async def _get_session(self):
         """Initialize aiohttp session if not exists"""
         if not self.session:

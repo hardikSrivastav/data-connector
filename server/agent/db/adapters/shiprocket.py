@@ -135,7 +135,7 @@ class ShiprocketAdapter(DBAdapter):
         
         try:
             async with session.post(
-                f"{self.base_url}/external/auth/login",
+                f"{self.base_url}/auth/login",
                 json=auth_data,
                 headers={'Content-Type': 'application/json'}
             ) as response:
@@ -165,23 +165,23 @@ class ShiprocketAdapter(DBAdapter):
         # Define Shiprocket API endpoints
         api_endpoints = {
             'orders': {
-                'endpoint': '/external/orders',
+                'endpoint': '/orders',
                 'description': 'Shipping orders - list, search, and get order details'
             },
             'tracking': {
-                'endpoint': '/external/courier/track',
+                'endpoint': '/courier/track',
                 'description': 'Shipment tracking and status updates'
             },
             'pickup': {
-                'endpoint': '/external/courier/assign/pickup',
+                'endpoint': '/courier/assign/pickup',
                 'description': 'Pickup scheduling and management'
             },
             'couriers': {
-                'endpoint': '/external/courier/serviceability',
+                'endpoint': '/courier/serviceability',
                 'description': 'Courier partners and rate calculation'
             },
             'ndr': {
-                'endpoint': '/external/ndr',
+                'endpoint': '/ndr',
                 'description': 'Non-Delivery Report management'
             }
         }
@@ -492,6 +492,7 @@ class ShiprocketAdapter(DBAdapter):
             # Try to authenticate
             auth_token = await self._authenticate()
             if not auth_token:
+                logger.error("Shiprocket connection test failed: No auth token available")
                 return False
                 
             session = await self._get_session()
@@ -501,18 +502,40 @@ class ShiprocketAdapter(DBAdapter):
                 'Content-Type': 'application/json'
             }
             
-            # Test with a simple API call
-            async with session.get(
-                f"{self.base_url}/external/orders?per_page=1",
-                headers=headers
-            ) as response:
-                success = response.status == 200
-                if success:
-                    logger.info("Shiprocket connection test successful")
-                else:
-                    error_text = await response.text()
-                    logger.error(f"Shiprocket connection test failed: {response.status} - {error_text}")
-                return success
+            # Test with a simple API call - try courier serviceability first (usually requires fewer permissions)
+            test_url = f"{self.base_url}/courier/serviceability?pickup_postcode=110001&delivery_postcode=110001&weight=1&cod=1"
+            logger.info(f"Testing Shiprocket connection to: {test_url}")
+            
+            try:
+                async with session.get(test_url, headers=headers) as response:
+                    logger.info(f"Shiprocket API response status: {response.status}")
+                    
+                    if response.status == 200:
+                        logger.info("Shiprocket connection test successful")
+                        return True
+                    elif response.status == 403:
+                        # Try orders endpoint as fallback
+                        fallback_url = f"{self.base_url}/orders?per_page=1"
+                        logger.info(f"Testing fallback URL: {fallback_url}")
+                        
+                        async with session.get(fallback_url, headers=headers) as response2:
+                            logger.info(f"Shiprocket fallback API response status: {response2.status}")
+                            
+                            if response2.status == 200:
+                                logger.info("Shiprocket connection test successful (fallback)")
+                                return True
+                            else:
+                                error_text = await response2.text()
+                                logger.error(f"Shiprocket connection test failed: {response2.status} - {error_text}")
+                                return False
+                    else:
+                        error_text = await response.text()
+                        logger.error(f"Shiprocket connection test failed: {response.status} - {error_text}")
+                        return False
+                        
+            except Exception as request_error:
+                logger.error(f"Shiprocket HTTP request failed: {request_error}")
+                return False
                 
         except Exception as e:
             logger.error(f"Shiprocket connection test failed: {e}")

@@ -363,8 +363,14 @@ def auth_login():
 
 @app.command()
 def authenticate(
-    db_type: str = typer.Argument(..., help="Database type to authenticate with ('slack', 'shopify', 'ga4', etc.)"),
-    shop: Optional[str] = typer.Option(None, "--shop", help="Shop domain for Shopify (e.g., mystore.myshopify.com)")
+    db_type: str = typer.Argument(..., help="Database type to authenticate with ('slack', 'shopify', 'shiprocket', 'payu', 'easebuzz', 'ga4', etc.)"),
+    shop: Optional[str] = typer.Option(None, "--shop", help="Shop domain for Shopify (e.g., mystore.myshopify.com)"),
+    email: Optional[str] = typer.Option(None, "--email", help="Email for Shiprocket authentication"),
+    password: Optional[str] = typer.Option(None, "--password", help="Password for Shiprocket authentication"),
+    merchant_key: Optional[str] = typer.Option(None, "--merchant-key", help="Merchant key for PayU/Easebuzz authentication"),
+    salt: Optional[str] = typer.Option(None, "--salt", help="Salt for PayU/Easebuzz authentication"),
+    merchant_id: Optional[str] = typer.Option(None, "--merchant-id", help="Merchant ID for PayU/Easebuzz authentication"),
+    environment: Optional[str] = typer.Option("test", "--environment", help="Environment: test or production")
 ):
     """Authenticate with a specific database/service type"""
     async def run():
@@ -381,16 +387,44 @@ def authenticate(
                     self.shop = shop
             args = Args()
             await shopify_auth(args)
+        elif db_type.lower() == "shiprocket":
+            # Use Shiprocket auth
+            class Args:
+                def __init__(self):
+                    self.email = email
+                    self.password = password
+            args = Args()
+            await shiprocket_auth(args)
+        elif db_type.lower() == "payu":
+            # Use PayU auth
+            class Args:
+                def __init__(self):
+                    self.merchant_key = merchant_key
+                    self.salt = salt
+                    self.merchant_id = merchant_id
+                    self.environment = environment
+            args = Args()
+            await payu_auth(args)
+        elif db_type.lower() == "easebuzz":
+            # Use Easebuzz auth
+            class Args:
+                def __init__(self):
+                    self.merchant_key = merchant_key
+                    self.salt = salt
+                    self.merchant_id = merchant_id
+                    self.environment = environment
+            args = Args()
+            await easebuzz_auth(args)
         else:
             console.print(f"[red]Authentication not yet implemented for {db_type}[/red]")
-            console.print("Supported types: slack, shopify")
+            console.print("Supported types: slack, shopify, shiprocket")
     
     asyncio.run(run())
 
 @app.command()
 def test_connection(
     db_uri: Optional[str] = typer.Option(None, "--uri", "-u", help="Database connection URI (overrides settings)"),
-    db_type: Optional[str] = typer.Option(None, "--type", "-t", help="Database type ('postgres', 'mongodb', 'qdrant', 'shopify', 'ga4', etc.)")
+    db_type: Optional[str] = typer.Option(None, "--type", "-t", help="Database type ('postgres', 'mongodb', 'qdrant', 'shopify', 'shiprocket', 'payu', 'easebuzz', 'ga4', etc.)")
 ):
     """Test database connection"""
     async def run():
@@ -501,6 +535,50 @@ def test_connection(
                     console.print("Run: [bold]python -m agent.cmd.query authenticate shopify --shop your-store[/bold]")
                     return
             
+            elif detected_db_type.lower() == "shiprocket":
+                # Special handling for Shiprocket - check if credentials exist
+                from pathlib import Path
+                credentials_file = os.path.join(str(Path.home()), ".data-connector", "shiprocket_credentials.json")
+                
+                if not os.path.exists(credentials_file):
+                    console.print("[red]❌ No Shiprocket credentials found[/red]")
+                    console.print("\n💡 [bold]To get started with Shiprocket:[/bold]")
+                    console.print("1. Run: [bold]python -m agent.cmd.query authenticate shiprocket[/bold]")
+                    console.print("2. Enter your Shiprocket email and password")
+                    console.print("3. Then test the connection again")
+                    console.print(f"\nCredentials will be saved to: [dim]{credentials_file}[/dim]")
+                    return
+                
+                try:
+                    with open(credentials_file, 'r') as f:
+                        credentials = json.load(f)
+                    
+                    auth_token = credentials.get('auth_token')
+                    if not auth_token:
+                        console.print("[red]❌ No Shiprocket auth token found in credentials[/red]")
+                        console.print("\n💡 [bold]To authenticate:[/bold]")
+                        console.print("Run: [bold]python -m agent.cmd.query authenticate shiprocket[/bold]")
+                        return
+                    
+                    # Check if token is expired
+                    from datetime import datetime
+                    expires_at = credentials.get('expires_at')
+                    if expires_at:
+                        expires_at = datetime.fromisoformat(expires_at)
+                        if expires_at < datetime.now():
+                            console.print("[yellow]⚠️ Shiprocket token has expired[/yellow]")
+                            console.print("\n💡 [bold]To re-authenticate:[/bold]")
+                            console.print("Run: [bold]python -m agent.cmd.query authenticate shiprocket[/bold]")
+                            return
+                    
+                    console.print("[green]✅ Shiprocket credentials found[/green]")
+                    
+                except Exception as e:
+                    console.print(f"[red]❌ Error reading Shiprocket credentials: {e}[/red]")
+                    console.print("\n💡 [bold]To fix this:[/bold]")
+                    console.print("Run: [bold]python -m agent.cmd.query authenticate shiprocket[/bold]")
+                    return
+            
             # Add db_type to kwargs
             kwargs['db_type'] = detected_db_type
             
@@ -519,6 +597,12 @@ def test_connection(
                     console.print("2. Check if your access token is still valid")
                     console.print("3. Re-authenticate: [bold]python -m agent.cmd.query authenticate shopify --shop your-store[/bold]")
                     console.print("4. Ensure the Shopify app has the required permissions")
+                elif detected_db_type.lower() == "shiprocket":
+                    console.print("\n🔧 [bold]Shiprocket Connection Troubleshooting:[/bold]")
+                    console.print("1. Verify your email and password are correct")
+                    console.print("2. Check if your Shiprocket account is active")
+                    console.print("3. Re-authenticate: [bold]python -m agent.cmd.query authenticate shiprocket[/bold]")
+                    console.print("4. Ensure you have API access enabled in your Shiprocket account")
         except Exception as e:
             error_msg = str(e)
             console.print(f"[red]Connection error: {error_msg}[/red]")
@@ -541,6 +625,23 @@ def test_connection(
                     console.print("1. Verify your shop domain is correct")
                     console.print("2. Re-authenticate: [bold]python -m agent.cmd.query authenticate shopify --shop your-store[/bold]")
                     console.print("3. Check if the client app is running: [bold]cd client && npm run dev[/bold]")
+            elif detected_db_type.lower() == "shiprocket":
+                if "credentials file not found" in error_msg.lower():
+                    console.print("\n💡 [bold]Shiprocket Authentication Required:[/bold]")
+                    console.print("Run: [bold]python -m agent.cmd.query authenticate shiprocket[/bold]")
+                elif "not authenticated" in error_msg.lower() or "authentication failed" in error_msg.lower():
+                    console.print("\n💡 [bold]Shiprocket Re-authentication Required:[/bold]")
+                    console.print("Your credentials may be expired or invalid. Re-authenticate with:")
+                    console.print("[bold]python -m agent.cmd.query authenticate shiprocket[/bold]")
+                elif "401" in error_msg or "unauthorized" in error_msg.lower():
+                    console.print("\n💡 [bold]Shiprocket Authorization Error:[/bold]")
+                    console.print("Your access token is invalid. Re-authenticate with:")
+                    console.print("[bold]python -m agent.cmd.query authenticate shiprocket[/bold]")
+                else:
+                    console.print("\n💡 [bold]General Shiprocket Troubleshooting:[/bold]")
+                    console.print("1. Verify your email and password are correct")
+                    console.print("2. Re-authenticate: [bold]python -m agent.cmd.query authenticate shiprocket[/bold]")
+                    console.print("3. Check if your Shiprocket account has API access enabled")
     
     asyncio.run(run())
 
@@ -672,7 +773,7 @@ def query(
     analyze: bool = typer.Option(False, "--analyze", "-a", help="Analyze query results"),
     orchestrate: bool = typer.Option(False, "--orchestrate", "-o", help="Use multi-step orchestrated analysis"),
     db_uri: Optional[str] = typer.Option(None, "--uri", "-u", help="Database connection URI (overrides settings)"),
-    db_type: Optional[str] = typer.Option(None, "--type", "-t", help="Database type ('postgres', 'mongodb', 'ga4', etc.)")
+    db_type: Optional[str] = typer.Option(None, "--type", "-t", help="Database type ('postgres', 'mongodb', 'shiprocket', 'ga4', etc.)")
 ):
     """
     Translate natural language to a database query and execute it
@@ -780,6 +881,12 @@ def query(
                     await run_slack_query(llm, question, analyze, orchestrator, detected_db_type)
                 elif detected_db_type.lower() == "shopify":
                     await run_shopify_query(llm, question, analyze, orchestrator, detected_db_type)
+                elif detected_db_type.lower() == "shiprocket":
+                    await run_shiprocket_query(llm, question, analyze, orchestrator, detected_db_type)
+                elif detected_db_type.lower() == "payu":
+                    await run_payu_query(llm, question, analyze, orchestrator, detected_db_type)
+                elif detected_db_type.lower() == "easebuzz":
+                    await run_easebuzz_query(llm, question, analyze, orchestrator, detected_db_type)
                 elif detected_db_type.lower() == "ga4":
                     await run_ga4_query(llm, question, analyze, orchestrator, detected_db_type)
                 else:
@@ -1194,6 +1301,151 @@ async def run_shopify_query(llm, question: str, analyze: bool, orchestrator: Orc
             console.print("[yellow]No results found[/yellow]")
     except Exception as e:
         console.print(f"[red]Error executing Shopify query: {str(e)}[/red]")
+        import traceback
+        console.print(traceback.format_exc())
+
+async def run_shiprocket_query(llm, question: str, analyze: bool, orchestrator: Orchestrator, db_type: str):
+    """Run a Shiprocket query"""
+    
+    # Search schema metadata specific to this database type
+    searcher = SchemaSearcher(db_type=db_type)
+    schema_chunks = await searcher.search(question, top_k=5, db_type=db_type)
+    
+    # Create context from schema chunks
+    schema_context = "\n\n".join([chunk.get("content", "") for chunk in schema_chunks])
+    
+    # Generate Shiprocket query using the adapter's natural language processing
+    console.print("Generating Shiprocket API query...")
+    
+    try:
+        # Use the adapter's llm_to_query method
+        query = await orchestrator.llm_to_query(question, schema_chunks=schema_chunks)
+        
+        # Print the query
+        console.print(f"\n[bold cyan]Shiprocket Query:[/bold cyan]")
+        formatted_query = json.dumps(query, indent=2)
+        console.print(f"[cyan]{formatted_query}[/cyan]\n")
+        
+        # Execute query
+        console.print("Executing Shiprocket API query...")
+        results = await orchestrator.execute(query)
+        
+        # Display results
+        if results:
+            # Format Shiprocket results for display
+            console.print(f"\n[bold]Retrieved {len(results)} items from Shiprocket:[/bold]")
+            
+            # Display in table format
+            display_query_results(results)
+            
+            # Analyze results if requested
+            if analyze:
+                console.print("\n[bold]Analyzing results...[/bold]")
+                analysis = await llm.analyze_results(results)
+                console.print(f"\n[bold green]Analysis:[/bold green]")
+                console.print(Panel(Markdown(analysis)))
+        else:
+            console.print("[yellow]No results found[/yellow]")
+    except Exception as e:
+        console.print(f"[red]Error executing Shiprocket query: {str(e)}[/red]")
+        import traceback
+        console.print(traceback.format_exc())
+
+async def run_payu_query(llm, question: str, analyze: bool, orchestrator: Orchestrator, db_type: str):
+    """Run a PayU query"""
+    
+    # Search schema metadata specific to this database type
+    searcher = SchemaSearcher(db_type=db_type)
+    schema_chunks = await searcher.search(question, top_k=5, db_type=db_type)
+    
+    # Generate PayU API query
+    query = await orchestrator.get_adapter().llm_to_query(question, schema_chunks=schema_chunks)
+    
+    console.print(f"\n[bold]PayU Query:[/bold]")
+    console.print(Panel(json.dumps(query, indent=2), title="Generated Query", expand=False))
+    
+    console.print(f"\n[bold]Executing PayU API query...[/bold]")
+    
+    try:
+        # Execute the query
+        results = await orchestrator.get_adapter().execute(query)
+        
+        if results:
+            # Display results
+            console.print(f"\n[bold green]Results:[/bold green]")
+            
+            # Create table for results
+            table = Table(show_header=True, header_style="bold magenta")
+            
+            if results:
+                # Add columns based on first result
+                first_result = results[0]
+                for key in first_result.keys():
+                    table.add_column(key.replace('_', ' ').title())
+                
+                # Add rows
+                for result in results:
+                    row = [str(result.get(key, "")) for key in first_result.keys()]
+                    table.add_row(*row)
+                
+                console.print(table)
+            else:
+                console.print("No results found")
+                
+        else:
+            console.print("No results found")
+            
+    except Exception as e:
+        console.print(f"[red]Error executing PayU query: {str(e)}[/red]")
+        import traceback
+        console.print(traceback.format_exc())
+
+async def run_easebuzz_query(llm, question: str, analyze: bool, orchestrator: Orchestrator, db_type: str):
+    """Run an Easebuzz query"""
+    
+    # Search schema metadata specific to this database type
+    searcher = SchemaSearcher(db_type=db_type)
+    schema_chunks = await searcher.search(question, top_k=5, db_type=db_type)
+    
+    # Generate Easebuzz API query
+    query = await orchestrator.get_adapter().llm_to_query(question, schema_chunks=schema_chunks)
+    
+    console.print(f"\n[bold]Easebuzz Query:[/bold]")
+    console.print(Panel(json.dumps(query, indent=2), title="Generated Query", expand=False))
+    
+    console.print(f"\n[bold]Executing Easebuzz API query...[/bold]")
+    
+    try:
+        # Execute the query
+        results = await orchestrator.get_adapter().execute(query)
+        
+        if results:
+            # Display results
+            console.print(f"\n[bold green]Results:[/bold green]")
+            
+            # Create table for results
+            table = Table(show_header=True, header_style="bold magenta")
+            
+            if results:
+                # Add columns based on first result
+                first_result = results[0]
+                for key in first_result.keys():
+                    table.add_column(key.replace('_', ' ').title())
+                
+                # Add rows
+                for result in results:
+                    row = [str(result.get(key, "")) for key in first_result.keys()]
+                    table.add_row(*row)
+                
+                console.print(table)
+            else:
+                console.print("No results found")
+                
+        else:
+            console.print("No results found")
+            
+    except Exception as e:
+        console.print(f"[red]Error executing Easebuzz query: {str(e)}[/red]")
         import traceback
         console.print(traceback.format_exc())
 
@@ -1812,6 +2064,200 @@ async def shopify_auth(args):
     
     return False
 
+async def payu_auth(args):
+    """
+    Authenticate with PayU using merchant credentials
+    """
+    from agent.db.adapters.payu import PayUAdapter
+    from pathlib import Path
+    import getpass
+    
+    # Get credentials from args or prompt user
+    merchant_key = args.merchant_key if hasattr(args, 'merchant_key') and args.merchant_key else None
+    salt = args.salt if hasattr(args, 'salt') and args.salt else None
+    merchant_id = args.merchant_id if hasattr(args, 'merchant_id') and args.merchant_id else None
+    environment = args.environment if hasattr(args, 'environment') and args.environment else "test"
+    
+    if not merchant_key:
+        merchant_key = input("Enter your PayU merchant key: ").strip()
+    
+    if not merchant_key:
+        console.print("[red]Merchant key is required for PayU authentication.[/red]")
+        return False
+    
+    if not salt:
+        salt = getpass.getpass("Enter your PayU salt: ")
+    
+    if not salt:
+        console.print("[red]Salt is required for PayU authentication.[/red]")
+        return False
+    
+    if not merchant_id:
+        merchant_id = input("Enter your PayU merchant ID (optional): ").strip()
+    
+    console.print(f"Authenticating with PayU...")
+    console.print(f"Merchant Key: {merchant_key}")
+    console.print(f"Environment: {environment}")
+    
+    try:
+        # Test authentication
+        adapter = PayUAdapter("https://info.payu.in", merchant_id=merchant_id, environment=environment)
+        
+        with console.status("[bold green]Authenticating with PayU..."):
+            success = await adapter.authenticate(merchant_key, salt, merchant_id, environment)
+        
+        if success:
+            console.print("[green]✅ Authentication successful![/green]")
+            console.print(f"Credentials saved to: {Path.home() / '.data-connector' / 'payu_credentials.json'}")
+            return True
+        else:
+            console.print("[red]❌ Authentication failed[/red]")
+            return False
+            
+    except Exception as e:
+        console.print(f"[red]❌ Authentication error: {e}[/red]")
+        return False
+    finally:
+        if 'adapter' in locals():
+            await adapter.close()
+
+async def easebuzz_auth(args):
+    """
+    Authenticate with Easebuzz using merchant credentials
+    """
+    from agent.db.adapters.easebuzz import EasebuzzAdapter
+    from pathlib import Path
+    import getpass
+    
+    # Get credentials from args or prompt user
+    merchant_key = args.merchant_key if hasattr(args, 'merchant_key') and args.merchant_key else None
+    salt = args.salt if hasattr(args, 'salt') and args.salt else None
+    merchant_id = args.merchant_id if hasattr(args, 'merchant_id') and args.merchant_id else None
+    environment = args.environment if hasattr(args, 'environment') and args.environment else "test"
+    
+    if not merchant_key:
+        merchant_key = input("Enter your Easebuzz merchant key: ").strip()
+    
+    if not merchant_key:
+        console.print("[red]Merchant key is required for Easebuzz authentication.[/red]")
+        return False
+    
+    if not salt:
+        salt = getpass.getpass("Enter your Easebuzz salt: ")
+    
+    if not salt:
+        console.print("[red]Salt is required for Easebuzz authentication.[/red]")
+        return False
+    
+    if not merchant_id:
+        merchant_id = input("Enter your Easebuzz merchant ID (optional): ").strip()
+    
+    console.print(f"Authenticating with Easebuzz...")
+    console.print(f"Merchant Key: {merchant_key}")
+    console.print(f"Environment: {environment}")
+    
+    try:
+        # Test authentication
+        base_url = "https://testpay.easebuzz.in" if environment == "test" else "https://pay.easebuzz.in"
+        adapter = EasebuzzAdapter(base_url, merchant_id=merchant_id, environment=environment)
+        
+        with console.status("[bold green]Authenticating with Easebuzz..."):
+            success = await adapter.authenticate(merchant_key, salt, merchant_id, environment)
+        
+        if success:
+            console.print("[green]✅ Authentication successful![/green]")
+            console.print(f"Credentials saved to: {Path.home() / '.data-connector' / 'easebuzz_credentials.json'}")
+            return True
+        else:
+            console.print("[red]❌ Authentication failed[/red]")
+            return False
+            
+    except Exception as e:
+        console.print(f"[red]❌ Authentication error: {e}[/red]")
+        return False
+    finally:
+        if 'adapter' in locals():
+            await adapter.close()
+
+async def shiprocket_auth(args):
+    """
+    Authenticate with Shiprocket using email/password
+    """
+    from agent.db.adapters.shiprocket import ShiprocketAdapter
+    from pathlib import Path
+    import getpass
+    
+    # Get credentials from args or prompt user
+    email = args.email if hasattr(args, 'email') and args.email else None
+    password = args.password if hasattr(args, 'password') and args.password else None
+    
+    if not email:
+        email = input("Enter your Shiprocket email: ").strip()
+    
+    if not email:
+        console.print("[red]Email is required for Shiprocket authentication.[/red]")
+        return False
+    
+    if not password:
+        password = getpass.getpass("Enter your Shiprocket password: ")
+    
+    if not password:
+        console.print("[red]Password is required for Shiprocket authentication.[/red]")
+        return False
+    
+    console.print(f"Authenticating with Shiprocket as: [bold]{email}[/bold]")
+    
+    # Test authentication
+    try:
+        # Create adapter with auth config
+        auth_config = {
+            'email': email,
+            'password': password
+        }
+        
+        adapter = ShiprocketAdapter("https://apiv2.shiprocket.in/v1/external", auth=auth_config)
+        
+        # Test authentication
+        console.print("Testing authentication...")
+        
+        with Progress(
+            SpinnerColumn(),
+            TextColumn("[bold blue]Authenticating with Shiprocket..."),
+            transient=False,
+        ) as progress:
+            task = progress.add_task("Authenticating...", total=None)
+            
+            # This will trigger authentication and save credentials
+            auth_token = await adapter._authenticate()
+            
+            progress.update(task, completed=True)
+        
+        if auth_token:
+            console.print(f"[green]✅ Authentication successful![/green]")
+            console.print(f"Token saved to: [dim]{adapter.credentials_file}[/dim]")
+            
+            # Test connection
+            console.print("Testing connection...")
+            if await adapter.test_connection():
+                console.print("[green]✅ Connection test successful![/green]")
+                console.print("\n🎉 [bold green]You're all set![/bold green]")
+                console.print("Run Shiprocket queries using: [bold]python -m agent.cmd.query --type shiprocket \"your question\"[/bold]")
+                return True
+            else:
+                console.print("[yellow]⚠️ Authentication successful but connection test failed[/yellow]")
+                return False
+        else:
+            console.print("[red]❌ Authentication failed[/red]")
+            return False
+            
+    except Exception as e:
+        console.print(f"[red]❌ Authentication error: {str(e)}[/red]")
+        return False
+    finally:
+        # Clean up the adapter
+        if 'adapter' in locals():
+            await adapter.close()
+
 async def main():
     parser = argparse.ArgumentParser(description='Data Connector CLI')
     subparsers = parser.add_subparsers(dest='command', help='Command')
@@ -1826,7 +2272,7 @@ async def main():
     )
     query_parser.add_argument(
         '--type', '-t', 
-        choices=['postgres', 'mongodb', 'mongo', 'qdrant', 'slack', 'shopify', 'ga4'], 
+        choices=['postgres', 'mongodb', 'mongo', 'qdrant', 'slack', 'shopify', 'shiprocket', 'payu', 'easebuzz', 'ga4'], 
         default=None,
         help='Specify database type to query'
     )

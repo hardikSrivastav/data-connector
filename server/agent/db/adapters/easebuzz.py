@@ -46,6 +46,136 @@ class EasebuzzAdapter(DBAdapter):
         # Session management
         self.session = None
         
+        # Credentials management
+        self.credentials = None
+        self._load_credentials()
+        
+    def _load_credentials(self):
+        """Load Easebuzz credentials from file"""
+        try:
+            # Get credentials directory
+            home_dir = Path.home()
+            credentials_dir = home_dir / ".data-connector"
+            credentials_file = credentials_dir / "easebuzz_credentials.json"
+            
+            if credentials_file.exists():
+                with open(credentials_file, 'r') as f:
+                    self.credentials = json.load(f)
+                logger.info("Loaded Easebuzz credentials")
+            else:
+                logger.info(f"Easebuzz credentials file not found: {credentials_file}")
+                
+        except Exception as e:
+            logger.error(f"Error loading Easebuzz credentials: {e}")
+            self.credentials = None
+    
+    def _save_credentials(self, credentials: Dict):
+        """Save Easebuzz credentials to file"""
+        try:
+            # Get credentials directory
+            home_dir = Path.home()
+            credentials_dir = home_dir / ".data-connector"
+            credentials_dir.mkdir(exist_ok=True)
+            credentials_file = credentials_dir / "easebuzz_credentials.json"
+            
+            with open(credentials_file, 'w') as f:
+                json.dump(credentials, f, indent=2)
+            
+            logger.info("Saved Easebuzz credentials")
+            
+        except Exception as e:
+            logger.error(f"Error saving Easebuzz credentials: {e}")
+    
+    async def authenticate(self, merchant_key: str, salt: str, merchant_id: Optional[str] = None, environment: str = "test"):
+        """
+        Authenticate with Easebuzz using merchant credentials
+        
+        Args:
+            merchant_key: Easebuzz merchant key
+            salt: Easebuzz salt for hash generation
+            merchant_id: Easebuzz merchant ID (optional)
+            environment: test or prod
+        """
+        try:
+            # Store credentials
+            actual_merchant_id = merchant_id or self.merchant_id or "default_merchant"
+            credentials = {
+                'merchant_key': merchant_key,
+                'salt': salt,
+                'merchant_id': actual_merchant_id,
+                'environment': environment,
+                'authenticated_at': datetime.now().isoformat()
+            }
+            
+            # Test the credentials with a simple API call
+            session = await self._get_session()
+            
+            # Create a test transaction query
+            test_params = {
+                'merchant_id': actual_merchant_id,
+                'transaction_id': 'test_txn_123',
+                'amount': '1.00'
+            }
+            
+            # Generate hash for verification
+            hash_string = f"{actual_merchant_id}|test_txn_123|1.00|{salt}"
+            test_params['hash'] = hashlib.sha256(hash_string.encode()).hexdigest()
+            
+            headers = {
+                'Content-Type': 'application/json',
+                'Authorization': f"Bearer {merchant_key}"
+            }
+            
+            # Use test endpoint for authentication verification
+            test_url = f"{self.base_url}/v1/payment/status"
+            
+            async with session.post(
+                test_url,
+                json=test_params,
+                headers=headers
+            ) as response:
+                
+                if response.status == 200:
+                    data = await response.json()
+                    
+                    # Check if authentication was successful
+                    if data.get('status') == 'error' and 'authentication' in data.get('message', '').lower():
+                        logger.error("Easebuzz authentication failed: Invalid credentials")
+                        return False
+                    
+                    # Save credentials on successful authentication
+                    self.credentials = credentials
+                    self.auth_config = credentials
+                    self._save_credentials(credentials)
+                    
+                    logger.info("Easebuzz authentication successful")
+                    return True
+                else:
+                    error_text = await response.text()
+                    logger.error(f"Easebuzz authentication failed: {response.status} - {error_text}")
+                    return False
+                    
+        except Exception as e:
+            logger.error(f"Easebuzz authentication error: {e}")
+            return False
+    
+    async def _authenticate(self) -> Optional[str]:
+        """Internal authentication method that returns credentials if valid"""
+        if not self.credentials:
+            logger.error("No Easebuzz credentials available")
+            return None
+            
+        # Check if credentials are expired (24 hours)
+        if 'authenticated_at' in self.credentials:
+            auth_time = datetime.fromisoformat(self.credentials['authenticated_at'])
+            if datetime.now() - auth_time > timedelta(hours=24):
+                logger.warning("Easebuzz credentials expired")
+                return None
+        
+        # Update auth_config with loaded credentials
+        self.auth_config = self.credentials
+        return self.credentials.get('merchant_key')
+
     async def _get_session(self):
         """Initialize aiohttp session if not exists"""
         if not self.session:
