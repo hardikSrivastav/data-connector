@@ -8,7 +8,7 @@ import random
 from decimal import Decimal
 # Remove the circular import - DataTools uses Orchestrator instead
 # from ..db.execute import create_connection_pool
-from ..meta.ingest import SchemaSearcher
+# SchemaSearcher will be imported lazily to avoid circular imports
 from ..config.settings import Settings
 # Use lazy import for Orchestrator
 # from ..db.orchestrator import Orchestrator
@@ -72,7 +72,7 @@ class DataTools:
         self.settings = Settings()
         if db_type:
             self.settings.DB_TYPE = db_type  # Add this line to update settings
-        self.schema_searcher = SchemaSearcher()
+        self.schema_searcher = None  # Will be initialized lazily
         self.session_id = None
         self.redis_client = None
         self.db_type = db_type or self.settings.DB_TYPE

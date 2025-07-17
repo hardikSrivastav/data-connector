@@ -1,0 +1,124 @@
+# LangGraph Integration Configuration
+
+# Core integration settings
+integration:
+  enabled: true
+  use_langgraph_for_complex: true
+  complexity_threshold: 5  # Queries above this use LangGraph
+  preserve_trivial_routing: true
+  max_graph_complexity: 10
+
+# LLM Configuration (AWS Bedrock primary, with fallbacks)
+llm_config:
+  primary_provider: "bedrock"
+  
+  bedrock:
+    region: "us-east-1"
+    model_id: "anthropic.claude-3-sonnet-20240229-v1:0"
+    max_tokens: 4000
+    temperature: 0.1
+    
+  fallbacks:
+    - provider: "anthropic"
+      model: "claude-3-sonnet-20240229"
+      max_tokens: 4000
+      temperature: 0.1
+      
+    - provider: "openai"
+      model: "gpt-4-turbo-preview"
+      max_tokens: 4000
+      temperature: 0.1
+
+# Graph Construction Settings
+graph_builder:
+  enable_optimization: true
+  max_parallel_operations: 16
+  adaptive_parallelism: true
+  performance_monitoring: true
+  
+  templates:
+    simple_query:
+      complexity_threshold: 3
+      estimated_time: 15
+      
+    complex_analysis:
+      complexity_threshold: 6
+      estimated_time: 45
+      
+    parallel_execution:
+      complexity_threshold: 8
+      estimated_time: 30
+
+# Streaming Configuration
+streaming:
+  enabled: true
+  progress_interval: 1.0  # seconds
+  buffer_size: 100
+  real_time_updates: true
+  chunk_size: 1024
+
+# State Management
+state_management:
+  hybrid_mode: true
+  persist_graph_state: true
+  session_timeout: 3600  # seconds
+  cleanup_interval: 300   # seconds
+
+# Performance and Monitoring
+performance:
+  track_execution_stats: true
+  performance_cache_size: 1000
+  circuit_breaker:
+    failure_threshold: 3
+    timeout: 60  # seconds
+    
+  optimization:
+    auto_optimize: true
+    optimization_interval: 3600  # seconds
+    min_samples_for_optimization: 50
+
+# Database-specific settings
+database_config:
+  postgres:
+    max_concurrent_connections: 8
+    connection_timeout: 30
+    
+  mongodb:
+    max_concurrent_connections: 6
+    connection_timeout: 30
+    
+  qdrant:
+    max_concurrent_connections: 4
+    connection_timeout: 45
+    
+  slack:
+    max_concurrent_connections: 2
+    rate_limit_respect: true
+    
+  shopify:
+    max_concurrent_connections: 3
+    rate_limit_respect: true
+
+# Error Handling
+error_handling:
+  max_retries: 3
+  retry_delay: 1.0  # seconds
+  exponential_backoff: true
+  fallback_to_traditional: true
+
+# Logging Configuration
+logging:
+  level: "INFO"
+  format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+  handlers:
+    - type: "console"
+    - type: "file"
+      filename: "logs/langgraph_integration.log"
+      max_size: "10MB"
+      backup_count: 5
+
+# Security Settings
+security:
+  encrypt_state: false  # Set to true in production
+  validate_inputs: true
+  sanitize_outputs: true 

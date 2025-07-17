@@ -68,6 +68,8 @@ const AI_OPTIONS = [
     section: 'Find, search',
     items: [
       { icon: '?', text: 'Ask a question...', query: 'Ask a question...' },
+      { icon: '🔍', text: 'Query database...', query: 'enhanced:query' },
+      { icon: '🌐', text: 'Cross-database search...', query: 'enhanced:cross-db' },
     ]
   },
   {
@@ -271,6 +273,71 @@ export default function AIQuerySelector({
     }
   };
 
+  const handleEnhancedQuery = async (commandQuery: string) => {
+    console.log('🚀✨ === handleEnhancedQuery START ===');
+    console.log('🚀✨ Command:', commandQuery);
+    
+    try {
+      // Parse the enhanced command
+      if (commandQuery === 'enhanced:query') {
+        // Single database query with tools
+        console.log('🚀✨ Executing single database query with tools');
+        const actualQuery = inputValue.replace('enhanced:query', '').trim() || 'Show me the latest data';
+        
+        const request: CrossDatabaseQueryRequest = {
+          question: actualQuery,
+          analyze: true,
+          cross_database: false,
+          enable_tools: true,
+          user_preferences: {
+            style: 'modern',
+            performance: 'high'
+          }
+        };
+        
+        const result = await enhancedAgentClient.queryWithTools(request);
+        console.log('🚀✨ Enhanced query result:', result);
+        
+        // Handle the result - for now, forward to parent component with special prefix
+        onQuerySubmit(`enhanced_result:${JSON.stringify(result)}`);
+        
+      } else if (commandQuery === 'enhanced:cross-db') {
+        // Cross-database query with tools
+        console.log('🚀✨ Executing cross-database query with tools');
+        const actualQuery = inputValue.replace('enhanced:cross-db', '').trim() || 'Compare data across all databases';
+        
+        const request: CrossDatabaseQueryRequest = {
+          question: actualQuery,
+          analyze: true,
+          cross_database: true,
+          enable_tools: true,
+          preferred_tools: ['chart_block', 'text_block'],
+          user_preferences: {
+            style: 'modern',
+            performance: 'high'
+          }
+        };
+        
+        const result = await enhancedAgentClient.queryWithTools(request);
+        console.log('🚀✨ Enhanced cross-database result:', result);
+        
+        // Handle the result - for now, forward to parent component with special prefix
+        onQuerySubmit(`enhanced_result:${JSON.stringify(result)}`);
+        
+      } else {
+        console.log('🚀✨ Unknown enhanced command, falling back to normal query');
+        onQuerySubmit(commandQuery);
+      }
+      
+    } catch (error) {
+      console.error('🚀✨ Enhanced query failed:', error);
+      // Fallback to normal query
+      onQuerySubmit(inputValue.trim());
+    }
+    
+    console.log('🚀✨ === handleEnhancedQuery END ===');
+  };
+
   const handleSubmit = async () => {
     console.log('🚀 === AIQuerySelector.handleSubmit START ===');
     console.log('🚀 Input query:', `"${inputValue.trim()}"`);
@@ -301,6 +368,14 @@ export default function AIQuerySelector({
       console.log('🚀 ROUTE: Diff mode command detected');
       // Switch to diff mode - this will be handled by parent component
       onQuerySubmit(trimmedQuery);
+      setShowDropdown(false);
+      return;
+    }
+
+    // Check if this is an enhanced query command
+    if (trimmedQuery.startsWith('enhanced:')) {
+      console.log('🚀✨ ROUTE: Enhanced query command detected');
+      await handleEnhancedQuery(trimmedQuery);
       setShowDropdown(false);
       return;
     }
@@ -351,81 +426,30 @@ export default function AIQuerySelector({
         // Route to trivial client if:
         // 1. Classified as trivial with high confidence
         // 2. AND we have source text to work with (either for editing or content generation)  
-        // 3. AND we can map it to a supported trivial operation
+        // 3. AND natural language requests are supported
         if (classification.tier === 'trivial' && classification.confidence > 0.7 && sourceText.trim()) {
           const operationType = isTextEditingOperation ? 'text editing' : 'content generation';
           console.log(`⚡ Attempting trivial routing for ${operationType}: ${classification.operationType}`);
           
-          // Map common queries to trivial operations
-          const operationMap: Record<string, string> = {
-            'grammar': 'fix_grammar',
-            'spelling': 'fix_spelling',
-            'concise': 'make_concise',
-            'clarity': 'improve_clarity',
-            'tone': 'improve_tone',
-            'expand': 'expand_text',
-            'simplify': 'simplify_language',
-            'examples': 'add_examples',
-            'summarize': isTextEditingOperation ? 'make_concise' : 'summarize_content',
-            'summary': isTextEditingOperation ? 'make_concise' : 'summarize_content',
-            'shorten': 'make_concise',
-            'lengthen': 'expand_text',
-            'professional': 'improve_tone',
-            'title': 'generate_title',
-            'outline': 'create_outline'
-          };
+          // Check if natural language requests are supported
+          const supportsNaturalLanguage = trivialSupported.includes("natural_language_request") || 
+                                          trivialSupported.length === 0;
           
-          // Try to map the operation type to a trivial operation
-          let trivialOp = operationMap[classification.operationType];
-          
-          // If no direct mapping, try fuzzy matching
-          if (!trivialOp) {
-            const queryLower = trimmedQuery.toLowerCase();
-            
-            // Check for summarization keywords
-            if (queryLower.includes('summarise') || queryLower.includes('summarize') || 
-                queryLower.includes('summary') || queryLower.includes('overview')) {
-              trivialOp = isTextEditingOperation ? 'make_concise' : 'summarize_content';
-            }
-            // Check for title generation
-            else if (queryLower.includes('title') || queryLower.includes('heading')) {
-              trivialOp = 'generate_title';
-            }
-            // Check for outline generation  
-            else if (queryLower.includes('outline') || queryLower.includes('structure')) {
-              trivialOp = 'create_outline';
-            }
-            // Fallback to supported operations
-            else {
-              trivialOp = trivialSupported.find(op => 
-                classification.operationType.includes(op.replace('_', '')) ||
-                queryLower.includes(op.replace('_', ' '))
-              ) || 'improve_clarity';
-            }
-          }
-          
-          console.log(`🚀 TRIVIAL CHECK: Checking if operation '${trivialOp}' is supported...`);
+          console.log(`🚀 TRIVIAL CHECK: Checking if natural language is supported...`);
           console.log(`🚀 TRIVIAL CHECK: Available operations:`, trivialSupported);
-          console.log(`🚀 TRIVIAL CHECK: Operation supported:`, trivialSupported.includes(trivialOp));
+          console.log(`🚀 TRIVIAL CHECK: Supports natural language:`, supportsNaturalLanguage);
           
-          if (trivialSupported.includes(trivialOp)) {
-            console.log(`⚡ SUCCESS: Routing to trivial LLM with operation: ${trivialOp}`);
+          if (supportsNaturalLanguage) {
+            console.log(`⚡ SUCCESS: Routing to trivial LLM with natural language request: "${trimmedQuery}"`);
             
-            // For content generation operations, handle differently
-            if (!isTextEditingOperation) {
-              console.log(`📝 Content generation mode: creating new content`);
-              // For content generation, we'll still use the trivial operation but mark it differently
-              await handleTrivialOperation(trivialOp, sourceText);
-            } else {
-              console.log(`✏️ Text editing mode: modifying existing content`);
-              await handleTrivialOperation(trivialOp, sourceText);
-            }
+            // Pass the user's exact request without categorization
+            await handleTrivialOperation(trimmedQuery, sourceText);
             
             setShowDropdown(false);
             console.log('🚀 === TRIVIAL ROUTING COMPLETE ===');
             return;
           } else {
-            console.log(`❌ FAILED: Trivial operation '${trivialOp}' not supported. Available: ${trivialSupported.join(', ')}`);
+            console.log(`❌ FAILED: Natural language requests not supported. Available: ${trivialSupported.join(', ')}`);
           }
         }
         
@@ -471,23 +495,23 @@ export default function AIQuerySelector({
       return;
     }
 
+    // Handle enhanced query options
+    if (optionQuery.startsWith('enhanced:')) {
+      console.log('🚀✨ Enhanced option selected:', optionQuery);
+      await handleEnhancedQuery(optionQuery);
+      setShowDropdown(false);
+      return;
+    }
+
     // Check if this is a known trivial operation
     if (enableSmartRouting && originalText && trivialSupported.length > 0) {
-      const trivialOperationNames = {
-        'Fix grammar': 'fix_grammar',
-        'Fix spelling': 'fix_spelling', 
-        'Make it shorter': 'make_concise',
-        'Make it longer': 'expand_text',
-        'Improve clarity': 'improve_clarity',
-        'Improve tone': 'improve_tone',
-        'Simplify language': 'simplify_language',
-        'Add examples': 'add_examples'
-      };
+      // Check if natural language requests are supported
+      const supportsNaturalLanguage = trivialSupported.includes("natural_language_request") || 
+                                      trivialSupported.length === 0;
 
-      const operation = trivialOperationNames[optionQuery as keyof typeof trivialOperationNames];
-      if (operation && trivialSupported.includes(operation)) {
-        console.log(`⚡ Quick trivial operation: ${operation}`);
-        await handleTrivialOperation(operation, originalText);
+      if (supportsNaturalLanguage) {
+        console.log(`⚡ Quick natural language operation: "${optionQuery}"`);
+        await handleTrivialOperation(optionQuery, originalText);
         setShowDropdown(false);
         return;
       }

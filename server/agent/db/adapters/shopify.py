@@ -574,50 +574,178 @@ class ShopifyAdapter(DBAdapter):
         Execute Shopify API query and return results
         
         Args:
-            query: Query object from llm_to_query or orchestrator parameters
+            query: Query object from llm_to_query, orchestrator parameters, or SQL-style string
             
         Returns:
             List of results from Shopify API
         """
         try:
-            # Handle orchestrator-style parameters
-            if isinstance(query, dict):
-                if query.get("type") == "shopify_api":
-                    # Legacy format from llm_to_query
-                    query_info = query["query"]
-                    endpoint = query_info["endpoint"]
-                    params = query_info.get("params", {})
-                elif "endpoint" in query:
-                    # New orchestrator format
-                    endpoint = query.get("endpoint", "orders")
-                    params = query.get("params", {})
-                    # Handle limit parameter
-                    if "limit" in query:
-                        params["limit"] = query["limit"]
-                else:
-                    raise ValueError("Invalid query format for Shopify adapter")
-                
-                # Make API request
-                response = await self._make_api_request(endpoint, params=params)
-                
-                # Extract the data array from response
-                if endpoint == "orders":
-                    return response.get("orders", [])
-                elif endpoint == "products":
-                    return response.get("products", [])
-                elif endpoint == "customers":
-                    return response.get("customers", [])
-                elif endpoint == "inventory_levels":
-                    return response.get("inventory_levels", [])
-                else:
-                    # Return the whole response if structure is unknown
-                    return [response] if isinstance(response, dict) else response
+            # Convert query to proper Shopify format if needed
+            shopify_query = await self._convert_query_format(query)
+            
+            # Extract endpoint and params from converted query
+            endpoint = shopify_query.get("endpoint", "orders")
+            params = shopify_query.get("params", {})
+            
+            # Handle limit parameter
+            if "limit" in shopify_query:
+                params["limit"] = shopify_query["limit"]
+            
+            # Make API request
+            response = await self._make_api_request(endpoint, params=params)
+            
+            # Extract the data array from response
+            if endpoint == "orders":
+                return response.get("orders", [])
+            elif endpoint == "products":
+                return response.get("products", [])
+            elif endpoint == "customers":
+                return response.get("customers", [])
+            elif endpoint == "inventory_levels":
+                return response.get("inventory_levels", [])
             else:
-                raise ValueError("Invalid query format for Shopify adapter")
+                # Return the whole response if structure is unknown
+                return [response] if isinstance(response, dict) else response
                 
         except Exception as e:
             logger.error(f"Error executing Shopify query: {str(e)}")
             return [{"error": str(e)}]
+    
+    async def _convert_query_format(self, query: Any) -> Dict[str, Any]:
+        """
+        Convert various query formats to Shopify API format.
+        
+        Args:
+            query: Query in various formats (string, dict, etc.)
+            
+        Returns:
+            Dict with Shopify API query parameters
+        """
+        import re
+        from ...config.settings import Settings
+        
+        settings = Settings()
+        
+        # Handle SQL-style string queries
+        if isinstance(query, str):
+            query_lower = query.lower().strip()
+            
+            logger.info(f"🛍️ Shopify Query Conversion (API v{settings.SHOPIFY_API_VERSION}): \"{query}\" → ", end="")
+            
+            # Parse common SQL patterns for Shopify
+            if "select" in query_lower and "from" in query_lower:
+                # Extract table/endpoint from SQL - use just the resource name
+                if "products" in query_lower:
+                    endpoint = "products"
+                elif "orders" in query_lower:
+                    endpoint = "orders"
+                elif "customers" in query_lower:
+                    endpoint = "customers"
+                elif "inventory" in query_lower:
+                    endpoint = "inventory_levels"
+                elif "locations" in query_lower:
+                    endpoint = "locations"
+                elif "collections" in query_lower:
+                    endpoint = "collections"
+                elif "variants" in query_lower:
+                    endpoint = "variants"
+                elif "transactions" in query_lower:
+                    endpoint = "transactions"
+                else:
+                    # Default to products
+                    endpoint = "products"
+                
+                # Extract LIMIT if present
+                limit_match = re.search(r'limit\s+(\d+)', query_lower)
+                limit = int(limit_match.group(1)) if limit_match else 50
+                
+                # Create Shopify API query with proper structure
+                shopify_query = {
+                    "endpoint": endpoint,  # Just the resource name (e.g., 'products')
+                    "method": "GET",
+                    "params": {"limit": min(limit, 250)}  # Shopify API limit
+                }
+                
+                # Add additional filters based on SQL WHERE clauses
+                if "where" in query_lower:
+                    # Parse basic WHERE conditions
+                    if "status" in query_lower:
+                        status_match = re.search(r"status\s*=\s*['\"]([^'\"]+)['\"]", query_lower)
+                        if status_match:
+                            shopify_query["params"]["status"] = status_match.group(1)
+                    
+                    if "created_at" in query_lower or "updated_at" in query_lower:
+                        # Handle date filters
+                        date_match = re.search(r"(created_at|updated_at)\s*>\s*['\"]([^'\"]+)['\"]", query_lower)
+                        if date_match:
+                            field, date_val = date_match.groups()
+                            shopify_query["params"][f"{field}_min"] = date_val
+                
+            elif "count" in query_lower:
+                # Handle COUNT queries - use just the resource name with /count
+                if "products" in query_lower:
+                    endpoint = "products/count"
+                elif "orders" in query_lower:
+                    endpoint = "orders/count"
+                elif "customers" in query_lower:
+                    endpoint = "customers/count"
+                else:
+                    endpoint = "products/count"
+                
+                shopify_query = {
+                    "endpoint": endpoint,
+                    "method": "GET",
+                    "params": {}
+                }
+            else:
+                # Default query for general requests
+                shopify_query = {
+                    "endpoint": "products",
+                    "method": "GET",
+                    "params": {"limit": 50}
+                }
+            
+            logger.info(f"{shopify_query}")
+            return shopify_query
+        
+        # Handle dict queries
+        elif isinstance(query, dict):
+            # Handle legacy format from llm_to_query
+            if query.get("type") == "shopify_api":
+                query_info = query["query"]
+                endpoint = query_info["endpoint"]
+                params = query_info.get("params", {})
+                return {"endpoint": endpoint, "params": params}
+            
+            # Handle orchestrator format
+            elif "endpoint" in query:
+                shopify_query = query.copy()
+                
+                # Convert full API paths to just resource names if needed
+                endpoint = query["endpoint"]
+                if endpoint.startswith("/admin/api/"):
+                    # Extract just the resource name from full API path
+                    # e.g., "/admin/api/2025-04/products.json" -> "products"
+                    match = re.search(r'/admin/api/[^/]+/([^.]+)(?:\.json)?$', endpoint)
+                    if match:
+                        shopify_query["endpoint"] = match.group(1)
+                
+                return shopify_query
+            else:
+                # Try to infer endpoint from query structure
+                return {
+                    "endpoint": "products",
+                    "method": "GET",
+                    "params": query.get("params", {"limit": 50})
+                }
+        
+        # Fallback for unknown query types
+        else:
+            return {
+                "endpoint": "products",
+                "method": "GET", 
+                "params": {"limit": 50}
+            }
     
     async def execute_query(self, query: Dict[str, Any]) -> List[Dict]:
         """
@@ -707,8 +835,543 @@ class ShopifyAdapter(DBAdapter):
                 "content": "Shopify Checkouts: Contains abandoned cart data including id, email, total_price, line_items, created_at, updated_at, customer"
             })
             
-            return schema_docs
+            # Add semantic search capabilities
+            search_doc = {
+                "id": "slack:semantic_search",
+                "content": f"""
+                SEMANTIC SEARCH:
+                
+                You can search for messages semantically by using the semantic_search query type.
+                This allows finding messages based on their meaning, not just exact keywords.
+                
+                Example query:
+                {{
+                  "type": "semantic_search",
+                  "query": "discussion about annual budget planning",
+                  "limit": 20,
+                  "channels": ["C0123456789"],  # Optional channel filter
+                  "date_from": "2023-01-01",    # Optional date filter
+                  "date_to": "2023-12-31",      # Optional date filter
+                  "users": ["U0123456789"]      # Optional user filter
+                }}
+                
+                Or you can simply pass the natural language query directly to the execute_query method.
+                """
+            }
+            schema_docs.append(search_doc)
             
+            return schema_docs
+                
         except Exception as e:
             logger.error(f"Error introspecting Shopify schema: {str(e)}")
-            return [{"id": "error", "content": f"Schema introspection error: {str(e)}"}] 
+            raise
+
+    # Additional Shopify-specific tools for the registry
+    
+    async def analyze_product_performance(self, product_ids: List[str] = None, days: int = 30) -> Dict[str, Any]:
+        """
+        Analyze product performance metrics including sales, views, and conversion rates.
+        
+        Args:
+            product_ids: Optional list of specific product IDs to analyze
+            days: Number of days to analyze (default 30)
+            
+        Returns:
+            Product performance analysis results
+        """
+        logger.info(f"Analyzing product performance for {len(product_ids) if product_ids else 'all'} products over {days} days")
+        
+        try:
+            # Get products data
+            products_query = {"endpoint": "products", "params": {"limit": 250}}
+            if product_ids:
+                products_query["params"]["ids"] = ",".join(product_ids)
+            
+            products = await self.execute(products_query)
+            
+            # Get recent orders for sales analysis
+            since_date = (datetime.now() - timedelta(days=days)).isoformat()
+            orders_query = {"endpoint": "orders", "params": {"status": "any", "created_at_min": since_date, "limit": 250}}
+            orders = await self.execute(orders_query)
+            
+            # Analyze product performance
+            product_performance = {}
+            
+            for product in products:
+                product_id = str(product.get('id'))
+                product_performance[product_id] = {
+                    "product_id": product_id,
+                    "title": product.get('title', 'Unknown'),
+                    "vendor": product.get('vendor', 'Unknown'),
+                    "product_type": product.get('product_type', 'Unknown'),
+                    "status": product.get('status', 'Unknown'),
+                    "created_at": product.get('created_at'),
+                    "total_sales": 0,
+                    "units_sold": 0,
+                    "orders_count": 0,
+                    "average_order_value": 0,
+                    "revenue": 0.0,
+                    "variant_count": len(product.get('variants', [])),
+                    "image_count": len(product.get('images', []))
+                }
+            
+            # Calculate sales metrics from orders
+            for order in orders:
+                for line_item in order.get('line_items', []):
+                    product_id = str(line_item.get('product_id'))
+                    if product_id in product_performance:
+                        quantity = int(line_item.get('quantity', 0))
+                        price = float(line_item.get('price', 0))
+                        
+                        product_performance[product_id]["units_sold"] += quantity
+                        product_performance[product_id]["orders_count"] += 1
+                        product_performance[product_id]["revenue"] += quantity * price
+                        product_performance[product_id]["total_sales"] += 1
+            
+            # Calculate average order values
+            for product_id, metrics in product_performance.items():
+                if metrics["orders_count"] > 0:
+                    metrics["average_order_value"] = metrics["revenue"] / metrics["orders_count"]
+            
+            # Generate recommendations
+            recommendations = self._generate_product_performance_recommendations(list(product_performance.values()))
+            
+            analysis_result = {
+                "analysis_period_days": days,
+                "products_analyzed": len(product_performance),
+                "total_products": len(products),
+                "total_orders_analyzed": len(orders),
+                "product_metrics": list(product_performance.values()),
+                "top_performers": sorted(product_performance.values(), key=lambda x: x["revenue"], reverse=True)[:10],
+                "recommendations": recommendations,
+                "summary": {
+                    "total_revenue": sum(p["revenue"] for p in product_performance.values()),
+                    "total_units_sold": sum(p["units_sold"] for p in product_performance.values()),
+                    "average_products_per_order": sum(p["orders_count"] for p in product_performance.values()) / len(orders) if orders else 0
+                }
+            }
+            
+            logger.info(f"Product performance analysis completed: {analysis_result['products_analyzed']} products, ${analysis_result['summary']['total_revenue']:.2f} revenue")
+            return analysis_result
+            
+        except Exception as e:
+            logger.error(f"Failed to analyze product performance: {e}")
+            raise
+    
+    def _generate_product_performance_recommendations(self, product_metrics: List[Dict]) -> List[str]:
+        """Generate recommendations based on product performance analysis."""
+        recommendations = []
+        
+        try:
+            # Find products with no sales
+            no_sales_products = [p for p in product_metrics if p["revenue"] == 0]
+            if no_sales_products:
+                recommendations.append(f"{len(no_sales_products)} products have no sales - consider reviewing pricing, descriptions, or promotion strategies")
+            
+            # Find high-performing products
+            high_performers = [p for p in product_metrics if p["revenue"] > 1000]  # Example threshold
+            if high_performers:
+                recommendations.append(f"{len(high_performers)} products are high performers - consider increasing inventory or creating similar products")
+            
+            # Check for products with low conversion
+            low_conversion = [p for p in product_metrics if p["total_sales"] > 0 and p["units_sold"] / p["total_sales"] < 0.5]
+            if low_conversion:
+                recommendations.append(f"{len(low_conversion)} products have low conversion rates - review product descriptions and images")
+            
+            # Check for products without images
+            no_images = [p for p in product_metrics if p["image_count"] == 0]
+            if no_images:
+                recommendations.append(f"{len(no_images)} products have no images - add product photos to improve conversion")
+                
+        except Exception as e:
+            logger.warning(f"Failed to generate product recommendations: {e}")
+        
+        return recommendations
+    
+    async def optimize_inventory_tracking(self, location_ids: List[str] = None) -> Dict[str, Any]:
+        """
+        Optimize inventory tracking and identify stock level issues.
+        
+        Args:
+            location_ids: Optional list of location IDs to focus on
+            
+        Returns:
+            Inventory optimization results
+        """
+        logger.info(f"Optimizing inventory tracking for {len(location_ids) if location_ids else 'all'} locations")
+        
+        try:
+            # Get inventory levels
+            inventory_query = {"endpoint": "inventory_levels", "params": {"limit": 250}}
+            if location_ids:
+                inventory_query["params"]["location_ids"] = ",".join(location_ids)
+            
+            inventory_levels = await self.execute(inventory_query)
+            
+            # Get products for context
+            products_query = {"endpoint": "products", "params": {"limit": 250}}
+            products = await self.execute(products_query)
+            
+            # Create product lookup
+            product_lookup = {}
+            for product in products:
+                for variant in product.get('variants', []):
+                    variant_id = variant.get('inventory_item_id')
+                    if variant_id:
+                        product_lookup[str(variant_id)] = {
+                            "product_title": product.get('title'),
+                            "variant_title": variant.get('title'),
+                            "sku": variant.get('sku'),
+                            "price": variant.get('price')
+                        }
+            
+            # Analyze inventory levels
+            inventory_analysis = {}
+            low_stock_items = []
+            out_of_stock_items = []
+            overstocked_items = []
+            
+            for item in inventory_levels:
+                inventory_item_id = str(item.get('inventory_item_id'))
+                available = item.get('available', 0)
+                location_id = item.get('location_id')
+                
+                product_info = product_lookup.get(inventory_item_id, {})
+                
+                # Categorize inventory levels
+                if available == 0:
+                    out_of_stock_items.append({
+                        "inventory_item_id": inventory_item_id,
+                        "location_id": location_id,
+                        "available": available,
+                        **product_info
+                    })
+                elif available < 10:  # Low stock threshold
+                    low_stock_items.append({
+                        "inventory_item_id": inventory_item_id,
+                        "location_id": location_id,
+                        "available": available,
+                        **product_info
+                    })
+                elif available > 100:  # Overstock threshold
+                    overstocked_items.append({
+                        "inventory_item_id": inventory_item_id,
+                        "location_id": location_id,
+                        "available": available,
+                        **product_info
+                    })
+                
+                inventory_analysis[inventory_item_id] = {
+                    "inventory_item_id": inventory_item_id,
+                    "location_id": location_id,
+                    "available": available,
+                    "status": "out_of_stock" if available == 0 else "low_stock" if available < 10 else "overstock" if available > 100 else "normal",
+                    **product_info
+                }
+            
+            # Generate optimization recommendations
+            recommendations = self._generate_inventory_recommendations(low_stock_items, out_of_stock_items, overstocked_items)
+            
+            optimization_result = {
+                "inventory_items_analyzed": len(inventory_levels),
+                "location_ids": list(set(item.get('location_id') for item in inventory_levels)),
+                "stock_analysis": {
+                    "out_of_stock": len(out_of_stock_items),
+                    "low_stock": len(low_stock_items),
+                    "overstocked": len(overstocked_items),
+                    "normal_stock": len(inventory_levels) - len(out_of_stock_items) - len(low_stock_items) - len(overstocked_items)
+                },
+                "critical_items": {
+                    "out_of_stock_items": out_of_stock_items[:10],  # Top 10
+                    "low_stock_items": low_stock_items[:10],
+                    "overstocked_items": overstocked_items[:10]
+                },
+                "recommendations": recommendations,
+                "inventory_health_score": self._calculate_inventory_health_score(
+                    len(inventory_levels), len(low_stock_items), len(out_of_stock_items), len(overstocked_items)
+                ),
+                "optimization_opportunities": {
+                    "reorder_needed": len(out_of_stock_items) + len(low_stock_items),
+                    "excess_inventory_value": sum(float(item.get('price', 0)) * item.get('available', 0) for item in overstocked_items)
+                }
+            }
+            
+            logger.info(f"Inventory optimization completed: {optimization_result['inventory_health_score']:.1f}% health score")
+            return optimization_result
+            
+        except Exception as e:
+            logger.error(f"Failed to optimize inventory tracking: {e}")
+            raise
+            
+            # Analyze inventory levels
+            low_stock_items = []
+            out_of_stock_items = []
+            overstocked_items = []
+            
+            for item in inventory_levels:
+                available = item.get('available', 0)
+                inventory_item_id = str(item.get('inventory_item_id'))
+                location_id = str(item.get('location_id'))
+                
+                product_info = product_lookup.get(inventory_item_id, {})
+                
+                inventory_analysis = {
+                    "inventory_item_id": inventory_item_id,
+                    "location_id": location_id,
+                    "available_quantity": available,
+                    "product_info": product_info,
+                    "updated_at": item.get('updated_at')
+                }
+                
+                if available == 0:
+                    out_of_stock_items.append(inventory_analysis)
+                elif available <= 5:  # Low stock threshold
+                    low_stock_items.append(inventory_analysis)
+                elif available >= 100:  # Overstock threshold
+                    overstocked_items.append(inventory_analysis)
+            
+            # Generate optimization recommendations
+            recommendations = self._generate_inventory_recommendations(
+                low_stock_items, out_of_stock_items, overstocked_items
+            )
+            
+            optimization_result = {
+                "total_inventory_items": len(inventory_levels),
+                "locations_analyzed": len(set(item.get('location_id') for item in inventory_levels)),
+                "low_stock_count": len(low_stock_items),
+                "out_of_stock_count": len(out_of_stock_items),
+                "overstocked_count": len(overstocked_items),
+                "low_stock_items": low_stock_items[:20],  # Top 20
+                "out_of_stock_items": out_of_stock_items[:20],  # Top 20
+                "overstocked_items": overstocked_items[:10],  # Top 10
+                "recommendations": recommendations,
+                "inventory_health_score": self._calculate_inventory_health_score(
+                    len(inventory_levels), len(low_stock_items), len(out_of_stock_items), len(overstocked_items)
+                )
+            }
+            
+            logger.info(f"Inventory optimization completed: {optimization_result['inventory_health_score']:.1f}% health score")
+            return optimization_result
+            
+        except Exception as e:
+            logger.error(f"Failed to optimize inventory tracking: {e}")
+            raise
+    
+    def _generate_inventory_recommendations(
+        self, 
+        low_stock: List[Dict], 
+        out_of_stock: List[Dict], 
+        overstocked: List[Dict]
+    ) -> List[str]:
+        """Generate inventory optimization recommendations."""
+        recommendations = []
+        
+        if out_of_stock:
+            recommendations.append(f"Urgent: {len(out_of_stock)} items are out of stock - immediate restocking needed")
+        
+        if low_stock:
+            recommendations.append(f"Warning: {len(low_stock)} items have low stock levels - consider reordering soon")
+        
+        if overstocked:
+            recommendations.append(f"Note: {len(overstocked)} items may be overstocked - consider promotions or reduced ordering")
+        
+        return recommendations
+    
+    def _calculate_inventory_health_score(
+        self, 
+        total_items: int, 
+        low_stock: int, 
+        out_of_stock: int, 
+        overstocked: int
+    ) -> float:
+        """Calculate an inventory health score (0-100)."""
+        if total_items == 0:
+            return 0.0
+        
+        # Penalize out of stock and low stock more heavily
+        penalty = (out_of_stock * 3 + low_stock * 2 + overstocked * 1) / total_items
+        health_score = max(0, 100 - (penalty * 100))
+        
+        return health_score
+    
+    async def get_order_statistics(self, days: int = 30, status_filter: str = "any") -> Dict[str, Any]:
+        """
+        Get comprehensive order statistics and trends.
+        
+        Args:
+            days: Number of days to analyze (default 30)
+            status_filter: Order status filter ("any", "paid", "pending", etc.)
+            
+        Returns:
+            Order statistics and trends
+        """
+        logger.info(f"Getting order statistics for {days} days with status filter: {status_filter}")
+        
+        try:
+            # Get orders data
+            since_date = (datetime.now() - timedelta(days=days)).isoformat()
+            orders_query = {
+                "endpoint": "orders",
+                "params": {
+                    "status": status_filter,
+                    "created_at_min": since_date,
+                    "limit": 250
+                }
+            }
+            
+            orders = await self.execute(orders_query)
+            
+            # Calculate statistics
+            total_orders = len(orders)
+            total_revenue = sum(float(order.get('total_price', 0)) for order in orders)
+            total_items = sum(len(order.get('line_items', [])) for order in orders)
+            
+            # Calculate averages
+            avg_order_value = total_revenue / total_orders if total_orders > 0 else 0
+            avg_items_per_order = total_items / total_orders if total_orders > 0 else 0
+            
+            # Analyze by status
+            status_breakdown = {}
+            for order in orders:
+                financial_status = order.get('financial_status', 'unknown')
+                fulfillment_status = order.get('fulfillment_status', 'unfulfilled')
+                
+                key = f"{financial_status}_{fulfillment_status}"
+                if key not in status_breakdown:
+                    status_breakdown[key] = {"count": 0, "revenue": 0}
+                
+                status_breakdown[key]["count"] += 1
+                status_breakdown[key]["revenue"] += float(order.get('total_price', 0))
+            
+            # Analyze by day
+            daily_breakdown = {}
+            for order in orders:
+                created_at = order.get('created_at', '')
+                order_date = created_at.split('T')[0] if created_at else 'unknown'
+                
+                if order_date not in daily_breakdown:
+                    daily_breakdown[order_date] = {"count": 0, "revenue": 0}
+                
+                daily_breakdown[order_date]["count"] += 1
+                daily_breakdown[order_date]["revenue"] += float(order.get('total_price', 0))
+            
+            # Top customers by order value
+            customer_analysis = {}
+            for order in orders:
+                customer_id = order.get('customer', {}).get('id') if order.get('customer') else 'guest'
+                customer_email = order.get('customer', {}).get('email') if order.get('customer') else 'guest'
+                
+                if customer_id not in customer_analysis:
+                    customer_analysis[customer_id] = {
+                        "email": customer_email,
+                        "order_count": 0,
+                        "total_spent": 0
+                    }
+                
+                customer_analysis[customer_id]["order_count"] += 1
+                customer_analysis[customer_id]["total_spent"] += float(order.get('total_price', 0))
+            
+            top_customers = sorted(
+                customer_analysis.values(),
+                key=lambda x: x["total_spent"],
+                reverse=True
+            )[:10]
+            
+            statistics = {
+                "analysis_period_days": days,
+                "status_filter": status_filter,
+                "summary": {
+                    "total_orders": total_orders,
+                    "total_revenue": total_revenue,
+                    "total_items_sold": total_items,
+                    "average_order_value": avg_order_value,
+                    "average_items_per_order": avg_items_per_order
+                },
+                "status_breakdown": status_breakdown,
+                "daily_breakdown": daily_breakdown,
+                "top_customers": top_customers,
+                "recommendations": self._generate_order_recommendations(orders)
+            }
+            
+            logger.info(f"Order statistics completed: {total_orders} orders, ${total_revenue:.2f} revenue")
+            return statistics
+            
+        except Exception as e:
+            logger.error(f"Failed to get order statistics: {e}")
+            raise
+    
+    def _generate_order_recommendations(self, orders: List[Dict]) -> List[str]:
+        """Generate recommendations based on order analysis."""
+        recommendations = []
+        
+        try:
+            # Check for pending payments
+            pending_payments = [o for o in orders if o.get('financial_status') == 'pending']
+            if pending_payments:
+                recommendations.append(f"{len(pending_payments)} orders have pending payments - follow up needed")
+            
+            # Check for unfulfilled orders
+            unfulfilled = [o for o in orders if o.get('fulfillment_status') in [None, 'unfulfilled']]
+            if unfulfilled:
+                recommendations.append(f"{len(unfulfilled)} orders are unfulfilled - prioritize fulfillment")
+            
+            # Check for high-value orders
+            high_value = [o for o in orders if float(o.get('total_price', 0)) > 500]
+            if high_value:
+                recommendations.append(f"{len(high_value)} high-value orders detected - ensure premium service")
+                
+        except Exception as e:
+            logger.warning(f"Failed to generate order recommendations: {e}")
+        
+        return recommendations
+    
+    async def validate_webhook_signature(self, payload: bytes, signature: str, topic: str) -> Dict[str, Any]:
+        """
+        Validate webhook signature and provide security analysis.
+        
+        Args:
+            payload: Raw webhook payload
+            signature: Signature header value
+            topic: Webhook topic
+            
+        Returns:
+            Validation results and security analysis
+        """
+        logger.info(f"Validating webhook signature for topic: {topic}")
+        
+        try:
+            # Validate signature
+            is_valid = await self.verify_webhook(payload, signature)
+            
+            # Parse payload for analysis
+            try:
+                payload_data = json.loads(payload.decode('utf-8'))
+            except:
+                payload_data = {}
+            
+            # Security analysis
+            security_analysis = {
+                "signature_valid": is_valid,
+                "topic": topic,
+                "payload_size_bytes": len(payload),
+                "timestamp": datetime.now().isoformat(),
+                "shop_domain": self.shop_domain,
+                "security_recommendations": []
+            }
+            
+            # Add security recommendations
+            if not is_valid:
+                security_analysis["security_recommendations"].append("Invalid webhook signature - potential security risk")
+            
+            if len(payload) > 1024 * 1024:  # 1MB
+                security_analysis["security_recommendations"].append("Large payload size - monitor for potential DoS attacks")
+            
+            if topic.startswith('app/'):
+                security_analysis["security_recommendations"].append("App-related webhook - ensure proper app permissions")
+            
+            logger.info(f"Webhook validation completed: {is_valid} for topic {topic}")
+            return security_analysis
+            
+        except Exception as e:
+            logger.error(f"Failed to validate webhook signature: {e}")
+            raise 

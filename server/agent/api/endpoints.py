@@ -1,7 +1,7 @@
 from fastapi import APIRouter, HTTPException, Depends, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
-from typing import List, Dict, Any, Optional, AsyncIterator
+from typing import List, Dict, Any, Optional, AsyncIterator, Union
 import asyncpg
 import logging
 import re
@@ -22,12 +22,14 @@ from ..meta.ingest import SchemaSearcher, ensure_index_exists, build_and_save_in
 from ..performance.schema_monitor import ensure_schema_index_updated
 
 # Import the enhanced cross-database query engine
-from ..db.execute import query_engine, process_ai_query
+from ..db.execute import get_query_engine, process_ai_query
 
 # Import cross-database components
 from ..db.classifier import DatabaseClassifier
 from ..db.orchestrator.cross_db_agent import CrossDatabaseAgent
-from ..tools.state_manager import StateManager
+from ..tools.state_manager import StateManager, AnalysisState
+from ..langgraph.integration import LangGraphIntegrationOrchestrator
+from ..langgraph.compat import GraphState
 
 # Import database availability service
 from ..services.database_availability import get_availability_service, DatabaseStatus
@@ -48,7 +50,12 @@ os.makedirs(LOG_DIR, exist_ok=True)
 def create_endpoint_logger(endpoint_name: str) -> logging.Logger:
     """Create a dedicated logger for an endpoint with its own file"""
     endpoint_logger = logging.getLogger(f"endpoint.{endpoint_name}")
-    endpoint_logger.setLevel(logging.INFO)
+    
+    # Set DEBUG level for LangGraph to capture detailed streaming events
+    if endpoint_name == "langgraph":
+        endpoint_logger.setLevel(logging.DEBUG)
+    else:
+        endpoint_logger.setLevel(logging.INFO)
     
     # Remove existing handlers to avoid duplicates
     for handler in endpoint_logger.handlers[:]:
@@ -57,7 +64,12 @@ def create_endpoint_logger(endpoint_name: str) -> logging.Logger:
     # Create file handler
     log_file = os.path.join(LOG_DIR, f"{endpoint_name}.log")
     file_handler = logging.FileHandler(log_file)
-    file_handler.setLevel(logging.INFO)
+    
+    # Set DEBUG level for LangGraph file handler to capture detailed streaming events
+    if endpoint_name == "langgraph":
+        file_handler.setLevel(logging.DEBUG)
+    else:
+        file_handler.setLevel(logging.INFO)
     
     # Create formatter
     formatter = logging.Formatter(
@@ -84,6 +96,11 @@ database_logger = create_endpoint_logger("database")
 visualization_logger = create_endpoint_logger("visualization")
 orchestration_logger = create_endpoint_logger("orchestration")
 stream_logger = create_endpoint_logger("streaming")
+langgraph_logger = create_endpoint_logger("langgraph")
+
+# ✅ NEW: Create dedicated detailed reasoning logger for LangGraph
+langgraph_reasoning_logger = create_endpoint_logger("langgraph_reasoning")
+langgraph_reasoning_logger.setLevel(logging.DEBUG)  # Capture all detailed events
 
 # Helper function to log request/response
 def log_request_response(endpoint_logger: logging.Logger, endpoint: str, request_data: dict, response_data: dict, duration: float, error: str = None):
@@ -176,6 +193,7 @@ class TrivialHealthResponse(BaseModel):
     model: Optional[str] = None
     message: Optional[str] = None
     supported_operations: List[str] = []
+    supports_natural_language: Optional[bool] = None
 
 class DatabaseStatusResponse(BaseModel):
     name: str
@@ -459,7 +477,7 @@ async def cross_database_query(request: CrossDatabaseQueryRequest, http_request:
         else:
             cross_db_logger.info("Executing cross-database query")
             # Execute the cross-database query
-            result = await query_engine.execute_cross_database_query(
+            result = await get_query_engine().execute_cross_database_query(
                 request.question,
                 analyze=request.analyze,
                 optimize=request.optimize,
@@ -518,7 +536,7 @@ async def classify_query(request: ClassifyRequest):
     
     try:
         # Use the query engine's classification
-        classification = await query_engine.classify_query(request.question)
+        classification = await get_query_engine().classify_query(request.question)
         
         response = ClassifyResponse(
             question=classification.get("question", request.question),
@@ -1050,7 +1068,7 @@ async def get_metadata():
             "schema_elements": len(schema_metadata),
             "tables": list(set(item.get("table_name", "") for item in schema_metadata if item.get("table_name"))),
             "cross_database_enabled": True,
-            "available_sources": len(query_engine.classifier.get_available_sources() if hasattr(query_engine.classifier, 'get_available_sources') else [])
+            "available_sources": len(get_query_engine().classifier.get_available_sources() if hasattr(get_query_engine().classifier, 'get_available_sources') else [])
         }
         
         logger.info(f"📤 Returning metadata for {len(schema_metadata)} schema elements")
@@ -1141,7 +1159,7 @@ async def process_ai_query_stream(
         yield create_stream_event("classifying", session_id, message="Determining relevant databases...")
         
         # Get classification from query engine
-        classification = await query_engine.classify_query(question)
+        classification = await get_query_engine().classify_query(question)
         
         databases = classification.get("sources", [])
         database_names = [db.get("name", db.get("id", "unknown")) for db in databases]
@@ -1291,7 +1309,7 @@ async def execute_cross_database_query_stream(
         yield create_stream_event("schema_loading", session_id, database="mongodb", progress=0.6)
         
         # Execute the actual cross-database query
-        result = await query_engine.execute_cross_database_query(
+        result = await get_query_engine().execute_cross_database_query(
             question,
             analyze=analyze
         )
@@ -1519,7 +1537,7 @@ async def classify_query_stream(request: ClassifyRequest):
             yield create_stream_event("classifying", session_id, message="Matching against database schemas...")
             
             # Perform actual classification
-            classification = await query_engine.classify_query(request.question)
+            classification = await get_query_engine().classify_query(request.question)
             
             yield create_stream_event(
                 "databases_selected",
@@ -1577,7 +1595,8 @@ async def trivial_health_check():
             provider=health_data["provider"],
             model=health_data.get("model"),
             message=health_data.get("message"),
-            supported_operations=trivial_client.get_supported_operations() if trivial_client.is_enabled() else []
+            supported_operations=health_data.get("supported_operations", []),
+            supports_natural_language=health_data.get("supports_natural_language", False)
         )
     except Exception as e:
         logger.error(f"Trivial health check failed: {e}")
@@ -1848,42 +1867,19 @@ async def get_database_summary():
 @router.post("/visualization/analyze", response_model=VisualizationAnalysisResponse)
 async def analyze_for_visualization(request: VisualizationAnalysisRequest):
     """
-    Analyze dataset and suggest optimal visualizations - Enhanced with real data
+    Analyze dataset and suggest optimal visualizations - Using general tools
     """
     session_id = f"viz_analyze_{int(time.time())}"
-    
-    # Create dedicated chart generation logger
-    chart_logger = logging.getLogger('chart_generation')
-    if not chart_logger.handlers:
-        chart_handler = logging.FileHandler('chart_generation.log')
-        chart_handler.setLevel(logging.DEBUG)
-        formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-        chart_handler.setFormatter(formatter)
-        chart_logger.addHandler(chart_handler)
-        chart_logger.setLevel(logging.DEBUG)
-    
     start_time = time.time()
-    chart_logger.info(f"[{session_id}] === ENHANCED VISUALIZATION ANALYSIS API STARTED ===")
-    chart_logger.info(f"[{session_id}] User intent: '{request.user_intent}'")
-    chart_logger.info(f"[{session_id}] Dataset keys: {list(request.dataset.keys())}")
-    chart_logger.info(f"[{session_id}] User preferences: {request.preferences}")
     
     logger.info(f"📊 Analyzing dataset for visualization: {request.user_intent}")
     
     try:
-        # Import visualization modules
-        chart_logger.info(f"[{session_id}] Step 1: Importing visualization modules...")
-        from ..visualization.analyzer import DataAnalysisModule
-        from ..visualization.selector import ChartSelectionEngine
-        from ..visualization.types import VisualizationDataset, UserPreferences
-        
-        # Step 2: Get real data using cross-database query engine
-        chart_logger.info(f"[{session_id}] Step 2: Fetching real data via cross-database query...")
+        # Step 1: Get real data using cross-database query engine
         import pandas as pd
         
         # Check if dataset contains actual data or if we need to fetch it
         if 'data' in request.dataset and request.dataset['data']:
-            chart_logger.info(f"[{session_id}] Using provided dataset")
             # Use provided data
             if isinstance(request.dataset['data'], list):
                 df = pd.DataFrame(request.dataset['data'])
@@ -1891,21 +1887,16 @@ async def analyze_for_visualization(request: VisualizationAnalysisRequest):
                 df = pd.DataFrame(request.dataset['data'])
         else:
             # Fetch real data using the user intent as a query
-            chart_logger.info(f"[{session_id}] Fetching data via cross-database query: '{request.user_intent}'")
             try:
-                # Use the enhanced process_ai_query function to get real data
                 result = await process_ai_query(
                     question=request.user_intent,
-                    analyze=False,  # We'll do visualization analysis instead
-                    cross_database=True  # Enable cross-database queries
+                    analyze=False,
+                    cross_database=True
                 )
                 
                 if result.get("success") and result.get("rows"):
                     df = pd.DataFrame(result["rows"])
-                    chart_logger.info(f"[{session_id}] Real data fetched: {len(df)} rows, {len(df.columns)} columns")
-                    chart_logger.debug(f"[{session_id}] Columns: {list(df.columns)}")
                 else:
-                    chart_logger.warning(f"[{session_id}] No data returned from query, using sample data")
                     # Fallback to sample data
                     sample_data = [
                         {"category": "A", "value": 10, "date": "2024-01-01"},
@@ -1917,7 +1908,7 @@ async def analyze_for_visualization(request: VisualizationAnalysisRequest):
                     df = pd.DataFrame(sample_data)
                     
             except Exception as query_error:
-                chart_logger.error(f"[{session_id}] Error fetching real data: {str(query_error)}")
+                logger.error(f"Error fetching real data: {str(query_error)}")
                 # Fallback to sample data
                 sample_data = [
                     {"category": "A", "value": 10, "date": "2024-01-01"},
@@ -1928,123 +1919,78 @@ async def analyze_for_visualization(request: VisualizationAnalysisRequest):
                 ]
                 df = pd.DataFrame(sample_data)
         
-        # Create VisualizationDataset
-        dataset = VisualizationDataset(
-            data=df,
-            columns=list(df.columns),
-            metadata={"source": "cross_database_query", "session_id": session_id},
-            source_info={"origin": "enhanced_api", "query": request.user_intent}
+        # Step 2: Use the visualization tool from general_tools
+        from ..tools.general_tools import VisualizationTools
+        
+        data_for_viz = df.to_dict('records')
+        suggested_chart_type = _suggest_chart_type(df, request.user_intent)
+        
+        # Create visualization using the general tool
+        viz_result = await VisualizationTools.create_visualization(
+            data=data_for_viz,
+            chart_type=suggested_chart_type,
+            title=f"Visualization for: {request.user_intent}",
+            user_query=request.user_intent,
+            save_to_file=False  # Don't save file for analysis endpoint
         )
-        chart_logger.info(f"[{session_id}] Dataset created: {len(df)} rows, {len(df.columns)} columns")
         
-        # Get LLM client for analysis
-        chart_logger.info(f"[{session_id}] Step 3: Initializing LLM client...")
-        llm_client = get_llm_client()
-        chart_logger.info(f"[{session_id}] LLM client type: {type(llm_client).__name__}")
+        # Step 3: Build analysis response
+        estimated_render_time = _estimate_render_time(len(df), suggested_chart_type)
         
-        # Analyze dataset
-        chart_logger.info(f"[{session_id}] Step 4: Starting dataset analysis...")
-        analyzer = DataAnalysisModule(llm_client)
-        analysis_result = await analyzer.analyze_dataset(dataset, request.user_intent, session_id)
-        chart_logger.info(f"[{session_id}] Dataset analysis completed")
-        
-        # Get chart recommendations
-        chart_logger.info(f"[{session_id}] Step 5: Starting chart selection...")
-        selector = ChartSelectionEngine(llm_client)
-        
-        # Create proper UserPreferences object
-        user_prefs = UserPreferences(
-            preferred_style=request.preferences.get('style', 'modern'),
-            performance_priority=request.preferences.get('performance', 'medium'),
-            interactivity_level=request.preferences.get('interactivity', 'medium')
-        )
-        chart_logger.debug(f"[{session_id}] User preferences: {user_prefs}")
-        
-        chart_selection = await selector.select_optimal_chart(analysis_result, user_prefs, session_id)
-        chart_logger.info(f"[{session_id}] Chart selection completed")
-        
-        # Estimate render time
-        chart_logger.info(f"[{session_id}] Step 6: Estimating render time...")
-        estimated_render_time = _estimate_render_time(analysis_result.dataset_size, chart_selection.primary_chart.chart_type)
-        chart_logger.info(f"[{session_id}] Estimated render time: {estimated_render_time:.2f}s")
-        
-        # Build response
-        chart_logger.info(f"[{session_id}] Step 7: Building API response...")
         response = VisualizationAnalysisResponse(
             analysis={
-                "dataset_size": analysis_result.dataset_size,
-                "variable_types": {k: v.__dict__ for k, v in analysis_result.variable_types.items()},
-                "dimensionality": analysis_result.dimensionality.__dict__,
-                "recommendations": analysis_result.recommendations
+                "dataset_size": len(df),
+                "variable_types": {col: str(df[col].dtype) for col in df.columns},
+                "dimensionality": {"columns": len(df.columns), "rows": len(df)},
+                "recommendations": ["Data suitable for visualization"]
             },
             recommendations={
                 "primary_chart": {
-                    "type": chart_selection.primary_chart.chart_type,
-                    "confidence": chart_selection.primary_chart.confidence_score,
-                    "rationale": chart_selection.primary_chart.rationale,
-                    "data_mapping": chart_selection.primary_chart.data_mapping
+                    "type": suggested_chart_type,
+                    "confidence": 0.8,
+                    "rationale": f"Suggested {suggested_chart_type} chart based on data structure",
+                    "data_mapping": {"x": df.columns[0] if len(df.columns) > 0 else "x",
+                                   "y": df.columns[1] if len(df.columns) > 1 else "y"}
                 },
                 "alternatives": [
-                    {
-                        "type": alt.chart_type,
-                        "confidence": alt.confidence_score,
-                        "rationale": alt.rationale
-                    } for alt in chart_selection.alternatives
+                    {"type": "bar", "confidence": 0.6, "rationale": "Alternative bar chart"},
+                    {"type": "line", "confidence": 0.5, "rationale": "Alternative line chart"}
                 ]
             },
             estimated_render_time=estimated_render_time
         )
         
         total_time = time.time() - start_time
-        chart_logger.info(f"[{session_id}] === VISUALIZATION ANALYSIS API COMPLETED ===")
-        chart_logger.info(f"[{session_id}] Total API time: {total_time:.2f}s")
-        chart_logger.info(f"[{session_id}] Primary chart type: {chart_selection.primary_chart.chart_type}")
+        logger.info(f"✅ Visualization analysis completed in {total_time:.2f}s")
         
         return response
         
     except Exception as e:
         error_time = time.time() - start_time
-        chart_logger.error(f"[{session_id}] === VISUALIZATION ANALYSIS API FAILED ===")
-        chart_logger.error(f"[{session_id}] Error after {error_time:.2f}s: {str(e)}")
-        chart_logger.exception(f"[{session_id}] Full error traceback:")
-        
-        logger.error(f"❌ Visualization analysis failed: {str(e)}")
+        logger.error(f"❌ Visualization analysis failed after {error_time:.2f}s: {str(e)}")
         logger.error(f"❌ Traceback: {traceback.format_exc()}")
         raise HTTPException(status_code=500, detail=f"Visualization analysis failed: {str(e)}")
 
 @router.post("/visualization/generate", response_model=ChartGenerationResponse)
 async def generate_chart_config(request: ChartGenerationRequest):
     """
-    Generate optimized Plotly configuration - Enhanced with real data
+    Generate optimized Plotly configuration - Using general tools
     """
     session_id = f"chart_gen_{int(time.time())}"
     logger.info(f"📈 Generating {request.chart_type} chart configuration")
     
-    # Add logging for chart generation
-    chart_logger = logging.getLogger('chart_generation')
-    chart_logger.info(f"[{session_id}] === CHART GENERATION API STARTED ===")
-    chart_logger.info(f"[{session_id}] Chart type: {request.chart_type}")
-    chart_logger.info(f"[{session_id}] Data keys: {list(request.data.keys())}")
-    
     try:
-        # Import visualization modules
-        from ..visualization.generator import PlotlyConfigGenerator, PlotlyOptimizer
-        from ..visualization.types import VisualizationDataset, ChartRecommendation
-        
-        # Convert request data to internal format
+        # Import general tools
+        from ..tools.general_tools import VisualizationTools
         import pandas as pd
-        
-        chart_logger.info(f"[{session_id}] Step 1: Processing input data...")
         
         # Use real data from request or fetch it
         if 'data' in request.data and request.data['data']:
-            chart_logger.info(f"[{session_id}] Using provided data")
             if isinstance(request.data['data'], list):
                 df = pd.DataFrame(request.data['data'])
             else:
                 df = pd.DataFrame(request.data['data'])
         else:
-            chart_logger.info(f"[{session_id}] No data provided, using sample data for chart type: {request.chart_type}")
             # Generate appropriate sample data based on chart type
             if request.chart_type in ['scatter', 'scatter_plot']:
                 sample_data = [
@@ -2068,59 +2014,27 @@ async def generate_chart_config(request: ChartGenerationRequest):
                 ]
             df = pd.DataFrame(sample_data)
         
-        chart_logger.info(f"[{session_id}] Data processed: {len(df)} rows, {len(df.columns)} columns")
-        chart_logger.debug(f"[{session_id}] Columns: {list(df.columns)}")
+        # Use the visualization tool to generate the chart
+        data_for_viz = df.to_dict('records')
         
-        dataset = VisualizationDataset(
-            data=df,
-            columns=list(df.columns),
-            metadata={"source": "chart_generation_api", "session_id": session_id},
-            source_info={"origin": "enhanced_chart_generation", "chart_type": request.chart_type}
-        )
-        
-        # Create mock recommendation
-        recommendation = ChartRecommendation(
+        viz_result = await VisualizationTools.create_visualization(
+            data=data_for_viz,
             chart_type=request.chart_type,
-            confidence_score=0.8,
-            rationale=f"Generated {request.chart_type} chart",
-            data_mapping={"x": "x", "y": "y"},
-            performance_score=0.9
+            title=request.customizations.get('title', f"{request.chart_type.title()} Chart"),
+            save_to_file=False  # Don't save file for API generation
         )
         
-        # Generate configuration
-        generator = PlotlyConfigGenerator()
-        base_config = await generator.generate_config(
-            chart_type=request.chart_type,
-            dataset=dataset,
-            recommendation=recommendation,
-            customizations=request.customizations
-        )
-        
-        # Apply performance optimizations
-        from ..visualization.types import RenderOptions
-        render_options = RenderOptions(
-            performance_mode=request.performance_requirements.get('performance_mode', False)
-        )
-        
-        optimizer = PlotlyOptimizer()
-        optimized_config = optimizer.optimize_for_performance(base_config, render_options)
-        
-        # Generate alternatives (simplified)
-        alternative_configs = []
+        # Extract the chart config from the visualization result
+        chart_config = viz_result.get("chart_config", {})
         
         return ChartGenerationResponse(
-            config={
-                "data": optimized_config.data,
-                "layout": optimized_config.layout,
-                "config": optimized_config.config,
-                "type": optimized_config.type
-            },
+            config=chart_config,
             performance_profile={
-                "estimated_render_time": _estimate_render_time(len(dataset.data), request.chart_type),
-                "memory_usage": "low" if len(dataset.data) < 1000 else "medium",
-                "optimization_applied": optimized_config.performance_mode
+                "estimated_render_time": _estimate_render_time(len(df), request.chart_type),
+                "memory_usage": "low" if len(df) < 1000 else "medium",
+                "optimization_applied": False
             },
-            alternative_configs=alternative_configs
+            alternative_configs=[]
         )
         
     except Exception as e:
@@ -2150,7 +2064,7 @@ class VisualizationQueryResponse(BaseModel):
 async def visualization_query(request: VisualizationQueryRequest, http_request: Request):
     """
     Direct connection: Query data and generate visualization in one call
-    This is the main endpoint for GraphingBlock to use
+    This is the main endpoint for GraphingBlock to use - Using general tools
     """
     # Get current user for audit and isolation
     current_user = await get_current_user_from_request(http_request)
@@ -2158,20 +2072,10 @@ async def visualization_query(request: VisualizationQueryRequest, http_request: 
     session_id = f"viz_query_{current_user}_{int(time.time())}"
     start_time = time.time()
     
-    # Setup logging
-    chart_logger = logging.getLogger('chart_generation')
-    chart_logger.info(f"[{session_id}] === DIRECT VISUALIZATION QUERY STARTED ===")
-    chart_logger.info(f"[{session_id}] User: {current_user}")
-    chart_logger.info(f"[{session_id}] User query: '{request.query}'")
-    chart_logger.info(f"[{session_id}] Auto generate: {request.auto_generate}")
-    chart_logger.info(f"[{session_id}] Chart preferences: {request.chart_preferences}")
-    
     logger.info(f"🎯 Direct visualization query for user {current_user}: {request.query}")
     
     try:
         # Step 1: Fetch real data using cross-database query
-        chart_logger.info(f"[{session_id}] Step 1: Fetching data via cross-database query...")
-        
         try:
             data_result = await process_ai_query(
                 question=request.query,
@@ -2180,21 +2084,16 @@ async def visualization_query(request: VisualizationQueryRequest, http_request: 
             )
             
             if not data_result.get("success") or not data_result.get("rows"):
-                chart_logger.warning(f"[{session_id}] Query returned no data, using sample data")
                 raise Exception("No data returned from query")
                 
             chart_data = data_result["rows"]
-            chart_logger.info(f"[{session_id}] Real data fetched: {len(chart_data)} rows")
             
         except Exception as data_error:
-            chart_logger.error(f"[{session_id}] Data fetch error: {str(data_error)}")
+            logger.error(f"Data fetch error: {str(data_error)}")
             # Fallback to sample data based on query intent
             chart_data = _generate_sample_data_for_query(request.query)
-            chart_logger.info(f"[{session_id}] Using sample data: {len(chart_data)} rows")
         
         # Step 2: Analyze data for visualization
-        chart_logger.info(f"[{session_id}] Step 2: Analyzing data for visualization...")
-        
         import pandas as pd
         df = pd.DataFrame(chart_data)
         
@@ -2206,30 +2105,33 @@ async def visualization_query(request: VisualizationQueryRequest, http_request: 
             "sample_data": df.head(3).to_dict('records') if len(df) > 0 else []
         }
         
-        chart_logger.info(f"[{session_id}] Data summary: {data_summary['row_count']} rows, {data_summary['column_count']} columns")
-        
-        # Step 3: Generate chart if requested
+        # Step 3: Generate chart if requested using general tools
         chart_config = None
         suggestions = []
         
         if request.auto_generate and len(df) > 0:
-            chart_logger.info(f"[{session_id}] Step 3: Auto-generating chart...")
-            
             try:
-                # Quick analysis for chart selection
-                suggested_chart_type = _suggest_chart_type(df, request.query)
-                chart_logger.info(f"[{session_id}] Suggested chart type: {suggested_chart_type}")
+                # Use the visualization tool from general_tools
+                from ..tools.general_tools import VisualizationTools
                 
-                # Generate chart configuration
-                chart_config = _generate_chart_config(df, suggested_chart_type, request.chart_preferences)
+                suggested_chart_type = _suggest_chart_type(df, request.query)
+                
+                # Create visualization using the general tool
+                viz_result = await VisualizationTools.create_visualization(
+                    data=chart_data,
+                    chart_type=suggested_chart_type,
+                    title=request.chart_preferences.get('title', f"Visualization for: {request.query}"),
+                    user_query=request.query,
+                    save_to_file=request.chart_preferences.get('save_to_file', False)
+                )
+                
+                chart_config = viz_result.get("chart_config", {})
                 
                 # Generate alternative suggestions
                 suggestions = _generate_chart_suggestions(df, request.query)
                 
-                chart_logger.info(f"[{session_id}] Chart config generated successfully")
-                
             except Exception as chart_error:
-                chart_logger.error(f"[{session_id}] Chart generation error: {str(chart_error)}")
+                logger.error(f"Chart generation error: {str(chart_error)}")
                 suggestions = [{"type": "bar", "confidence": 0.5, "rationale": "Default fallback"}]
         
         # Step 4: Performance metrics
@@ -2253,18 +2155,12 @@ async def visualization_query(request: VisualizationQueryRequest, http_request: 
             performance_metrics=performance_metrics
         )
         
-        chart_logger.info(f"[{session_id}] === DIRECT VISUALIZATION QUERY COMPLETED ===")
-        chart_logger.info(f"[{session_id}] Total time: {total_time:.2f}s")
-        chart_logger.info(f"[{session_id}] Chart generated: {chart_config is not None}")
+        logger.info(f"✅ Direct visualization query completed in {total_time:.2f}s")
         
         return response
         
     except Exception as e:
         error_time = time.time() - start_time
-        chart_logger.error(f"[{session_id}] === DIRECT VISUALIZATION QUERY FAILED ===")
-        chart_logger.error(f"[{session_id}] Error after {error_time:.2f}s: {str(e)}")
-        chart_logger.exception(f"[{session_id}] Full error traceback:")
-        
         logger.error(f"❌ Direct visualization query failed: {str(e)}")
         
         return VisualizationQueryResponse(
@@ -2334,90 +2230,7 @@ def _suggest_chart_type(df: pd.DataFrame, query: str) -> str:
     else:
         return 'line'
 
-def _generate_chart_config(df: pd.DataFrame, chart_type: str, preferences: Dict[str, Any]) -> Dict[str, Any]:
-    """Generate Plotly chart configuration with dark mode support"""
-    
-    # Check for dark mode preference
-    dark_mode = preferences.get("dark_mode", False)
-    
-    # Dark mode color scheme
-    dark_theme = {
-        "plot_bgcolor": "#1f2937",
-        "paper_bgcolor": "#111827",
-        "font": {"color": "#f9fafb"},
-        "xaxis": {
-            "gridcolor": "#374151",
-            "zerolinecolor": "#6b7280",
-            "tickcolor": "#9ca3af",
-            "linecolor": "#6b7280"
-        },
-        "yaxis": {
-            "gridcolor": "#374151",
-            "zerolinecolor": "#6b7280",
-            "tickcolor": "#9ca3af",
-            "linecolor": "#6b7280"
-        },
-        "colorway": [
-            "#3b82f6", "#10b981", "#f59e0b", "#ef4444",
-            "#8b5cf6", "#06b6d4", "#f97316", "#84cc16"
-        ]
-    } if dark_mode else {}
-    
-    # Basic configuration structure
-    config = {
-        "type": chart_type,
-        "data": [],
-        "layout": {
-            "title": preferences.get("title", f"{chart_type.title()} Chart"),
-            "showlegend": True,
-            "margin": {"l": 50, "r": 50, "t": 50, "b": 50},
-            **dark_theme  # Apply dark theme if enabled
-        },
-        "config": {
-            "responsive": True,
-            "displayModeBar": True,
-            "modeBarButtonsToRemove": [],
-            "displaylogo": False
-        }
-    }
-    
-    # Generate data based on chart type
-    if chart_type == 'bar':
-        categorical_col = df.select_dtypes(include=['object']).columns[0] if len(df.select_dtypes(include=['object']).columns) > 0 else df.columns[0]
-        numeric_col = df.select_dtypes(include=['number']).columns[0] if len(df.select_dtypes(include=['number']).columns) > 0 else df.columns[-1]
-        
-        config["data"] = [{
-            "type": "bar",
-            "x": df[categorical_col].tolist(),
-            "y": df[numeric_col].tolist(),
-            "name": numeric_col
-        }]
-        
-    elif chart_type == 'line':
-        x_col = df.columns[0]
-        y_col = df.columns[1] if len(df.columns) > 1 else df.columns[0]
-        
-        config["data"] = [{
-            "type": "scatter",
-            "mode": "lines",
-            "x": df[x_col].tolist(),
-            "y": df[y_col].tolist(),
-            "name": y_col
-        }]
-        
-    elif chart_type == 'scatter':
-        x_col = df.columns[0]
-        y_col = df.columns[1] if len(df.columns) > 1 else df.columns[0]
-        
-        config["data"] = [{
-            "type": "scatter",
-            "mode": "markers",
-            "x": df[x_col].tolist(),
-            "y": df[y_col].tolist(),
-            "name": f"{x_col} vs {y_col}"
-        }]
-    
-    return config
+
 
 def _generate_chart_suggestions(df: pd.DataFrame, query: str) -> List[Dict[str, Any]]:
     """Generate alternative chart suggestions"""
@@ -2594,3 +2407,1183 @@ async def classify_orchestration_operation(request: OrchestrationClassifyRequest
             estimated_time=3000 if is_data_analysis else 500,
             operation_type=operation_type
         )
+
+# Add new request/response models after the existing TrivialHealthResponse class
+class LangGraphQueryRequest(BaseModel):
+    question: str
+    force_langgraph: bool = False
+    show_routing: bool = False
+    verbose: bool = False
+    show_outputs: bool = False
+    show_timeline: bool = False
+    show_captured_data: bool = False  # NEW: Show captured SQL queries and tool executions
+    export_analysis: Optional[str] = None
+    save_session: bool = True
+    stream_output: bool = True
+    include_aggregated_data: bool = False  # NEW: Control inline data return
+
+class LangGraphQueryResponse(BaseModel):
+    success: bool
+    workflow: str
+    question: str
+    session_id: str
+    execution_metadata: Dict[str, Any]
+    routing_decision: Optional[Dict[str, Any]] = None
+    node_results: Optional[Dict[str, Any]] = None
+    final_result: Optional[Dict[str, Any]] = None
+    operation_results: Optional[Dict[str, Any]] = None
+    visualization_data: Optional[Dict[str, Any]] = None
+    performance_metrics: Optional[Dict[str, Any]] = None
+    error_message: Optional[str] = None
+
+# Global orchestrator instance to avoid re-initialization (same as cross_db.py)
+_global_langgraph_orchestrator = None
+
+def get_langgraph_orchestrator():
+    """Get or create the global LangGraph orchestrator instance"""
+    global _global_langgraph_orchestrator
+    
+    if _global_langgraph_orchestrator is None:
+        from ..config.settings import Settings
+        settings = Settings()
+        
+        config = {
+            "use_langgraph_for_complex": True,
+            "complexity_threshold": 3,  # Lower threshold for testing
+            "preserve_trivial_routing": True,
+            "llm_config": {
+                "primary_provider": "bedrock",
+                "fallbacks": ["anthropic", "openai"]
+            }
+        }
+        _global_langgraph_orchestrator = LangGraphIntegrationOrchestrator(config)
+        langgraph_logger.info("🔧 Initialized global LangGraph orchestrator")
+    
+    return _global_langgraph_orchestrator
+
+@router.post("/langgraph/stream")
+async def langgraph_stream(request: LangGraphQueryRequest, http_request: Request):
+    """
+    LangGraph orchestration endpoint with streaming Server-Sent Events
+    
+    Implements the exact same LangGraph logic as the CLI langgraph command,
+    but as a streaming API endpoint for real-time updates.
+    
+    Data Export Mechanisms:
+    1. Local file saving: Use export_analysis="/path/to/file.json" 
+       - Saves complete workflow data to local file system
+       - Same as CLI --export-analysis flag
+    
+    2. Inline API data: Use include_aggregated_data=true
+       - Streams structured data directly in API response
+       - Events: api_structured_data, api_execution_plans, api_tool_results, api_complete_response
+       - Perfect for programmatic API consumption
+    
+    Example usage:
+    {
+        "question": "how many products and orders do i have in mongo",
+        "include_aggregated_data": true,
+        "export_analysis": "/tmp/analysis.json",
+        "save_session": true
+    }
+    """
+    # Get current user for audit and isolation
+    current_user = await get_current_user_from_request(http_request)
+    
+    request_data = {
+        "endpoint": "/langgraph/stream",
+        "user": current_user,
+        "question": request.question,
+        "force_langgraph": request.force_langgraph,
+        "show_routing": request.show_routing,
+        "verbose": request.verbose,
+        "show_outputs": request.show_outputs,
+        "show_timeline": request.show_timeline,
+        "save_session": request.save_session
+    }
+    
+    start_time = time.time()
+    
+    langgraph_logger.info(f"🚀 [LANGGRAPH CLI LOGIC] Starting LangGraph execution")
+    langgraph_logger.info(f"📋 [LANGGRAPH CLI LOGIC] Question: '{request.question}'")
+    langgraph_logger.info(f"⚙️ [LANGGRAPH CLI LOGIC] Settings - force_langgraph: {request.force_langgraph}, verbose: {request.verbose}")
+    
+    async def generate_stream():
+        # Initialize LangGraph integration orchestrator (same as CLI)
+        orchestrator = get_langgraph_orchestrator()
+        
+        # Create session for tracking (same as CLI)
+        session_id = str(uuid.uuid4())
+        
+        try:
+            yield create_stream_event("status", session_id, message="🚀 LangGraph Query Execution")
+            yield create_stream_event("status", session_id, message=f"Question: {request.question}")
+            yield create_stream_event("status", session_id, message=f"Session ID: {session_id[:8]}...")
+            yield create_stream_event("status", session_id, message="")
+            
+            langgraph_logger.info(f"🔧 [CLI LOGIC] Using session ID: {session_id[:8]}...")
+            
+            # ✅ GRANULAR STREAMING: Add real-time events during execution
+            from ..langgraph.output_aggregator import get_output_integrator
+            
+            # Start detailed reasoning with immediate feedback
+            yield create_stream_event("detailed_reasoning_start", session_id,
+                message="🔍 STARTING DETAILED REASONING CHAIN"
+            )
+            
+            # Add granular progress events
+            yield create_stream_event("progress", session_id,
+                message="🤖 Initializing LangGraph workflow...",
+                progress=10,
+                status="initializing"
+            )
+            
+            yield create_stream_event("progress", session_id,
+                message="🎯 Analyzing query complexity...",
+                progress=20,
+                status="analyzing"
+            )
+            
+            yield create_stream_event("progress", session_id,
+                message="🔍 Selecting optimal workflow path...",
+                progress=30,
+                status="routing"
+            )
+            
+            yield create_stream_event("progress", session_id,
+                message="📊 Connecting to data sources...",
+                progress=40,
+                status="connecting"
+            )
+            
+            yield create_stream_event("progress", session_id,
+                message="⚡ Executing workflow operations...",
+                progress=50,
+                status="executing"
+            )
+            
+            # Process query with real-time monitoring - let LangGraph determine optimal routing and databases (EXACT CLI LOGIC)
+            result = await orchestrator.process_query(
+                question=request.question,
+                session_id=session_id,
+                databases_available=None,  # Let it auto-detect (same as CLI)
+                force_langgraph=request.force_langgraph
+            )
+            
+            # ✅ COMPREHENSIVE DEFENSIVE: Handle ExecutionResult objects and ensure all results are dictionaries
+            def ensure_dict_result(obj, path="root"):
+                """Recursively convert any ExecutionResult objects to dictionaries"""
+                if obj is None:
+                    return obj
+                
+                # Import ExecutionResult for type checking
+                try:
+                    from ..tools.registry import ExecutionResult
+                    if isinstance(obj, ExecutionResult):
+                        logger.warning(f"Converting ExecutionResult to dict at path: {path}")
+                        converted = {
+                            "success": obj.success,
+                            "result": ensure_dict_result(obj.result, f"{path}.result") if obj.result else None,
+                            "error": obj.error,
+                            "metadata": ensure_dict_result(obj.metadata, f"{path}.metadata") if obj.metadata else {},
+                            "tool_id": obj.tool_id,
+                            "call_id": obj.call_id
+                        }
+                        # If result.result is a dict, merge it up
+                        if isinstance(converted["result"], dict):
+                            return {**converted["result"], **{k: v for k, v in converted.items() if k != "result"}}
+                        return converted
+                except ImportError:
+                    pass
+                
+                # Handle other objects that don't have .get() method
+                if hasattr(obj, '__dict__') and not hasattr(obj, 'get'):
+                    logger.warning(f"Converting object {type(obj)} to dict at path: {path}")
+                    if hasattr(obj, 'result') and hasattr(obj, 'success'):
+                        # This looks like an ExecutionResult-like object
+                        return {
+                            "success": getattr(obj, 'success', True),
+                            "result": ensure_dict_result(getattr(obj, 'result', None), f"{path}.result"),
+                            "error": getattr(obj, 'error', None),
+                            "metadata": ensure_dict_result(getattr(obj, 'metadata', {}), f"{path}.metadata"),
+                            "tool_id": getattr(obj, 'tool_id', None),
+                            "call_id": getattr(obj, 'call_id', None)
+                        }
+                    else:
+                        return obj.__dict__
+                
+                # Handle dictionaries recursively
+                if isinstance(obj, dict):
+                    return {k: ensure_dict_result(v, f"{path}.{k}") for k, v in obj.items()}
+                
+                # Handle lists recursively
+                if isinstance(obj, list):
+                    return [ensure_dict_result(item, f"{path}[{i}]") for i, item in enumerate(obj)]
+                
+                # Return primitives as-is
+                return obj
+            
+            # Apply comprehensive conversion
+            result = ensure_dict_result(result)
+            
+            # Final safety check
+            if not isinstance(result, dict):
+                logger.error(f"Result is STILL not a dictionary after conversion: {type(result)}")
+                result = {"error": f"Failed to convert result type: {type(result)}", "original_result": str(result)}
+            
+            # Immediate post-execution feedback
+            yield create_stream_event("progress", session_id,
+                message="✅ Workflow execution completed",
+                progress=80,
+                status="completed"
+            )
+            
+            # ✅ IMMEDIATE DETAILED REASONING: Stream the captured data right after execution
+            try:
+                output_integrator = get_output_integrator()
+                
+                # CRITICAL: Extract the actual session ID used by the workflow execution (EXACT CLI LOGIC)
+                # The workflow may have created internal sessions we need to track
+                actual_session_id = result.get("session_id", session_id)
+                if actual_session_id != session_id:
+                    langgraph_logger.info(f"🔧 Using workflow session ID: {actual_session_id[:8]}...")
+                    session_id = actual_session_id
+                    yield create_stream_event("session_updated", session_id, new_session_id=actual_session_id)
+                
+                aggregator = output_integrator.get_aggregator(session_id)
+                
+                # Enhanced logging for detailed reasoning
+                langgraph_reasoning_logger.info(f"🔍 [REASONING_CHAIN] Starting detailed reasoning analysis for session: {session_id[:8]}...")
+                langgraph_reasoning_logger.info(f"🔍 [REASONING_CHAIN] Question: '{request.question}'")
+                
+                # Stream the same detailed information as CLI
+                yield create_stream_event("detailed_reasoning_start", session_id,
+                    message="🔍 DETAILED REASONING CHAIN"
+                )
+                
+                # 🔍 SQL QUERIES EXECUTED (same as CLI)
+                raw_data = aggregator.get_all_raw_data()
+                langgraph_reasoning_logger.info(f"🔍 [REASONING_CHAIN] Raw data captured: {len(raw_data)} items")
+                
+                if raw_data:
+                    yield create_stream_event("sql_queries_section", session_id,
+                        message="🔍 SQL QUERIES EXECUTED:"
+                    )
+                    
+                    sql_queries = [rd for rd in raw_data if rd.query]
+                    langgraph_reasoning_logger.info(f"🔍 [SQL_QUERIES] Found {len(sql_queries)} SQL queries in captured data")
+                    
+                    for i, rd in enumerate(sql_queries, 1):
+                        langgraph_reasoning_logger.info(f"🔍 [SQL_QUERIES] Query {i}: {rd.source} - {rd.execution_time_ms:.1f}ms, {rd.row_count} rows")
+                        langgraph_reasoning_logger.debug(f"🔍 [SQL_QUERIES] Query {i} text: {rd.query}")
+                        
+                        yield create_stream_event("sql_query_executed", session_id,
+                            query_number=i,
+                            source=rd.source,
+                            query_text=rd.query,
+                            execution_time_ms=rd.execution_time_ms,
+                            rows_returned=rd.row_count,
+                            message=f"  Query {i}: {rd.source} - {rd.execution_time_ms:.1f}ms, {rd.row_count} rows"
+                        )
+                else:
+                    langgraph_reasoning_logger.warning(f"🔍 [SQL_QUERIES] No SQL queries captured for session {session_id[:8]}")
+                    yield create_stream_event("no_sql_queries", session_id,
+                        message="  No SQL queries captured"
+                    )
+                
+                # 🔧 TOOL EXECUTIONS (same as CLI)
+                tool_executions = aggregator.get_all_tool_executions()
+                langgraph_reasoning_logger.info(f"🔧 [TOOL_EXECUTIONS] Found {len(tool_executions)} tool executions")
+                
+                if tool_executions:
+                    yield create_stream_event("tool_executions_section", session_id,
+                        message="🔧 TOOL EXECUTIONS:"
+                    )
+                    
+                    success_count = sum(1 for tool in tool_executions if tool.success)
+                    total_time = sum(tool.execution_time_ms for tool in tool_executions)
+                    langgraph_reasoning_logger.info(f"🔧 [TOOL_EXECUTIONS] Success rate: {success_count}/{len(tool_executions)} ({success_count/len(tool_executions)*100:.1f}%), Total time: {total_time:.1f}ms")
+                    
+                    for i, tool in enumerate(tool_executions, 1):
+                        status_emoji = "✅ Success" if tool.success else "❌ Failed"
+                        langgraph_reasoning_logger.info(f"🔧 [TOOL_EXECUTIONS] Tool {i}: {tool.tool_id} - {status_emoji} ({tool.execution_time_ms:.1f}ms)")
+                        if tool.error_message:
+                            langgraph_reasoning_logger.error(f"🔧 [TOOL_EXECUTIONS] Tool {i} error: {tool.error_message}")
+                        
+                        yield create_stream_event("tool_execution_completed", session_id,
+                            execution_number=i,
+                            tool_id=tool.tool_id,
+                            success=tool.success,
+                            execution_time_ms=tool.execution_time_ms,
+                            call_id=tool.call_id,
+                            error_message=tool.error_message,
+                            message=f"  Tool {i}: {tool.tool_id} - {status_emoji} ({tool.execution_time_ms:.1f}ms)"
+                        )
+                else:
+                    langgraph_reasoning_logger.warning(f"🔧 [TOOL_EXECUTIONS] No tool executions captured for session {session_id[:8]}")
+                    yield create_stream_event("no_tool_executions", session_id,
+                        message="  No tool executions captured"
+                    )
+                
+                # 📊 DATABASE SCHEMA DISCOVERY (same as CLI)
+                schema_data = [rd for rd in raw_data if not rd.query]  # Schema data doesn't have queries
+                if schema_data:
+                    yield create_stream_event("schema_discovery_section", session_id,
+                        message="📊 DATABASE SCHEMA DISCOVERY:"
+                    )
+                    
+                    for rd in schema_data:
+                        source = getattr(rd, 'source', None) or 'unknown'
+                        table_count = rd.row_count if rd.row_count else len(rd.rows) if rd.rows else 0
+                        
+                        # Extract content preview safely
+                        content_preview = "No preview available"
+                        try:
+                            if rd.rows and len(rd.rows) > 0:
+                                if isinstance(rd.rows[0], dict) and "content" in rd.rows[0]:
+                                    content_preview = str(rd.rows[0]["content"])[:200] + "..."
+                                elif hasattr(rd.rows[0], 'content'):
+                                    content_preview = str(rd.rows[0].content)[:200] + "..."
+                                else:
+                                    content_preview = str(rd.rows[0])[:100] + "..."
+                        except (AttributeError, IndexError, KeyError):
+                            content_preview = "Content extraction error"
+                        
+                        yield create_stream_event("schema_discovered", session_id,
+                            source=source,
+                            tables_found=table_count,
+                            content_preview=content_preview,
+                            message=f"  Source {source}: {table_count} tables found"
+                        )
+                else:
+                    yield create_stream_event("no_schema_discovery", session_id,
+                        message="  No schema discovery data captured"
+                    )
+                
+                # 📋 EXECUTION PLAN DETAILS (same as CLI)
+                execution_plans = aggregator.get_all_execution_plans()
+                if execution_plans:
+                    yield create_stream_event("execution_plans_section", session_id,
+                        message="📋 EXECUTION PLAN DETAILS:"
+                    )
+                    
+                    for i, plan in enumerate(execution_plans, 1):
+                        operations_count = len(plan.operations) if hasattr(plan, 'operations') else 0
+                        strategy = getattr(plan, 'strategy', 'unknown')
+                        
+                        yield create_stream_event("execution_plan_detail", session_id,
+                            plan_number=i,
+                            plan_id=plan.plan_id if hasattr(plan, 'plan_id') else 'unknown',
+                            strategy=strategy,
+                            operations_count=operations_count,
+                            message=f"  Plan {i}: {strategy} strategy, {operations_count} operations"
+                        )
+                else:
+                    yield create_stream_event("no_execution_plans", session_id,
+                        message="  No execution plans captured"
+                    )
+                
+                # 📝 FINAL SYNTHESIS ANALYSIS (same as CLI)
+                final_synthesis = aggregator.get_final_synthesis()
+                if final_synthesis:
+                    synthesis_text = final_synthesis.response_text if hasattr(final_synthesis, 'response_text') else str(final_synthesis)
+                    synthesis_length = len(synthesis_text)
+                    # ✅ FIX: Ensure confidence_score is always a float, not string
+                    confidence_raw = getattr(final_synthesis, 'confidence_score', 0.0)
+                    confidence = float(confidence_raw) if confidence_raw is not None else 0.0
+                    sources_used = getattr(final_synthesis, 'sources_used', 0)
+                    
+                    yield create_stream_event("final_synthesis_analysis", session_id,
+                        synthesis_length=synthesis_length,
+                        confidence_score=confidence,
+                        sources_used=sources_used,
+                        synthesis_preview=synthesis_text[:500] + "..." if len(synthesis_text) > 500 else synthesis_text,
+                        message=f"📝 FINAL SYNTHESIS: {synthesis_length} chars, confidence: {confidence:.2f}, sources: {sources_used}"
+                    )
+                else:
+                    yield create_stream_event("no_final_synthesis", session_id,
+                        message="📝 No final synthesis available"
+                    )
+                
+                yield create_stream_event("detailed_reasoning_complete", session_id,
+                    message="🔍 Detailed reasoning chain complete"
+                )
+                
+                # ✅ TIMING FIX: Clear progress update after detailed reasoning is extracted
+                yield create_stream_event("progress", session_id,
+                    message="Detailed reasoning extracted successfully",
+                    progress=95,
+                    status="reasoning_complete"
+                )
+                
+            except Exception as e:
+                yield create_stream_event("reasoning_chain_warning", session_id,
+                    message=f"⚠️ Could not access detailed reasoning chain: {e}"
+                )
+                if request.verbose:
+                    langgraph_logger.warning(f"Reasoning chain access failed: {e}")
+
+            # ✅ NOW stream "Analysis complete" AFTER detailed reasoning has been captured and sent
+            yield create_stream_event("progress", session_id,
+                message="Analysis complete, finalizing results...",
+                progress=95,
+                status="finalizing"
+            )
+            
+            # Display routing information if requested (EXACT CLI LOGIC)
+            execution_metadata = result.get("execution_metadata", {})
+            routing_method = execution_metadata.get("routing_method", "unknown")
+            complexity_analysis = execution_metadata.get("complexity_analysis", {})
+            
+            if request.show_routing or request.verbose:
+                yield create_stream_event("routing_decision", session_id,
+                    method=routing_method,
+                    complexity=complexity_analysis.get('complexity', 'unknown'),
+                    reason=complexity_analysis.get('reason', 'No reason provided'),
+                    confidence=complexity_analysis.get('confidence', 'unknown')
+                )
+            
+            # Check for errors (EXACT CLI LOGIC)
+            if "error" in result:
+                error_msg = result['error']
+                langgraph_logger.error(f"❌ [CLI LOGIC] LangGraph execution failed: {error_msg}")
+                
+                # Show additional error details if available (same as CLI)
+                if request.verbose and "execution_metadata" in result:
+                    error_details = result["execution_metadata"].get("error_details")
+                    if error_details:
+                        langgraph_logger.error(f"❌ [CLI LOGIC] Error details: {error_details}")
+                        yield create_stream_event("error_details", session_id, details=error_details)
+                
+                yield create_stream_event("error", session_id,
+                    error_code="LANGGRAPH_EXECUTION_FAILED",
+                    message=error_msg,
+                    recoverable=False
+                )
+                yield create_stream_event("complete", session_id, success=False, error=error_msg)
+                return
+            
+            # Success - display results based on workflow type (EXACT CLI LOGIC)
+            workflow = result.get("workflow", "unknown")
+            execution_time = execution_metadata.get("execution_time", 0)
+            
+            yield create_stream_event("execution_success", session_id,
+                workflow=workflow,
+                execution_time=execution_time,
+                message=f"✅ Execution Successful ({workflow} workflow)"
+            )
+            
+            langgraph_logger.info(f"✅ [CLI LOGIC] Execution successful: {workflow} workflow, {execution_time:.2f}s")
+            
+            # Show comprehensive output breakdown if requested (EXACT CLI LOGIC)
+            if request.show_outputs or request.show_timeline or request.export_analysis or request.include_aggregated_data or request.show_captured_data:
+                try:
+                    from ..langgraph.output_aggregator import get_output_integrator
+                    
+                    output_integrator = get_output_integrator()
+                    aggregator = output_integrator.get_aggregator(session_id)
+                    
+                    # ✅ NEW: Show captured data if requested (EXACT CLI LOGIC)
+                    if request.show_captured_data:
+                        yield create_stream_event("captured_data_start", session_id,
+                            message="🔍 CAPTURED DATA SUMMARY"
+                        )
+                        
+                        # Get all captured data (same as CLI)
+                        raw_data = aggregator.get_all_raw_data()
+                        tool_executions = aggregator.get_all_tool_executions() 
+                        execution_plans = aggregator.get_all_execution_plans()
+                        final_synthesis = aggregator.get_final_synthesis()
+                        
+                        yield create_stream_event("captured_data_counts", session_id,
+                            total_outputs=len(aggregator.outputs),
+                            raw_data_count=len(raw_data),
+                            tool_executions_count=len(tool_executions),
+                            execution_plans_count=len(execution_plans),
+                            has_final_synthesis=final_synthesis is not None
+                        )
+                        
+                        # 🔍 SQL QUERIES EXECUTED (same as CLI)
+                        yield create_stream_event("sql_queries_section", session_id,
+                            message="🔍 SQL QUERIES EXECUTED:"
+                        )
+                        
+                        sql_queries = [rd for rd in raw_data if rd.query]
+                        if sql_queries:
+                            for i, rd in enumerate(sql_queries, 1):
+                                yield create_stream_event("sql_query_executed", session_id,
+                                    query_number=i,
+                                    source=rd.source,
+                                    query_text=rd.query,
+                                    execution_time_ms=rd.execution_time_ms,
+                                    rows_returned=rd.row_count,
+                                    message=f"  Query {i}: {rd.source} - {rd.execution_time_ms:.1f}ms, {rd.row_count} rows"
+                                )
+                        else:
+                            yield create_stream_event("no_sql_queries", session_id,
+                                message="  No SQL queries captured"
+                            )
+                        
+                        # 🔧 TOOL EXECUTIONS (same as CLI)
+                        yield create_stream_event("tool_executions_section", session_id,
+                            message="🔧 TOOL EXECUTIONS:"
+                        )
+                        
+                        if tool_executions:
+                            for i, tool in enumerate(tool_executions, 1):
+                                yield create_stream_event("tool_execution_completed", session_id,
+                                    execution_number=i,
+                                    tool_id=tool.tool_id,
+                                    success=tool.success,
+                                    execution_time_ms=tool.execution_time_ms,
+                                    call_id=tool.call_id,
+                                    error_message=tool.error_message,
+                                    message=f"  Tool {i}: {tool.tool_id} - {status_emoji} ({tool.execution_time_ms:.1f}ms)"
+                                )
+                        else:
+                            yield create_stream_event("no_tool_executions", session_id,
+                                message="  No tool executions captured"
+                            )
+                        
+                        # 📊 DATABASE SCHEMA DISCOVERY (same as CLI)
+                        schema_data = [rd for rd in raw_data if not rd.query]  # Schema data doesn't have queries
+                        if schema_data:
+                            yield create_stream_event("schema_discovery_section", session_id,
+                                message="📊 DATABASE SCHEMA DISCOVERY:"
+                            )
+                            
+                            for rd in schema_data:
+                                source = getattr(rd, 'source', None) or 'unknown'
+                                table_count = rd.row_count if rd.row_count else len(rd.rows) if rd.rows else 0
+                                
+                                # Extract content preview safely
+                                content_preview = "No preview available"
+                                try:
+                                    if rd.rows and len(rd.rows) > 0:
+                                        if isinstance(rd.rows[0], dict) and "content" in rd.rows[0]:
+                                            content_preview = str(rd.rows[0]["content"])[:200] + "..."
+                                        elif hasattr(rd.rows[0], 'content'):
+                                            content_preview = str(rd.rows[0].content)[:200] + "..."
+                                        else:
+                                            content_preview = str(rd.rows[0])[:100] + "..."
+                                except (AttributeError, IndexError, KeyError):
+                                    content_preview = "Content extraction error"
+                                
+                                yield create_stream_event("schema_discovered", session_id,
+                                    source=source,
+                                    tables_found=table_count,
+                                    content_preview=content_preview,
+                                    message=f"  Source {source}: {table_count} tables found"
+                                )
+                        else:
+                            yield create_stream_event("no_schema_discovery", session_id,
+                                message="  No schema discovery data captured"
+                            )
+                        
+                        # 📋 EXECUTION PLAN DETAILS (same as CLI)
+                        execution_plans = aggregator.get_all_execution_plans()
+                        if execution_plans:
+                            yield create_stream_event("execution_plans_section", session_id,
+                                message="📋 EXECUTION PLAN DETAILS:"
+                            )
+                            
+                            for i, plan in enumerate(execution_plans, 1):
+                                operations_count = len(plan.operations) if hasattr(plan, 'operations') else 0
+                                strategy = getattr(plan, 'strategy', 'unknown')
+                                
+                                yield create_stream_event("execution_plan_detail", session_id,
+                                    plan_number=i,
+                                    plan_id=plan.plan_id if hasattr(plan, 'plan_id') else 'unknown',
+                                    strategy=strategy,
+                                    operations_count=operations_count,
+                                    message=f"  Plan {i}: {strategy} strategy, {operations_count} operations"
+                                )
+                        else:
+                            yield create_stream_event("no_execution_plans", session_id,
+                                message="  No execution plans captured"
+                            )
+                        
+                        # 📝 FINAL SYNTHESIS ANALYSIS (same as CLI)
+                        final_synthesis = aggregator.get_final_synthesis()
+                        if final_synthesis:
+                            synthesis_text = final_synthesis.response_text if hasattr(final_synthesis, 'response_text') else str(final_synthesis)
+                            synthesis_length = len(synthesis_text)
+                            # ✅ FIX: Ensure confidence_score is always a float, not string
+                            confidence_raw = getattr(final_synthesis, 'confidence_score', 0.0)
+                            confidence = float(confidence_raw) if confidence_raw is not None else 0.0
+                            sources_used = getattr(final_synthesis, 'sources_used', 0)
+                            
+                            yield create_stream_event("final_synthesis_analysis", session_id,
+                                synthesis_length=synthesis_length,
+                                confidence_score=confidence,
+                                sources_used=sources_used,
+                                synthesis_preview=synthesis_text[:500] + "..." if len(synthesis_text) > 500 else synthesis_text,
+                                message=f"📝 FINAL SYNTHESIS: {synthesis_length} chars, confidence: {confidence:.2f}, sources: {sources_used}"
+                            )
+                        else:
+                            yield create_stream_event("no_final_synthesis", session_id,
+                                message="📝 No final synthesis available"
+                            )
+                        
+                        yield create_stream_event("detailed_reasoning_complete", session_id,
+                            message="🔍 Detailed reasoning chain complete"
+                            )
+                    
+                    # ✅ CRITICAL ENHANCEMENT: Verify and log captured SQL queries and tool execution data
+                    yield create_stream_event("data_verification", session_id,
+                        message="🔍 Verifying captured SQL queries and tool execution data..."
+                    )
+                    
+                    # Get captured data for verification  
+                    raw_data = aggregator.get_all_raw_data()
+                    tool_executions = aggregator.get_all_tool_executions()
+                    execution_plans = aggregator.get_all_execution_plans()
+                    
+                    # Stream SQL queries that were captured
+                    if raw_data:
+                        yield create_stream_event("sql_queries_captured", session_id,
+                            message=f"📊 Captured {len(raw_data)} SQL queries/operations:",
+                            sql_count=len(raw_data)
+                        )
+                        
+                        for i, data in enumerate(raw_data):
+                            if data.query:
+                                yield create_stream_event("sql_query_detail", session_id,
+                                    query_index=i+1,
+                                    source=data.source,
+                                    sql=data.query,
+                                    row_count=data.row_count,
+                                    execution_time_ms=data.execution_time_ms
+                                )
+                    else:
+                        yield create_stream_event("sql_queries_warning", session_id,
+                            message="⚠️ No SQL queries were captured - this may indicate an integration issue"
+                        )
+                    
+                    # Stream tool execution details
+                    if tool_executions:
+                        yield create_stream_event("tool_executions_captured", session_id,
+                            message=f"🔧 Captured {len(tool_executions)} tool executions:",
+                            tool_count=len(tool_executions)
+                        )
+                        
+                        for i, tool in enumerate(tool_executions):
+                            yield create_stream_event("tool_execution_detail", session_id,
+                                execution_index=i+1,
+                                tool_id=tool.tool_id,
+                                success=tool.success,
+                                parameters=tool.parameters,
+                                execution_time_ms=tool.execution_time_ms,
+                                error_message=tool.error_message if tool.error_message else None
+                            )
+                    else:
+                        yield create_stream_event("tool_executions_warning", session_id,
+                            message="⚠️ No tool executions were captured - this may indicate an integration issue"
+                        )
+                    
+                    # Show output breakdown (same as CLI display_output_breakdown function)
+                    if request.show_outputs:
+                        yield create_stream_event("output_analysis", session_id,
+                            message="📊 Comprehensive Output Analysis"
+                        )
+                        
+                        # Get all different types of outputs (same as CLI)
+                        final_synthesis = aggregator.get_final_synthesis()
+                        performance = aggregator.get_performance_summary()
+                        
+                        yield create_stream_event("output_breakdown", session_id,
+                            raw_data_count=len(raw_data),
+                            execution_plans_count=len(execution_plans),
+                            tool_executions_count=len(tool_executions),
+                            has_final_synthesis=final_synthesis is not None,
+                            has_performance=performance is not None
+                        )
+                    
+                    # NEW: Include aggregated data inline in API response
+                    if request.include_aggregated_data:
+                        yield create_stream_event("aggregated_data_start", session_id,
+                            message="📦 Sending Aggregated Workflow Data"
+                        )
+                        
+                        # Get both unified result and API-ready response
+                        unified_result = aggregator.create_unified_result()
+                        api_response = aggregator.create_api_response()
+                        
+                        # Send structured API data (cleaner format for API consumers)
+                        yield create_stream_event("api_structured_data", session_id,
+                            data=api_response["data"],
+                            mechanism="inline_api"
+                        )
+                        
+                        # Send execution plans as JSON
+                        if api_response["execution_plans"]:
+                            yield create_stream_event("api_execution_plans", session_id,
+                                plans=api_response["execution_plans"],
+                                plan_count=len(api_response["execution_plans"]),
+                                mechanism="inline_api"
+                            )
+                        
+                        # Send tool results with success tracking
+                        if api_response["tool_results"]:
+                            yield create_stream_event("api_tool_results", session_id,
+                                tools=api_response["tool_results"],
+                                tool_count=len(api_response["tool_results"]),
+                                success_rate=api_response["performance"]["success_rate"],
+                                mechanism="inline_api"
+                            )
+                        
+                        # Send performance metrics (API format)
+                        yield create_stream_event("api_performance", session_id,
+                            metrics=api_response["performance"],
+                            mechanism="inline_api"
+                        )
+                        
+                        # Send analysis if available
+                        if api_response["analysis"]:
+                            yield create_stream_event("api_analysis", session_id,
+                                analysis=api_response["analysis"],
+                                mechanism="inline_api"
+                            )
+                        
+                        # Send complete API response (structured for API consumption)
+                        yield create_stream_event("api_complete_response", session_id,
+                            response=api_response,
+                            mechanism="inline_api"
+                        )
+                        
+                        # Send legacy unified result for backward compatibility
+                        yield create_stream_event("unified_result", session_id,
+                            result=unified_result,
+                            mechanism="legacy_format"
+                        )
+                    
+                    # Show timeline (same as CLI display_workflow_timeline function)
+                    if request.show_timeline:
+                        yield create_stream_event("timeline_analysis", session_id,
+                            message="⏱️ Workflow Execution Timeline"
+                        )
+                        
+                        timeline = aggregator.get_workflow_timeline()
+                        if timeline:
+                            yield create_stream_event("workflow_timeline", session_id,
+                                timeline=timeline,
+                                event_count=len(timeline)
+                            )
+                    
+                    # Export analysis (same as CLI - local file saving mechanism)
+                    if request.export_analysis:
+                        export_data = aggregator.export_for_analysis()
+                        
+                        # Save to local file (existing mechanism)
+                        import json
+                        import os
+                        
+                        # Ensure export directory exists
+                        os.makedirs(os.path.dirname(request.export_analysis), exist_ok=True)
+                        
+                        with open(request.export_analysis, 'w') as f:
+                            json.dump(export_data, f, indent=2, default=str)
+                        
+                        yield create_stream_event("analysis_exported", session_id,
+                            export_path=request.export_analysis,
+                            data_size=len(str(export_data)),
+                            mechanism="local_file"
+                        )
+                        
+                        # Also send inline if requested
+                        if request.include_aggregated_data:
+                            yield create_stream_event("export_data_inline", session_id,
+                                export_data=export_data,
+                                mechanism="inline_api"
+                            )
+                        
+                except Exception as e:
+                    yield create_stream_event("warning", session_id,
+                        message=f"⚠️ Could not access output aggregator: {e}"
+                    )
+                    if request.verbose:
+                        langgraph_logger.warning(f"Output aggregator access failed: {e}")
+            
+            # Check for and display visualization data first (EXACT CLI LOGIC)
+            visualization_data = result.get("visualization_data")
+            
+            # ✅ FIXED: Extract visualization data from aggregator tool executions
+            if not visualization_data and aggregator:
+                try:
+                    # Get tool executions from the aggregator
+                    tool_executions = aggregator.get_all_tool_executions()
+                    logger.info(f"🔍 AGGREGATOR TOOL EXECUTIONS COUNT: {len(tool_executions)}")
+                    
+                    for i, tool_execution in enumerate(tool_executions):
+                        logger.info(f"🔍 TOOL EXECUTION {i}: {tool_execution.tool_id} - Success: {tool_execution.success}")
+                        logger.info(f"🔍 TOOL EXECUTION {i} RESULT TYPE: {type(tool_execution.result)}")
+                        
+                        if (tool_execution.tool_id == "visualization.create_visualization" and 
+                            tool_execution.success and 
+                            tool_execution.result):
+                            
+                            # Extract the visualization result
+                            visualization_data = tool_execution.result
+                            logger.info(f"🎨 FOUND VISUALIZATION TOOL RESULT FROM AGGREGATOR: {tool_execution.tool_id}")
+                            logger.info(f"🎨 VISUALIZATION DATA KEYS: {list(visualization_data.keys()) if isinstance(visualization_data, dict) else 'Not a dict'}")
+                            logger.info(f"🎨 VISUALIZATION_CREATED: {visualization_data.get('visualization_created') if isinstance(visualization_data, dict) else 'N/A'}")
+                            logger.info(f"🎨 HAS CHART_CONFIG: {bool(visualization_data.get('chart_config')) if isinstance(visualization_data, dict) else 'N/A'}")
+                            break
+                except Exception as e:
+                    logger.warning(f"Failed to extract visualization data from aggregator: {e}")
+                    
+            # ✅ FALLBACK: Try to extract from tool execution results in result
+            if not visualization_data:
+                # Try to extract from tool execution results
+                tool_execution_result = result.get("tool_execution_result", {})
+                logger.info(f"🔍 DEBUGGING TOOL EXECUTION RESULTS: {list(tool_execution_result.keys())}")
+                
+                for tool_result in tool_execution_result.get("execution_results", []):
+                    logger.info(f"🔍 PROCESSING TOOL RESULT: {tool_result.get('tool_id')} - Success: {tool_result.get('success')}")
+                    logger.info(f"🔍 TOOL RESULT KEYS: {list(tool_result.keys()) if isinstance(tool_result, dict) else 'Not a dict'}")
+                    
+                    if tool_result.get("tool_id") == "visualization.create_visualization" and tool_result.get("success"):
+                        visualization_data = tool_result.get("result", {})
+                        logger.info(f"🎨 FOUND VISUALIZATION TOOL RESULT! Keys: {list(visualization_data.keys()) if isinstance(visualization_data, dict) else 'Not a dict'}")
+                        break
+            
+            if visualization_data and visualization_data.get("visualization_created"):
+                logger.info("🎨 PROCESSING VISUALIZATION DATA FOR STREAMING")
+                chart_type = visualization_data.get("performance_metrics", {}).get("chart_type", "unknown")
+                dataset_size = visualization_data.get("dataset_info", {}).get("size", 0)
+                
+                logger.info(f"🎨 YIELDING visualization_created EVENT: chart_type={chart_type}, dataset_size={dataset_size}")
+                yield create_stream_event("visualization_created", session_id,
+                    chart_type=chart_type,
+                    dataset_size=dataset_size,
+                    intent=visualization_data.get('visualization_intent', 'N/A'),
+                    message="🎨 Visualization Created"
+                )
+                
+                # Show chart configuration summary (same as CLI)
+                chart_config = visualization_data.get("chart_config", {})
+                logger.info(f"🎨 CHART CONFIG EXTRACTED: {bool(chart_config)}")
+                logger.info(f"🎨 CHART CONFIG KEYS: {list(chart_config.keys()) if chart_config else 'No config'}")
+                
+                if chart_config:
+                    logger.info("🎨 YIELDING chart_config EVENT")
+                    yield create_stream_event("chart_config", session_id,
+                        type=chart_config.get('type', 'unknown'),
+                        data_points=len(chart_config.get('data', [])),
+                        title=chart_config.get('layout', {}).get('title', 'N/A')
+                    )
+                    
+                    # ✅ NEW: Display the FULL JSON configuration (same as CLI)
+                    import json as json_module  # Use explicit import to avoid shadowing
+                    logger.info("🎨 YIELDING chart_config_json EVENT")
+                    yield create_stream_event("chart_config_json", session_id,
+                        message="📋 Complete Chart Configuration JSON:",
+                        metadata={
+                            "chart_config": chart_config,
+                            "json_size": len(json_module.dumps(chart_config, indent=2))
+                        }
+                    )
+                    
+                    # ✅ NEW: Send complete visualization package as single chunk
+                    logger.info("🎨 YIELDING visualization_complete EVENT - SINGLE CONSOLIDATED CHUNK")
+                    yield create_stream_event("visualization_complete", session_id,
+                        message="🎯 Complete Visualization Package",
+                        # Complete chart configuration
+                        chart_config=chart_config,
+                        # All visualization metadata
+                        visualization_data=visualization_data,
+                        # Chart summary for easy identification
+                        chart_summary={
+                            "type": chart_config.get('type', 'unknown'),
+                            "title": chart_config.get('layout', {}).get('title', 'N/A'),
+                            "data_points": len(chart_config.get('data', [])),
+                            "chart_type": chart_type,
+                            "dataset_size": dataset_size,
+                            "intent": visualization_data.get('visualization_intent', 'N/A'),
+                            "execution_time": visualization_data.get("performance_metrics", {}).get("execution_time", 0),
+                            "confidence": visualization_data.get("chart_selection", {}).get("primary_chart", {}).get("confidence_score", 0)
+                        },
+                        # Easy identification flags
+                        is_visualization=True,
+                        ready_for_render=True
+                    )
+                else:
+                    logger.warning("🎨 NO CHART CONFIG FOUND IN VISUALIZATION DATA")
+                    
+                    # ✅ NEW: Show JSON file save location if available (same as CLI)
+                    json_file_path = visualization_data.get("file_path") or visualization_data.get("json_file_path")
+                    if json_file_path:
+                        yield create_stream_event("chart_json_saved", session_id,
+                            message=f"💾 Chart JSON saved to: {json_file_path}",
+                            file_path=json_file_path
+                        )
+            else:
+                logger.info(f"🎨 VISUALIZATION DATA CHECK FAILED:")
+                logger.info(f"  - visualization_data exists: {bool(visualization_data)}")
+                logger.info(f"  - visualization_created: {visualization_data.get('visualization_created') if visualization_data else 'N/A'}")
+            
+            # Display results based on workflow type (EXACT CLI LOGIC)
+            if workflow == "traditional":
+                # Traditional workflow results (same as CLI)
+                final_result = result.get("final_result", {})
+                operation_results = result.get("operation_results", {})
+                
+                if request.verbose:
+                    yield create_stream_event("operation_results", session_id,
+                        operations={op_id: {"status": "✅" if "error" not in op_result else "❌", 
+                                           "rows": len(op_result.get('data', []))}
+                                   for op_id, op_result in operation_results.items()},
+                        message="Operation Results"
+                    )
+                
+                # Display final formatted result (same as CLI)
+                if "formatted_result" in final_result:
+                    yield create_stream_event("formatted_result", session_id,
+                        result=final_result["formatted_result"]
+                    )
+                elif "data" in final_result and final_result["data"]:
+                    yield create_stream_event("tabular_results", session_id,
+                        data=final_result["data"][:100]  # Limit for streaming
+                    )
+                else:
+                    yield create_stream_event("no_results", session_id, 
+                        message="No results to display"
+                    )
+            
+            elif workflow == "langgraph":
+                # LangGraph workflow results (same as CLI)
+                node_results = result.get("node_results", {})
+                final_state = result.get("final_result", {})
+                
+                if request.verbose:
+                    yield create_stream_event("node_results", session_id,
+                        nodes={node_id: {"status": "✅" if "error" not in node_result else "❌"}
+                               for node_id, node_result in node_results.items()},
+                        message="Node Execution Results"
+                    )
+                
+                # Display final results from graph state (same as CLI)
+                if "operation_results" in final_state:
+                    operation_results = final_state["operation_results"]
+                    
+                    # Try to extract and display data (same as CLI)
+                    all_data = []
+                    for op_result in operation_results.values():
+                        if isinstance(op_result, dict) and "data" in op_result:
+                            all_data.extend(op_result["data"])
+                    
+                    if all_data:
+                        yield create_stream_event("tabular_results", session_id,
+                            data=all_data[:100]  # Limit for streaming
+                        )
+                    else:
+                        yield create_stream_event("no_results", session_id, 
+                            message="No tabular results to display",
+                            final_state_keys=list(final_state.keys())
+                        )
+            
+            elif workflow == "hybrid":
+                # Hybrid workflow results (same as CLI)
+                final_result = result.get("final_result", {})
+                operation_results = result.get("operation_results", {})
+                hybrid_advantages = result.get("hybrid_advantages", [])
+                
+                # ✅ NEW: Extract additional visualization data from hybrid workflow (same as CLI)
+                if not visualization_data:
+                    tool_execution_result = result.get("tool_execution_result", {})
+                    for tool_result in tool_execution_result.get("execution_results", []):
+                        if tool_result.get("tool_id") == "visualization.create_visualization" and tool_result.get("success"):
+                            hybrid_viz_data = tool_result.get("result", {})
+                            if hybrid_viz_data and hybrid_viz_data.get("visualization_created"):
+                                yield create_stream_event("hybrid_visualization_found", session_id,
+                                    message="🎨 Hybrid workflow generated visualization",
+                                    chart_type=hybrid_viz_data.get("performance_metrics", {}).get("chart_type", "unknown"),
+                                    dataset_size=hybrid_viz_data.get("dataset_info", {}).get("size", 0)
+                                )
+                                
+                                # Show complete JSON config from hybrid workflow
+                                hybrid_chart_config = hybrid_viz_data.get("chart_config", {})
+                                if hybrid_chart_config:
+                                    import json as json_module  # Use explicit import to avoid shadowing
+                                    yield create_stream_event("hybrid_chart_config_json", session_id,
+                                        message="📋 Hybrid Workflow Chart Configuration JSON:",
+                                        metadata={
+                                            "chart_config": hybrid_chart_config,
+                                            "json_size": len(json_module.dumps(hybrid_chart_config, indent=2))
+                                        }
+                                    )
+                                    
+                                    # ✅ NEW: Send complete hybrid visualization package as single chunk
+                                    yield create_stream_event("visualization_complete", session_id,
+                                        message="🎯 Complete Hybrid Visualization Package",
+                                        # Complete chart configuration
+                                        chart_config=hybrid_chart_config,
+                                        # All visualization metadata
+                                        visualization_data=hybrid_viz_data,
+                                        # Chart summary for easy identification
+                                        chart_summary={
+                                            "type": hybrid_chart_config.get('type', 'unknown'),
+                                            "title": hybrid_chart_config.get('layout', {}).get('title', 'N/A'),
+                                            "data_points": len(hybrid_chart_config.get('data', [])),
+                                            "chart_type": hybrid_viz_data.get("performance_metrics", {}).get("chart_type", "unknown"),
+                                            "dataset_size": hybrid_viz_data.get("dataset_info", {}).get("size", 0),
+                                            "intent": hybrid_viz_data.get('visualization_intent', 'N/A'),
+                                            "execution_time": hybrid_viz_data.get("performance_metrics", {}).get("execution_time", 0),
+                                            "confidence": hybrid_viz_data.get("chart_selection", {}).get("primary_chart", {}).get("confidence_score", 0),
+                                            "workflow": "hybrid"
+                                        },
+                                        # Easy identification flags
+                                        is_visualization=True,
+                                        ready_for_render=True,
+                                        from_hybrid_workflow=True
+                                    )
+                                    
+                                    # Show JSON file save location from hybrid workflow
+                                    hybrid_json_file_path = hybrid_viz_data.get("file_path") or hybrid_viz_data.get("json_file_path")
+                                    if hybrid_json_file_path:
+                                        yield create_stream_event("hybrid_chart_json_saved", session_id,
+                                            message=f"💾 Hybrid workflow chart JSON saved to: {hybrid_json_file_path}",
+                                            file_path=hybrid_json_file_path
+                                        )
+                            break
+                
+                if request.verbose:
+                    yield create_stream_event("hybrid_advantages", session_id,
+                        advantages=hybrid_advantages,
+                        message="Hybrid Workflow Advantages"
+                    )
+                
+                # Display results similar to traditional but with hybrid enhancements (same as CLI)
+                if "formatted_result" in final_result:
+                    yield create_stream_event("formatted_result", session_id,
+                        result=final_result["formatted_result"]
+                    )
+                elif operation_results:
+                    # Extract data from operation results (same as CLI)
+                    all_data = []
+                    for op_result in operation_results.values():
+                        if isinstance(op_result, dict) and "data" in op_result:
+                            all_data.extend(op_result["data"])
+                    
+                    if all_data:
+                        yield create_stream_event("tabular_results", session_id,
+                            data=all_data[:100]  # Limit for streaming
+                        )
+                    else:
+                        yield create_stream_event("no_results", session_id, 
+                            message="No results to display"
+                        )
+            
+            # Send SQL queries that were executed (same as CLI output)
+            if result.get("operation_results"):
+                for op_id, op_result in result["operation_results"].items():
+                    if isinstance(op_result, dict) and op_result.get("sql"):
+                        yield create_stream_event("query_executing", session_id,
+                            database=op_result.get("database", "unknown"),
+                            sql=op_result["sql"],
+                            operation_id=op_id
+                        )
+            
+            # Send execution plan info (same as CLI output)
+            if result.get("plan_info"):
+                plan_info = result["plan_info"]
+                yield create_stream_event("execution_plan", session_id,
+                    plan_id=plan_info.get("id", "unknown"),
+                    operations=plan_info.get("operations", []),
+                    execution_strategy=plan_info.get("execution_strategy", "unknown")
+                )
+            
+            # Show performance statistics if available (EXACT CLI LOGIC)
+            if request.verbose:
+                integration_status = orchestrator.get_integration_status()
+                exec_stats = integration_status.get("execution_statistics", {})
+                
+                yield create_stream_event("performance_stats", session_id,
+                    traditional_executions=exec_stats.get('traditional_executions', 0),
+                    langgraph_executions=exec_stats.get('langgraph_executions', 0),
+                    hybrid_executions=exec_stats.get('hybrid_executions', 0),
+                    message="LangGraph Integration Statistics"
+                )
+            
+            # Save session if requested (EXACT CLI LOGIC)
+            if request.save_session:
+                # Use existing state manager to save session details (same as CLI)
+                state_manager = StateManager()
+                session_state = AnalysisState(
+                session_id=session_id,
+                    user_question=request.question
+                )
+                
+                # Add execution metadata as insights (same as CLI)
+                session_state.add_insight("execution", "LangGraph execution", {
+                    "langgraph_execution": True,
+                    "workflow_type": workflow,
+                    "routing_method": execution_metadata.get("routing_method"),
+                    "execution_time": execution_time
+                })
+                
+                # Set final result (same as CLI)
+                if "final_result" in result:
+                    session_state.set_final_result(
+                        result["final_result"],
+                        result.get("final_result", {}).get("formatted_result", str(result.get("final_result", {})))
+                    )
+                
+                await state_manager.update_state(session_state)
+                yield create_stream_event("session_saved", session_id,
+                    message=f"Session saved with ID: {session_id}",
+                    session_id_full=session_id
+                )
+            
+            # Final progress update before completion
+            yield create_stream_event("progress", session_id,
+                message="Analysis complete, finalizing results...",
+                progress=100,
+                status="finalizing"
+            )
+            
+            # Complete (same as CLI success handling)
+            total_time = time.time() - start_time
+            yield create_stream_event("complete", session_id,
+                success=True,
+                total_time=total_time,
+                workflow=workflow,
+                results=result.get("final_result", {})
+            )
+            
+            # Log completion (same as CLI)
+            duration = time.time() - start_time
+            log_request_response(langgraph_logger, "/langgraph/stream", request_data, {
+                "success": True,
+                "workflow": workflow,
+                "execution_time": execution_time
+            }, duration)
+            
+        except Exception as e:
+            error_time = time.time() - start_time
+            error_msg = str(e)
+            
+            langgraph_logger.error(f"❌ [CLI LOGIC] LangGraph execution failed: {error_msg}")
+            langgraph_logger.error(f"❌ [CLI LOGIC] Exception details: {traceback.format_exc()}")
+            
+            yield create_stream_event("error", session_id,
+                error_code="LANGGRAPH_STREAMING_FAILED",
+                message=error_msg,
+                recoverable=False
+            )
+            yield create_stream_event("complete", session_id, success=False, error=error_msg)
+            
+            # Log error
+            log_request_response(langgraph_logger, "/langgraph/stream", request_data, {}, error_time, error_msg)
+    
+    return StreamingResponse(
+        generate_stream(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "Access-Control-Allow-Origin": "*",
+            "Access-Control-Allow-Headers": "Cache-Control"
+        }
+    )
+

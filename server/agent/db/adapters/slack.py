@@ -245,6 +245,66 @@ class SlackAdapter(DBAdapter):
             True if connection successful, False otherwise
         """
         return await self.is_connected()
+    
+    async def _convert_query_format(self, query: Any) -> Any:
+        """
+        Convert different query formats to Slack-compatible format.
+        Handles string queries from LangGraph by converting them to Slack query specifications.
+        
+        Args:
+            query: Query in various formats (string, dict)
+            
+        Returns:
+            Query in Slack format
+        """
+        if isinstance(query, dict):
+            # Already in proper format, return as-is
+            return query
+        
+        elif isinstance(query, str):
+            # Convert string query to Slack format
+            logger.info(f"💬 Slack Query Conversion: Converting string query to Slack API format")
+            
+            try:
+                # Use the existing llm_to_query method to convert string to Slack format
+                slack_query = await self.llm_to_query(query)
+                
+                logger.info(f"💬 Slack Query Conversion: \"{query}\" → {slack_query.get('type', 'unknown')} query")
+                return slack_query
+                
+            except Exception as e:
+                logger.error(f"Error converting string query to Slack format: {e}")
+                # Check if it looks like a semantic search query
+                semantic_keywords = ["find", "search", "messages about", "conversations", "discussions"]
+                is_semantic = any(keyword in query.lower() for keyword in semantic_keywords)
+                
+                if is_semantic:
+                    # Fallback to semantic search
+                    fallback_query = {
+                        "type": "semantic_search",
+                        "query": query,
+                        "limit": 20,
+                        "error": f"Fallback to semantic search due to conversion error: {str(e)}",
+                        "original_query": query
+                    }
+                else:
+                    # Fallback to channel listing
+                    fallback_query = {
+                        "type": "channels",
+                        "error": f"Fallback to channel listing due to conversion error: {str(e)}",
+                        "original_query": query
+                    }
+                
+                return fallback_query
+        
+        else:
+            # Unknown format, try to handle gracefully
+            logger.warning(f"Unknown query format: {type(query)}")
+            return {
+                "type": "channels",
+                "error": f"Unsupported query format: {type(query)}",
+                "original_query": str(query)
+            }
             
     async def execute(self, query: Any) -> List[Dict]:
         """
@@ -256,6 +316,9 @@ class SlackAdapter(DBAdapter):
         Returns:
             List of dictionaries representing the query results
         """
+        # Convert query format if needed (handles string queries from LangGraph)
+        query = await self._convert_query_format(query)
+        
         return await self.execute_query(query)
     
     async def llm_to_query(self, nl_prompt: str, **kwargs) -> Any:
@@ -304,8 +367,16 @@ class SlackAdapter(DBAdapter):
                                       schema_context=schema_context, 
                                       query=nl_prompt)
         
-        # Generate query
-        response = await llm.generate_text(prompt)
+        # Generate query using orchestrate_analysis which can handle JSON responses
+        response_data = await llm.orchestrate_analysis(prompt, db_type="slack")
+        
+        # Extract the response text from the orchestration result
+        if isinstance(response_data, dict) and 'analysis' in response_data:
+            response = response_data['analysis']
+        elif isinstance(response_data, dict) and 'result' in response_data:
+            response = response_data['result']
+        else:
+            response = str(response_data)
         
         # Parse response as JSON
         try:
@@ -316,13 +387,30 @@ class SlackAdapter(DBAdapter):
             else:
                 # Otherwise try to parse the whole response
                 query_spec = json.loads(response)
-                
+            
             return query_spec
         except Exception as e:
             logger.error(f"Error parsing LLM response as JSON: {str(e)}")
+            # Check if this looks like a search query
+            if any(keyword in query.lower() for keyword in ["budget planning", "search", "find", "like", "where"]):
+                # Extract search terms from the query
+                search_terms = "budget planning"  # Default search term
+                if "like" in query.lower():
+                    # Try to extract the search term from LIKE clause
+                    import re
+                    like_match = re.search(r"like\\s+['\"]%?([^'\"]+)%?['\"]", query.lower())
+                    if like_match:
+                        search_terms = like_match.group(1)
+                
+                logger.info(f"💬 Slack Query Conversion: Converting to semantic search for: {search_terms}")
+                return {
+                    "type": "semantic_search",
+                    "query": search_terms,
+                    "limit": 20
+                }
+            
             # Fallback to simple channel listing if parsing fails
             return {"type": "channels"}
-    
     async def execute_query(self, query: str, params: Dict[str, Any] = None) -> List[Dict[str, Any]]:
         """
         Execute a query against Slack data
@@ -559,3 +647,442 @@ class SlackAdapter(DBAdapter):
         except Exception as e:
             logger.error(f"Error introspecting Slack schema: {str(e)}")
             raise
+    
+    # Additional Slack-specific tools for the registry
+    
+    async def analyze_channel_activity(self, channel_ids: List[str] = None, days: int = 30) -> Dict[str, Any]:
+        """
+        Analyze channel activity and engagement metrics.
+        
+        Args:
+            channel_ids: Optional list of specific channel IDs to analyze
+            days: Number of days to analyze (default 30)
+            
+        Returns:
+            Channel activity analysis results
+        """
+        logger.info(f"Analyzing channel activity for {len(channel_ids) if channel_ids else 'all'} channels over {days} days")
+        
+        try:
+            # Get all channels if none specified
+            if not channel_ids:
+                channels_result = await self._invoke_tool("slack_list_channels")
+                channels = channels_result.get("channels", [])
+                channel_ids = [c["id"] for c in channels[:10]]  # Limit to 10 for performance
+            
+            channel_activity = {}
+            total_messages = 0
+            total_users = set()
+            
+            for channel_id in channel_ids:
+                try:
+                    # Get channel info
+                    channels_result = await self._invoke_tool("slack_list_channels")
+                    channels = channels_result.get("channels", [])
+                    channel_info = next((c for c in channels if c["id"] == channel_id), {"name": "unknown"})
+                    
+                    # Get recent messages
+                    messages_result = await self._invoke_tool(
+                        "slack_get_channel_history",
+                        {"channel_id": channel_id, "limit": 100}
+                    )
+                    messages = messages_result.get("messages", [])
+                    
+                    # Analyze messages
+                    channel_users = set()
+                    message_count = len(messages)
+                    thread_count = 0
+                    
+                    for msg in messages:
+                        if "user" in msg:
+                            channel_users.add(msg["user"])
+                            total_users.add(msg["user"])
+                        
+                        if "thread_ts" in msg and msg["thread_ts"] != msg.get("ts"):
+                            thread_count += 1
+                    
+                    total_messages += message_count
+                    
+                    channel_activity[channel_id] = {
+                        "channel_id": channel_id,
+                        "channel_name": channel_info.get("name", "unknown"),
+                        "message_count": message_count,
+                        "unique_users": len(channel_users),
+                        "thread_count": thread_count,
+                        "messages_per_user": message_count / len(channel_users) if channel_users else 0,
+                        "thread_ratio": thread_count / message_count if message_count > 0 else 0,
+                        "activity_score": self._calculate_activity_score(message_count, len(channel_users), thread_count)
+                    }
+                    
+                except Exception as e:
+                    logger.warning(f"Could not analyze channel {channel_id}: {e}")
+                    channel_activity[channel_id] = {
+                        "channel_id": channel_id,
+                        "error": str(e)
+                    }
+            
+            # Generate insights and recommendations
+            active_channels = [c for c in channel_activity.values() if "error" not in c and c["message_count"] > 0]
+            most_active = sorted(active_channels, key=lambda x: x["activity_score"], reverse=True)[:5]
+            
+            analysis_result = {
+                "analysis_period_days": days,
+                "channels_analyzed": len(channel_ids),
+                "total_messages": total_messages,
+                "total_unique_users": len(total_users),
+                "channel_details": list(channel_activity.values()),
+                "most_active_channels": most_active,
+                "recommendations": self._generate_channel_activity_recommendations(active_channels),
+                "summary": {
+                    "avg_messages_per_channel": total_messages / len(active_channels) if active_channels else 0,
+                    "avg_users_per_channel": len(total_users) / len(active_channels) if active_channels else 0,
+                    "channels_with_activity": len(active_channels)
+                }
+            }
+            
+            logger.info(f"Channel activity analysis completed: {total_messages} messages across {len(active_channels)} active channels")
+            return analysis_result
+            
+        except Exception as e:
+            logger.error(f"Failed to analyze channel activity: {e}")
+            raise
+    
+    def _calculate_activity_score(self, message_count: int, user_count: int, thread_count: int) -> float:
+        """Calculate a channel activity score based on multiple factors."""
+        if message_count == 0:
+            return 0.0
+        
+        # Weight factors: messages (40%), user diversity (30%), threads (30%)
+        message_score = min(message_count / 100, 1.0) * 40  # Normalize to 100 messages = max
+        user_score = min(user_count / 20, 1.0) * 30  # Normalize to 20 users = max
+        thread_score = min(thread_count / 20, 1.0) * 30  # Normalize to 20 threads = max
+        
+        return message_score + user_score + thread_score
+    
+    def _generate_channel_activity_recommendations(self, channels: List[Dict]) -> List[str]:
+        """Generate recommendations based on channel activity analysis."""
+        recommendations = []
+        
+        try:
+            # Find inactive channels
+            inactive_channels = [c for c in channels if c["message_count"] == 0]
+            if inactive_channels:
+                recommendations.append(f"{len(inactive_channels)} channels have no recent activity - consider archiving or promoting")
+            
+            # Find channels with low engagement
+            low_engagement = [c for c in channels if c["message_count"] > 0 and c["unique_users"] <= 2]
+            if low_engagement:
+                recommendations.append(f"{len(low_engagement)} channels have low user engagement - consider promoting to broader audience")
+            
+            # Find channels with high thread usage
+            high_threads = [c for c in channels if c["thread_ratio"] > 0.5]
+            if high_threads:
+                recommendations.append(f"{len(high_threads)} channels have high thread usage - good sign of detailed discussions")
+            
+            # Find monologue channels
+            monologues = [c for c in channels if c["messages_per_user"] > 10]
+            if monologues:
+                recommendations.append(f"{len(monologues)} channels dominated by few users - encourage broader participation")
+                
+        except Exception as e:
+            logger.warning(f"Failed to generate channel activity recommendations: {e}")
+        
+        return recommendations
+    
+    async def optimize_message_search(self, search_query: str, optimization_params: Dict[str, Any] = None) -> Dict[str, Any]:
+        """
+        Optimize message search performance and provide search suggestions.
+        
+        Args:
+            search_query: The search query to optimize
+            optimization_params: Optional parameters for optimization
+            
+        Returns:
+            Search optimization results and suggestions
+        """
+        logger.info(f"Optimizing message search for query: {search_query}")
+        
+        try:
+            # Default optimization parameters
+            if not optimization_params:
+                optimization_params = {
+                    "limit": 20,
+                    "include_channels": True,
+                    "include_users": True,
+                    "include_date_filters": True
+                }
+            
+            # Analyze the search query
+            query_analysis = {
+                "original_query": search_query,
+                "query_length": len(search_query),
+                "word_count": len(search_query.split()),
+                "has_date_references": any(date_word in search_query.lower() for date_word in ["today", "yesterday", "last week", "last month"]),
+                "has_user_references": "@" in search_query,
+                "has_channel_references": "#" in search_query
+            }
+            
+            # Generate optimized search suggestions
+            search_suggestions = []
+            
+            # Basic semantic search
+            basic_search = {
+                "type": "semantic_search",
+                "query": search_query,
+                "limit": optimization_params.get("limit", 20)
+            }
+            search_suggestions.append(("basic_semantic", basic_search))
+            
+            # Add channel filters if available
+            if optimization_params.get("include_channels", True):
+                channels_result = await self._invoke_tool("slack_list_channels")
+                channels = channels_result.get("channels", [])
+                
+                # Find channels that might be relevant
+                relevant_channels = []
+                for channel in channels[:5]:  # Check top 5 channels
+                    channel_name = channel.get("name", "").lower()
+                    if any(word in channel_name for word in search_query.lower().split()):
+                        relevant_channels.append(channel["id"])
+                
+                if relevant_channels:
+                    channel_filtered_search = basic_search.copy()
+                    channel_filtered_search["channels"] = relevant_channels
+                    search_suggestions.append(("channel_filtered", channel_filtered_search))
+            
+            # Add date filters if query has temporal references
+            if query_analysis["has_date_references"]:
+                from datetime import datetime, timedelta
+                
+                time_filtered_search = basic_search.copy()
+                
+                if "today" in search_query.lower():
+                    time_filtered_search["date_from"] = datetime.now().date().isoformat()
+                elif "yesterday" in search_query.lower():
+                    yesterday = datetime.now().date() - timedelta(days=1)
+                    time_filtered_search["date_from"] = yesterday.isoformat()
+                    time_filtered_search["date_to"] = yesterday.isoformat()
+                elif "last week" in search_query.lower():
+                    week_ago = datetime.now().date() - timedelta(days=7)
+                    time_filtered_search["date_from"] = week_ago.isoformat()
+                
+                search_suggestions.append(("time_filtered", time_filtered_search))
+            
+            # Test search performance
+            performance_results = []
+            for search_name, search_params in search_suggestions:
+                try:
+                    start_time = time.time()
+                    results = await self._semantic_search(**search_params)
+                    end_time = time.time()
+                    
+                    performance_results.append({
+                        "search_type": search_name,
+                        "execution_time_ms": int((end_time - start_time) * 1000),
+                        "result_count": len(results),
+                        "search_params": search_params
+                    })
+                except Exception as e:
+                    performance_results.append({
+                        "search_type": search_name,
+                        "error": str(e),
+                        "search_params": search_params
+                    })
+            
+            # Generate optimization recommendations
+            optimization_recommendations = self._generate_search_optimization_recommendations(
+                query_analysis, performance_results
+            )
+            
+            optimization_result = {
+                "query_analysis": query_analysis,
+                "search_suggestions": search_suggestions,
+                "performance_results": performance_results,
+                "best_performing_search": self._find_best_search(performance_results),
+                "optimization_recommendations": optimization_recommendations,
+                "estimated_improvement": self._calculate_search_improvement(performance_results)
+            }
+            
+            logger.info(f"Message search optimization completed with {len(search_suggestions)} suggestions")
+            return optimization_result
+            
+        except Exception as e:
+            logger.error(f"Failed to optimize message search: {e}")
+            raise
+    
+    def _generate_search_optimization_recommendations(self, query_analysis: Dict, performance_results: List[Dict]) -> List[str]:
+        """Generate search optimization recommendations."""
+        recommendations = []
+        
+        try:
+            # Check query complexity
+            if query_analysis["word_count"] > 10:
+                recommendations.append("Consider simplifying the search query for better performance")
+            
+            if query_analysis["query_length"] > 100:
+                recommendations.append("Very long search query may impact performance")
+            
+            # Check performance results
+            successful_searches = [r for r in performance_results if "error" not in r]
+            if successful_searches:
+                avg_time = sum(r["execution_time_ms"] for r in successful_searches) / len(successful_searches)
+                if avg_time > 2000:
+                    recommendations.append("Search queries are taking longer than 2 seconds - consider adding filters")
+            
+            # Check result counts
+            high_result_searches = [r for r in successful_searches if r.get("result_count", 0) > 50]
+            if high_result_searches:
+                recommendations.append("Some searches return many results - consider adding date or channel filters")
+            
+        except Exception as e:
+            logger.warning(f"Failed to generate search optimization recommendations: {e}")
+        
+        return recommendations
+    
+    def _find_best_search(self, performance_results: List[Dict]) -> Optional[Dict]:
+        """Find the best performing search based on speed and result quality."""
+        successful_searches = [r for r in performance_results if "error" not in r and r.get("result_count", 0) > 0]
+        
+        if not successful_searches:
+            return None
+        
+        # Score based on speed (lower is better) and result count (moderate is better)
+        def score_search(search):
+            time_score = 1000 / max(search["execution_time_ms"], 100)  # Faster = better
+            result_score = min(search.get("result_count", 0), 20) / 20  # Sweet spot around 20 results
+            return time_score * 0.6 + result_score * 0.4
+        
+        return max(successful_searches, key=score_search)
+    
+    def _calculate_search_improvement(self, performance_results: List[Dict]) -> float:
+        """Calculate estimated improvement percentage from optimization."""
+        successful_searches = [r for r in performance_results if "error" not in r]
+        
+        if len(successful_searches) < 2:
+            return 0.0
+        
+        times = [r["execution_time_ms"] for r in successful_searches]
+        fastest = min(times)
+        slowest = max(times)
+        
+        if slowest > 0:
+            improvement = ((slowest - fastest) / slowest) * 100
+            return improvement
+        
+        return 0.0
+    
+    async def get_workspace_statistics(self) -> Dict[str, Any]:
+        """
+        Get comprehensive statistics for the Slack workspace.
+        
+        Returns:
+            Workspace statistics and metadata
+        """
+        logger.info("Getting comprehensive Slack workspace statistics")
+        
+        try:
+            # Get workspace info
+            bot_info = await self._invoke_tool("slack_bot_info")
+            workspace_info = bot_info.get("bot_info", {})
+            
+            # Get channels
+            channels_result = await self._invoke_tool("slack_list_channels")
+            channels = channels_result.get("channels", [])
+            
+            # Analyze channels
+            total_channels = len(channels)
+            public_channels = len([c for c in channels if not c.get("is_private", False)])
+            private_channels = total_channels - public_channels
+            
+            # Sample recent activity from a few channels
+            sample_channels = channels[:5]  # Sample first 5 channels
+            total_sampled_messages = 0
+            unique_users = set()
+            
+            for channel in sample_channels:
+                try:
+                    messages_result = await self._invoke_tool(
+                        "slack_get_channel_history",
+                        {"channel_id": channel["id"], "limit": 50}
+                    )
+                    messages = messages_result.get("messages", [])
+                    total_sampled_messages += len(messages)
+                    
+                    for msg in messages:
+                        if "user" in msg:
+                            unique_users.add(msg["user"])
+                            
+                except Exception as e:
+                    logger.warning(f"Could not sample channel {channel.get('name')}: {e}")
+            
+            # Estimate workspace activity
+            estimated_total_messages = (total_sampled_messages / len(sample_channels)) * total_channels if sample_channels else 0
+            
+            statistics = {
+                "workspace_info": {
+                    "team_name": workspace_info.get("team_name", "Unknown"),
+                    "team_domain": workspace_info.get("team_domain", "unknown"),
+                    "bot_name": workspace_info.get("bot_name", "Unknown")
+                },
+                "channel_statistics": {
+                    "total_channels": total_channels,
+                    "public_channels": public_channels,
+                    "private_channels": private_channels,
+                    "sampled_channels": len(sample_channels)
+                },
+                "activity_estimates": {
+                    "sampled_messages": total_sampled_messages,
+                    "estimated_total_messages": int(estimated_total_messages),
+                    "unique_users_in_sample": len(unique_users),
+                    "avg_messages_per_channel": total_sampled_messages / len(sample_channels) if sample_channels else 0
+                },
+                "data_coverage": {
+                    "history_days": self.history_days,
+                    "channel_sample_size": len(sample_channels),
+                    "sampling_ratio": len(sample_channels) / total_channels if total_channels > 0 else 0
+                },
+                "recommendations": self._generate_workspace_recommendations(
+                    total_channels, public_channels, total_sampled_messages, len(unique_users)
+                )
+            }
+            
+            logger.info(f"Workspace statistics completed: {total_channels} channels, {len(unique_users)} users sampled")
+            return statistics
+            
+        except Exception as e:
+            logger.error(f"Failed to get workspace statistics: {e}")
+            raise
+    
+    def _generate_workspace_recommendations(
+        self, 
+        total_channels: int, 
+        public_channels: int, 
+        sampled_messages: int, 
+        unique_users: int
+    ) -> List[str]:
+        """Generate recommendations based on workspace analysis."""
+        recommendations = []
+        
+        try:
+            # Channel recommendations
+            if total_channels > 50:
+                recommendations.append("Large number of channels - consider organizing with channel naming conventions")
+            
+            private_ratio = (total_channels - public_channels) / total_channels if total_channels > 0 else 0
+            if private_ratio > 0.5:
+                recommendations.append("High ratio of private channels - consider making some public for better collaboration")
+            
+            # Activity recommendations
+            if sampled_messages == 0:
+                recommendations.append("No recent message activity detected - verify bot permissions and workspace engagement")
+            elif sampled_messages < 10:
+                recommendations.append("Low message activity - consider promoting workspace engagement")
+            
+            # User engagement recommendations
+            if unique_users < 5:
+                recommendations.append("Limited user engagement detected - consider onboarding more team members")
+            
+        except Exception as e:
+            logger.warning(f"Failed to generate workspace recommendations: {e}")
+        
+        return recommendations

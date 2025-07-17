@@ -1,0 +1,82 @@
+version: '3.8'
+
+services:
+  ceneca:
+    image: ceneca/enterprise:latest
+    container_name: ceneca-enterprise
+    restart: unless-stopped
+    ports:
+      - "443:443"
+      - "80:80"   # Redirect HTTP to HTTPS
+    volumes:
+      # Configuration files
+      - ./config/config.yaml:/app/config/config.yaml:ro
+      - ./config/auth-config.yaml:/app/config/auth-config.yaml:ro
+      - ./config/nginx.conf:/etc/nginx/nginx.conf:ro
+      
+      # SSL certificates
+      - ./certs:/app/certs:ro
+      
+      # Data persistence
+      - ceneca_data:/app/data
+      - ceneca_logs:/app/logs
+      
+      # Cache directory
+      - ceneca_cache:/app/cache
+    
+    environment:
+      # Deployment mode
+      - CENECA_MODE=enterprise
+      - CENECA_CONFIG_PATH=/app/config/config.yaml
+      - CENECA_AUTH_CONFIG_PATH=/app/config/auth-config.yaml
+      
+      # Domain configuration (override with your domain)
+      - CENECA_DOMAIN=${CENECA_DOMAIN:-ceneca.yourcompany.com}
+      
+      # SSL configuration
+      - SSL_CERT_PATH=/app/certs/certificate.crt
+      - SSL_KEY_PATH=/app/certs/private.key
+      
+      # Security
+      - CENECA_SESSION_SECRET=${CENECA_SESSION_SECRET:-}
+      
+      # Logging
+      - LOG_LEVEL=${LOG_LEVEL:-info}
+      
+    healthcheck:
+      test: ["CMD", "curl", "-f", "https://localhost/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    
+    # Resource limits (adjust based on your infrastructure)
+    deploy:
+      resources:
+        limits:
+          memory: 4G
+          cpus: '2.0'
+        reservations:
+          memory: 2G
+          cpus: '1.0'
+    
+    # Network settings
+    networks:
+      - ceneca_network
+
+# Named volumes for data persistence
+volumes:
+  ceneca_data:
+    driver: local
+  ceneca_logs:
+    driver: local
+  ceneca_cache:
+    driver: local
+
+# Network for potential future services
+networks:
+  ceneca_network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/16 

@@ -1,0 +1,33 @@
+# Ceneca Enterprise Authentication Configuration
+# Copy this file to auth-config.yaml and customize for your SSO provider
+
+# SSO Configuration
+sso:
+  enabled: true
+  default_protocol: oidc
+
+  # OIDC/OAuth2 Configuration
+  oidc:
+    provider: "Okta"
+    client_id: "your-oauth-client-id"
+    client_secret: "your-oauth-client-secret"
+    issuer: "https://your-company.okta.com"
+    discovery_url: "https://your-company.okta.com/.well-known/openid_configuration"
+    redirect_uri: "https://ceneca.yourcompany.com/auth/callback"
+    scopes:
+      - "openid"
+      - "email" 
+      - "profile"
+      - "groups"
+    claims_mapping:
+      user_id: "sub"
+      email: "email"
+      name: "name"
+      groups: "groups"
+
+# Role Mappings
+role_mappings:
+  "ceneca-admins": "admin"
+  "ceneca-power-users": "power_user"
+  "data-analysts": "analyst"
+  "all-employees": "user" 

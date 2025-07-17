@@ -1,0 +1,133 @@
+# Ceneca Enterprise Configuration
+# Copy this file to config.yaml and customize for your environment
+
+# Default database configuration
+default_database: postgres
+
+# PostgreSQL Configuration
+postgres:
+  host: your-postgres-host.company.com
+  port: 5432
+  database: your_database_name
+  user: ceneca_user
+  password: your_secure_password
+  ssl_mode: require  # Use 'require' for production
+
+# MongoDB Configuration (optional)
+mongodb:
+  host: your-mongo-host.company.com
+  port: 27017
+  database: ceneca_mongo
+  user: ceneca_mongo_user
+  password: your_mongo_password
+  # Alternatively, use a full URI:
+  # uri: mongodb://user:pass@host:port/database?authSource=admin
+
+# Qdrant Vector Database (optional)
+qdrant:
+  host: your-qdrant-host.company.com
+  port: 6333
+  grpc_port: 6334
+  api_key: your_qdrant_api_key  # Optional
+  collection: corporate_knowledge
+  prefer_grpc: false
+
+# Slack Integration (optional)
+slack:
+  mcp_url: http://your-slack-mcp-server:8500
+  history_days: 30
+  update_frequency: 6  # hours
+
+# Shopify Integration (optional)
+shopify:
+  app_url: https://your-shopify-app.company.com
+  api_version: "2025-04"
+  client_id: your_shopify_app_id
+  client_secret: your_shopify_app_secret
+  redirect_uri: https://ceneca.company.com/auth/shopify/callback
+  webhook_secret: your_webhook_secret
+
+# Google Analytics 4 (optional)
+ga4:
+  key_file: /app/config/ga4-service-account.json
+  property_id: 123456789
+  scopes:
+    - https://www.googleapis.com/auth/analytics.readonly
+  token_cache_db: /app/data/ga4_tokens.db
+
+# Vector Database Embeddings
+vector_db:
+  embedding:
+    provider: openai  # or 'custom'
+    model: text-embedding-ada-002
+    dimensions: 1536
+    api_key: your_openai_api_key
+    # For custom providers:
+    # endpoint: https://your-embedding-api.company.com/embed
+    # response_field: embedding
+
+# LLM Configuration
+llm:
+  # For cloud LLM services
+  api_url: https://api.openai.com/v1
+  api_key: your_llm_api_key
+  model_name: gpt-4
+
+  # For Anthropic Claude
+  anthropic:
+    api_url: https://api.anthropic.com
+    api_key: your_anthropic_key
+    model_name: claude-3-opus-20240229
+
+# AWS Bedrock Configuration (optional)
+aws:
+  access_key_id: your_aws_access_key
+  secret_access_key: your_aws_secret_key
+  region: us-east-1
+  session_token: your_session_token  # Optional
+
+bedrock:
+  enabled: true
+  model_id: anthropic.claude-3-sonnet-20240229-v1:0
+  runtime_region: us-east-1
+  max_tokens: 4000
+  temperature: 0.1
+  top_p: 0.9
+
+# Trivial LLM for fast operations (grammar, formatting, etc.)
+trivial_llm:
+  enabled: true
+  provider: xai  # grok
+  api_key: your_grok_api_key
+  base_url: https://api.x.ai/v1
+  model: grok-3-mini
+  max_tokens: 500
+  temperature: 0.1
+  timeout: 3.0
+  max_retries: 1
+
+# Redis Cache (optional - improves performance)
+redis:
+  host: your-redis-host.company.com
+  port: 6379
+  password: your_redis_password  # Optional
+  db: 0
+  enabled: true
+  ttl: 3600  # Cache TTL in seconds
+
+# Performance Settings
+performance:
+  max_analysis_steps: 10
+  max_rows_direct: 100000
+  default_sample_size: 1000
+  max_query_timeout: 60
+
+# Logging
+logging:
+  level: info  # debug, info, warning, error
+  
+# Enterprise Settings
+enterprise:
+  deployment_name: "Ceneca at YourCompany"
+  contact_email: admin@yourcompany.com
+  support_url: https://support.yourcompany.com/ceneca 
