@@ -91,6 +91,31 @@ class Settings(BaseSettings):
     SHOPIFY_WEBHOOK_SECRET: Optional[str] = yaml_config.get('shopify', {}).get('webhook_secret', os.getenv('SHOPIFY_WEBHOOK_SECRET'))
     SHOPIFY_URI: Optional[str] = yaml_config.get('shopify', {}).get('uri', os.getenv('SHOPIFY_URI', SHOPIFY_APP_URL))
     
+    # ShipRocket Integration Settings
+    SHIPROCKET_URI: Optional[str] = yaml_config.get('shiprocket', {}).get('uri', os.getenv('SHIPROCKET_URI', 'https://apiv2.shiprocket.in/v1/external'))
+    SHIPROCKET_API_KEY: Optional[str] = yaml_config.get('shiprocket', {}).get('api_key', os.getenv('SHIPROCKET_API_KEY'))
+    SHIPROCKET_EMAIL: Optional[str] = yaml_config.get('shiprocket', {}).get('email', os.getenv('SHIPROCKET_EMAIL'))
+    SHIPROCKET_PASSWORD: Optional[str] = yaml_config.get('shiprocket', {}).get('password', os.getenv('SHIPROCKET_PASSWORD'))
+    
+    # PayU Integration Settings
+    PAYU_URI: Optional[str] = yaml_config.get('payu', {}).get('uri', os.getenv('PAYU_URI', 'https://info.payu.in/merchant/postservice'))
+    PAYU_MERCHANT_KEY: Optional[str] = yaml_config.get('payu', {}).get('merchant_key', os.getenv('PAYU_MERCHANT_KEY'))
+    PAYU_MERCHANT_SALT: Optional[str] = yaml_config.get('payu', {}).get('merchant_salt', os.getenv('PAYU_MERCHANT_SALT'))
+    PAYU_ENVIRONMENT: Optional[str] = yaml_config.get('payu', {}).get('environment', os.getenv('PAYU_ENVIRONMENT', 'production'))
+    
+    # EaseBuzz Integration Settings
+    EASEBUZZ_URI: Optional[str] = yaml_config.get('easebuzz', {}).get('uri', os.getenv('EASEBUZZ_URI', 'https://dashboard.easebuzz.in/transaction'))
+    EASEBUZZ_MERCHANT_KEY: Optional[str] = yaml_config.get('easebuzz', {}).get('merchant_key', os.getenv('EASEBUZZ_MERCHANT_KEY'))
+    EASEBUZZ_SECRET_KEY: Optional[str] = yaml_config.get('easebuzz', {}).get('secret_key', os.getenv('EASEBUZZ_SECRET_KEY'))
+    EASEBUZZ_ENVIRONMENT: Optional[str] = yaml_config.get('easebuzz', {}).get('environment', os.getenv('EASEBUZZ_ENVIRONMENT', 'production'))
+    
+    # Uniware Integration Settings
+    UNIWARE_URI: Optional[str] = yaml_config.get('uniware', {}).get('uri', os.getenv('UNIWARE_URI', 'https://api.unicommerce.com/services/rest'))
+    UNIWARE_CLIENT_ID: Optional[str] = yaml_config.get('uniware', {}).get('client_id', os.getenv('UNIWARE_CLIENT_ID'))
+    UNIWARE_CLIENT_SECRET: Optional[str] = yaml_config.get('uniware', {}).get('client_secret', os.getenv('UNIWARE_CLIENT_SECRET'))
+    UNIWARE_ACCESS_TOKEN: Optional[str] = yaml_config.get('uniware', {}).get('access_token', os.getenv('UNIWARE_ACCESS_TOKEN'))
+    UNIWARE_FACILITY_CODE: Optional[str] = yaml_config.get('uniware', {}).get('facility_code', os.getenv('UNIWARE_FACILITY_CODE'))
+    
     # Vector Embedding Settings
     VECTOR_EMBEDDING_PROVIDER: str = yaml_config.get('vector_db', {}).get('embedding', {}).get('provider', os.getenv('VECTOR_EMBEDDING_PROVIDER', 'openai'))
     VECTOR_EMBEDDING_MODEL: Optional[str] = yaml_config.get('vector_db', {}).get('embedding', {}).get('model', os.getenv('VECTOR_EMBEDDING_MODEL', 'text-embedding-ada-002'))
@@ -312,6 +337,18 @@ class Settings(BaseSettings):
         elif self.DB_TYPE.lower() == "shopify" and self.SHOPIFY_URI:
             logger.info(f"Using SHOPIFY_URI: {self.SHOPIFY_URI}")
             return self.SHOPIFY_URI
+        elif self.DB_TYPE.lower() == "shiprocket" and self.SHIPROCKET_URI:
+            logger.info(f"Using SHIPROCKET_URI: {self.SHIPROCKET_URI}")
+            return self.SHIPROCKET_URI
+        elif self.DB_TYPE.lower() == "payu" and self.PAYU_URI:
+            logger.info(f"Using PAYU_URI: {self.PAYU_URI}")
+            return self.PAYU_URI
+        elif self.DB_TYPE.lower() == "easebuzz" and self.EASEBUZZ_URI:
+            logger.info(f"Using EASEBUZZ_URI: {self.EASEBUZZ_URI}")
+            return self.EASEBUZZ_URI
+        elif self.DB_TYPE.lower() == "uniware" and self.UNIWARE_URI:
+            logger.info(f"Using UNIWARE_URI: {self.UNIWARE_URI}")
+            return self.UNIWARE_URI
         elif self.DB_TYPE.lower() == "ga4" and self.GA4_KEY_FILE:
             ga4_uri = f"ga4://{self.GA4_PROPERTY_ID}"
             logger.info(f"Using GA4 URI: {ga4_uri}")

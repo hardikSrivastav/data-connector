@@ -910,6 +910,138 @@ async def execute_ga4_query(llm, question: str, analyze: bool, orchestrator: Orc
             "analysis": f"❌ **Error**: {str(e)}" if analyze else None
         }
 
+async def execute_uniware_query(llm, question: str, analyze: bool, orchestrator: Orchestrator, db_type: str) -> Dict[str, Any]:
+    """Execute a Uniware query (legacy)"""
+    logger.info(f"📦 Executing Uniware query: {question}")
+    
+    try:
+        # Use orchestrator's LLM-to-query method
+        query_data = await orchestrator.llm_to_query(question)
+        
+        logger.info(f"🛠️ Generated Uniware query: {json.dumps(query_data, indent=2)}")
+        
+        # Execute query
+        rows = await orchestrator.execute(query_data)
+        
+        result = {
+            "rows": rows,
+            "sql": json.dumps(query_data, indent=2)  # Return formatted query as "sql"
+        }
+        
+        # Add analysis if requested
+        if analyze:
+            analysis = await llm.analyze_results(rows)
+            result["analysis"] = analysis
+        
+        return result
+        
+    except Exception as e:
+        logger.error(f"❌ Uniware query error: {str(e)}")
+        return {
+            "rows": [{"error": f"Uniware query failed: {str(e)}"}],
+            "sql": "-- Error occurred during query generation",
+            "analysis": f"❌ **Error**: {str(e)}" if analyze else None
+        }
+
+async def execute_payu_query(llm, question: str, analyze: bool, orchestrator: Orchestrator, db_type: str) -> Dict[str, Any]:
+    """Execute a PayU query (legacy)"""
+    logger.info(f"💳 Executing PayU query: {question}")
+    
+    try:
+        # Use orchestrator's LLM-to-query method
+        query_data = await orchestrator.llm_to_query(question)
+        
+        logger.info(f"🛠️ Generated PayU query: {json.dumps(query_data, indent=2)}")
+        
+        # Execute query
+        rows = await orchestrator.execute(query_data)
+        
+        result = {
+            "rows": rows,
+            "sql": json.dumps(query_data, indent=2)  # Return formatted query as "sql"
+        }
+        
+        # Add analysis if requested
+        if analyze:
+            analysis = await llm.analyze_results(rows)
+            result["analysis"] = analysis
+        
+        return result
+        
+    except Exception as e:
+        logger.error(f"❌ PayU query error: {str(e)}")
+        return {
+            "rows": [{"error": f"PayU query failed: {str(e)}"}],
+            "sql": "-- Error occurred during query generation",
+            "analysis": f"❌ **Error**: {str(e)}" if analyze else None
+        }
+
+async def execute_easebuzz_query(llm, question: str, analyze: bool, orchestrator: Orchestrator, db_type: str) -> Dict[str, Any]:
+    """Execute an EaseBuzz query (legacy)"""
+    logger.info(f"💰 Executing EaseBuzz query: {question}")
+    
+    try:
+        # Use orchestrator's LLM-to-query method
+        query_data = await orchestrator.llm_to_query(question)
+        
+        logger.info(f"🛠️ Generated EaseBuzz query: {json.dumps(query_data, indent=2)}")
+        
+        # Execute query
+        rows = await orchestrator.execute(query_data)
+        
+        result = {
+            "rows": rows,
+            "sql": json.dumps(query_data, indent=2)  # Return formatted query as "sql"
+        }
+        
+        # Add analysis if requested
+        if analyze:
+            analysis = await llm.analyze_results(rows)
+            result["analysis"] = analysis
+        
+        return result
+        
+    except Exception as e:
+        logger.error(f"❌ EaseBuzz query error: {str(e)}")
+        return {
+            "rows": [{"error": f"EaseBuzz query failed: {str(e)}"}],
+            "sql": "-- Error occurred during query generation",
+            "analysis": f"❌ **Error**: {str(e)}" if analyze else None
+        }
+
+async def execute_shiprocket_query(llm, question: str, analyze: bool, orchestrator: Orchestrator, db_type: str) -> Dict[str, Any]:
+    """Execute a ShipRocket query (legacy)"""
+    logger.info(f"🚚 Executing ShipRocket query: {question}")
+    
+    try:
+        # Use orchestrator's LLM-to-query method
+        query_data = await orchestrator.llm_to_query(question)
+        
+        logger.info(f"🛠️ Generated ShipRocket query: {json.dumps(query_data, indent=2)}")
+        
+        # Execute query
+        rows = await orchestrator.execute(query_data)
+        
+        result = {
+            "rows": rows,
+            "sql": json.dumps(query_data, indent=2)  # Return formatted query as "sql"
+        }
+        
+        # Add analysis if requested
+        if analyze:
+            analysis = await llm.analyze_results(rows)
+            result["analysis"] = analysis
+        
+        return result
+        
+    except Exception as e:
+        logger.error(f"❌ ShipRocket query error: {str(e)}")
+        return {
+            "rows": [{"error": f"ShipRocket query failed: {str(e)}"}],
+            "sql": "-- Error occurred during query generation",
+            "analysis": f"❌ **Error**: {str(e)}" if analyze else None
+        }
+
 @router.get("/test")
 async def test_real_connection():
     """
@@ -998,7 +1130,7 @@ async def get_capabilities():
             "port": settings.DB_PORT,
             "database": settings.DB_NAME
         },
-        "supported_databases": ["postgres", "postgresql", "mongodb", "qdrant", "slack", "shopify", "ga4"],
+        "supported_databases": ["postgres", "postgresql", "mongodb", "qdrant", "slack", "shopify", "ga4", "uniware", "payu", "easebuzz", "shiprocket"],
         "capabilities": {
             "natural_language_queries": True,
             "sql_generation": True,
@@ -1029,7 +1161,17 @@ async def get_capabilities():
             "Show me user analytics from GA4",
             "Compare user activity between Slack and Shopify",
             "Find customer support issues across all platforms",
-            "Correlate sales data with marketing campaigns"
+            "Correlate sales data with marketing campaigns",
+            "Show me pending orders in Uniware",
+            "What's the inventory level for products in warehouse?",
+            "Find failed payment transactions in PayU",
+            "Show me settlement reports from EaseBuzz",
+            "Track shipment delays in ShipRocket",
+            "Which payment gateway has the highest success rate?",
+            "Show me order fulfillment status across warehouses",
+            "Find shipping issues with high NDR rates",
+            "Compare payment success rates between PayU and EaseBuzz",
+            "Show me inventory shortages that are blocking orders"
         ]
     }
     
