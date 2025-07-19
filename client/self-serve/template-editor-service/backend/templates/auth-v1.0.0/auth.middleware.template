@@ -1,0 +1,62 @@
+// Authentication Middleware
+import jwt from 'jsonwebtoken';
+import bcrypt from 'bcryptjs';
+import { authConfig } from './auth.config.js';
+
+export class AuthMiddleware {
+  
+  // JWT Token Generation
+  generateToken(payload) {
+    return jwt.sign(payload, authConfig.secret, {
+      algorithm: authConfig.algorithm,
+      expiresIn: authConfig.expiresIn
+    });
+  }
+  
+  // JWT Token Verification
+  verifyToken(token) {
+    try {
+      return jwt.verify(token, authConfig.secret, {
+        algorithms: [authConfig.algorithm]
+      });
+    } catch (error) {
+      throw new Error('Invalid token');
+    }
+  }
+  
+  // Password Hashing (for local auth)
+  async hashPassword(password) {
+    return bcrypt.hash(password, authConfig.local.hashRounds);
+  }
+  
+  // Password Verification (for local auth)
+  async verifyPassword(password, hashedPassword) {
+    return bcrypt.compare(password, hashedPassword);
+  }
+  
+  // Express Middleware Function
+  authenticate(req, res, next) {
+    const token = req.headers.authorization?.split(' ')[1];
+    
+    if (!token) {
+      return res.status(401).json({ error: 'No token provided' });
+    }
+    
+    try {
+      const decoded = this.verifyToken(token);
+      req.user = decoded;
+      next();
+    } catch (error) {
+      res.status(401).json({ error: 'Invalid token' });
+    }
+  }
+  
+  // OAuth Handler (if using OAuth)
+  async handleOAuthCallback(provider, code) {
+    // Implementation depends on {{AUTH_METHOD}} and {{OAUTH_PROVIDERS}}
+    // This is a placeholder for OAuth integration
+    throw new Error('OAuth integration not implemented');
+  }
+}
+
+export default new AuthMiddleware();

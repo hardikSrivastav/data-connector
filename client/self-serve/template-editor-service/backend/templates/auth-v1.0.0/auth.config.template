@@ -1,0 +1,30 @@
+// Authentication Configuration
+export const authConfig = {
+  method: "{{AUTH_METHOD}}", // jwt, oauth, local
+  secret: "{{SECRET_KEY}}",
+  algorithm: "{{ALGORITHM}}", // HS256, RS256
+  expiresIn: "{{EXPIRES_IN}}", // 24h, 7d, 30d
+  
+  // OAuth Configuration (if method includes oauth)
+  oauth: {
+    providers: {{OAUTH_PROVIDERS}}, // ["google", "github", "auth0"]
+    redirectUrl: "{{REDIRECT_URL}}",
+    clientId: "{{CLIENT_ID}}",
+    clientSecret: "{{CLIENT_SECRET}}"
+  },
+  
+  // Local Authentication (if method includes local)
+  local: {
+    usernameField: "{{USERNAME_FIELD}}", // email, username
+    passwordField: "{{PASSWORD_FIELD}}", // password
+    hashRounds: {{HASH_ROUNDS}} // 10, 12, 15
+  },
+  
+  // Session Configuration
+  session: {
+    name: "{{SESSION_NAME}}",
+    secure: {{SECURE_COOKIES}}, // true, false
+    httpOnly: {{HTTP_ONLY}}, // true, false
+    sameSite: "{{SAME_SITE}}" // strict, lax, none
+  }
+};
