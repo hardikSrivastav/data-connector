@@ -1,0 +1,26 @@
+sso:
+  # Common settings
+  enabled: true
+  default_protocol: "oidc"
+  
+  # OIDC Configuration
+  oidc:
+    provider: "okta"
+    client_id: "{{ OKTA_CLIENT_ID }}"
+    client_secret: "{{ OKTA_CLIENT_SECRET }}"
+    issuer: "https://{{ OKTA_DOMAIN }}"
+    discovery_url: "https://{{ OKTA_DOMAIN }}/.well-known/openid-configuration"
+    redirect_uri: "https://{{ YOUR_DOMAIN }}/authorization-code/callback"
+    scopes: ["openid", "email", "profile", "groups"]
+    # Map claims to user attributes
+    claims_mapping:
+      email: "email"
+      name: "name" 
+      groups: "groups"
+
+# Role mappings from IdP groups to Ceneca roles
+role_mappings:
+  # Add your role mappings here, for example:
+  # "HR-Analysts": "hr_read"
+  # "Finance-Team": "finance_read"
+  # "Data-Admins": "admin"
