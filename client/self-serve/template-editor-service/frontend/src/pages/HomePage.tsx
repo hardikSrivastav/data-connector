@@ -1,6 +1,5 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Plus, FileText, Clock, User, AlertCircle, Layers, Database, Shield, Server } from 'lucide-react';
 import { apiService } from '../services/apiService';
 import type { Template, Session, DeploymentScenario } from '../types';
 
@@ -8,7 +7,7 @@ export const HomePage: React.FC = () => {
   const navigate = useNavigate();
   const [scenarios, setScenarios] = useState<DeploymentScenario[]>([]);
   const [templates, setTemplates] = useState<Template[]>([]);
-  const [recentSessions, setRecentSessions] = useState<Session[]>([]);
+  const [recentSessions] = useState<Session[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<'scenarios' | 'templates'>('scenarios');
@@ -59,23 +58,13 @@ export const HomePage: React.FC = () => {
     }
   };
   
-  const getCategoryIcon = (category: string) => {
-    switch (category) {
-      case 'enterprise': return <Server className="w-6 h-6" />;
-      case 'development': return <FileText className="w-6 h-6" />;
-      case 'infrastructure': return <Database className="w-6 h-6" />;
-      case 'authentication': return <Shield className="w-6 h-6" />;
-      default: return <Layers className="w-6 h-6" />;
-    }
-  };
-  
   const getCategoryColor = (category: string) => {
     switch (category) {
       case 'enterprise': return 'text-blue-600';
       case 'development': return 'text-green-600';
       case 'infrastructure': return 'text-purple-600';
       case 'authentication': return 'text-red-600';
-      default: return 'text-primary-600';
+      default: return 'text-primary';
     }
   };
 
@@ -83,8 +72,8 @@ export const HomePage: React.FC = () => {
     return (
       <div className="flex items-center justify-center h-64">
         <div className="text-center">
-          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary-600 mx-auto"></div>
-          <p className="mt-4 text-secondary-600">Loading templates...</p>
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary mx-auto"></div>
+          <p className="mt-4 text-muted-foreground font-baskerville">Loading templates...</p>
         </div>
       </div>
     );
@@ -92,54 +81,51 @@ export const HomePage: React.FC = () => {
 
   if (error) {
     return (
-      <div className="card bg-red-50 border-red-200">
-        <div className="flex items-center space-x-2 text-red-800">
-          <AlertCircle className="w-5 h-5" />
-          <div>
-            <h2 className="text-lg font-semibold mb-2">Connection Error</h2>
-            <p className="mb-4">{error}</p>
-            <button
-              onClick={loadData}
-              className="btn btn-outline"
-            >
-              Try Again
-            </button>
-          </div>
+      <div className="card border-red-200 bg-red-50">
+        <div>
+          <h2 className="text-lg font-semibold mb-2 font-baskerville text-red-800">Connection Error</h2>
+          <p className="mb-4 text-red-600 font-baskerville">{error}</p>
+          <button
+            onClick={loadData}
+            className="btn btn-outline"
+          >
+            Try Again
+          </button>
         </div>
       </div>
     );
   }
 
   return (
-    <div className="space-y-8">
+    <div className="space-y-16">
       {/* Hero Section */}
-      <div className="text-center">
-        <h1 className="text-4xl font-bold text-secondary-900 mb-4">
+      <div className="text-center space-y-6 py-12">
+        <h1 className="text-5xl font-bold font-baskerville gradient-text">
           AI-Powered Deployment Editor
         </h1>
-        <p className="text-xl text-secondary-600 max-w-2xl mx-auto">
+        <p className="text-2xl text-muted-foreground max-w-4xl mx-auto font-baskerville">
           Transform deployment scenarios into production-ready configurations with intelligent AI guidance
         </p>
       </div>
 
       {/* Tab Navigation */}
-      <div className="flex space-x-1 bg-secondary-100 p-1 rounded-lg max-w-md mx-auto mb-8">
+      <div className="flex space-x-1 bg-muted p-1 rounded-lg max-w-lg mx-auto">
         <button
           onClick={() => setActiveTab('scenarios')}
-          className={`flex-1 px-4 py-2 rounded-md font-medium transition-colors ${
+          className={`flex-1 px-6 py-3 rounded-md font-medium transition-colors font-baskerville ${
             activeTab === 'scenarios'
-              ? 'bg-white text-primary-600 shadow-sm'
-              : 'text-secondary-600 hover:text-secondary-900'
+              ? 'bg-white text-primary'
+              : 'text-muted-foreground hover:text-foreground'
           }`}
         >
           Deployment Scenarios
         </button>
         <button
           onClick={() => setActiveTab('templates')}
-          className={`flex-1 px-4 py-2 rounded-md font-medium transition-colors ${
+          className={`flex-1 px-6 py-3 rounded-md font-medium transition-colors font-baskerville ${
             activeTab === 'templates'
-              ? 'bg-white text-primary-600 shadow-sm'
-              : 'text-secondary-600 hover:text-secondary-900'
+              ? 'bg-white text-primary'
+              : 'text-muted-foreground hover:text-foreground'
           }`}
         >
           Individual Templates
@@ -149,62 +135,55 @@ export const HomePage: React.FC = () => {
       {/* Scenarios Section */}
       {activeTab === 'scenarios' && (
         <div>
-          <h2 className="text-2xl font-bold text-secondary-900 mb-6">
+          <h2 className="text-3xl font-bold font-baskerville mb-12 text-center">
             Deployment Scenarios
           </h2>
-          <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-2">
+          <div className="grid gap-8 md:grid-cols-2 max-w-6xl mx-auto">
             {scenarios.map((scenario) => (
-              <div key={scenario.id} className="card hover:shadow-md transition-shadow">
-                <div className="flex items-start justify-between mb-4">
-                  <div className="flex items-center space-x-3">
-                    <div className={getCategoryColor(scenario.category)}>
-                      {getCategoryIcon(scenario.category)}
-                    </div>
-                    <div>
-                      <h3 className="font-semibold text-secondary-900">
-                        {scenario.name}
-                      </h3>
-                      <p className="text-sm text-secondary-600 capitalize">
-                        {scenario.category} • {scenario.template_versions.length} templates
-                      </p>
-                    </div>
-                  </div>
-                </div>
-                
-                <p className="text-secondary-700 mb-4">
-                  {scenario.description}
-                </p>
-                
-                <div className="mb-4">
-                  <p className="text-sm font-medium text-secondary-900 mb-2">Includes:</p>
-                  <div className="flex flex-wrap gap-1">
-                    {scenario.template_versions.map((templateVersion) => {
-                      const template = templates.find(t => t.version === templateVersion);
-                      return (
-                        <span
-                          key={templateVersion}
-                          className="inline-block px-2 py-1 bg-secondary-100 text-secondary-700 text-xs rounded"
-                        >
-                          {template?.category || templateVersion.split('-')[0]}
-                        </span>
-                      );
-                    })}
-                  </div>
-                </div>
-                
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center space-x-2 text-sm text-secondary-600">
-                    <Clock className="w-4 h-4" />
-                    <span>{new Date(scenario.created_at).toLocaleDateString()}</span>
+              <div key={scenario.id} className="card">
+                <div className="space-y-6">
+                  <div>
+                    <h3 className="font-semibold text-xl font-baskerville mb-2">
+                      {scenario.name}
+                    </h3>
+                    <p className="text-muted-foreground capitalize font-baskerville">
+                      <span className={getCategoryColor(scenario.category)}>{scenario.category}</span> • {scenario.template_versions.length} templates
+                    </p>
                   </div>
                   
-                  <button
-                    onClick={() => createSession(undefined, scenario.id)}
-                    className="btn btn-primary flex items-center space-x-2"
-                  >
-                    <Plus className="w-4 h-4" />
-                    <span>Start Deployment</span>
-                  </button>
+                  <p className="text-muted-foreground font-baskerville text-lg leading-relaxed">
+                    {scenario.description}
+                  </p>
+                  
+                  <div>
+                    <p className="font-medium mb-3 font-baskerville">Includes:</p>
+                    <div className="flex flex-wrap gap-2">
+                      {scenario.template_versions.map((templateVersion) => {
+                        const template = templates.find(t => t.version === templateVersion);
+                        return (
+                          <span
+                            key={templateVersion}
+                            className="inline-block px-3 py-1 bg-muted text-muted-foreground text-sm rounded font-baskerville"
+                          >
+                            {template?.category || templateVersion.split('-')[0]}
+                          </span>
+                        );
+                      })}
+                    </div>
+                  </div>
+                  
+                  <div className="flex items-center justify-between pt-6 border-t border-border">
+                    <span className="text-muted-foreground font-baskerville">
+                      {new Date(scenario.created_at).toLocaleDateString()}
+                    </span>
+                    
+                    <button
+                      onClick={() => createSession(undefined, scenario.id)}
+                      className="btn btn-primary"
+                    >
+                      Start Deployment
+                    </button>
+                  </div>
                 </div>
               </div>
             ))}
@@ -215,43 +194,38 @@ export const HomePage: React.FC = () => {
       {/* Templates Section */}
       {activeTab === 'templates' && (
         <div>
-          <h2 className="text-2xl font-bold text-secondary-900 mb-6">
+          <h2 className="text-3xl font-bold font-baskerville mb-12 text-center">
             Individual Templates
           </h2>
-          <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3">
+          <div className="grid gap-8 md:grid-cols-2 lg:grid-cols-3 max-w-7xl mx-auto">
             {templates.map((template) => (
-              <div key={template.version} className="card hover:shadow-md transition-shadow">
-                <div className="flex items-start justify-between mb-4">
-                  <div className="flex items-center space-x-3">
-                    <FileText className="w-6 h-6 text-primary-600" />
-                    <div>
-                      <h3 className="font-semibold text-secondary-900">
-                        {template.name}
-                      </h3>
-                      <p className="text-sm text-secondary-600">
-                        {template.category} • {template.format}
-                      </p>
-                    </div>
-                  </div>
-                </div>
-                
-                <p className="text-secondary-700 mb-4">
-                  {template.description}
-                </p>
-                
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center space-x-2 text-sm text-secondary-600">
-                    <Clock className="w-4 h-4" />
-                    <span>{new Date(template.created_at).toLocaleDateString()}</span>
+              <div key={template.version} className="card">
+                <div className="space-y-6">
+                  <div>
+                    <h3 className="font-semibold text-xl font-baskerville mb-2">
+                      {template.name}
+                    </h3>
+                    <p className="text-muted-foreground font-baskerville">
+                      {template.category} • {template.format}
+                    </p>
                   </div>
                   
-                  <button
-                    onClick={() => createSession(template.version)}
-                    className="btn btn-primary flex items-center space-x-2"
-                  >
-                    <Plus className="w-4 h-4" />
-                    <span>Start Editing</span>
-                  </button>
+                  <p className="text-muted-foreground font-baskerville text-lg leading-relaxed">
+                    {template.description}
+                  </p>
+                  
+                  <div className="flex items-center justify-between pt-6 border-t border-border">
+                    <span className="text-muted-foreground font-baskerville">
+                      {new Date(template.created_at).toLocaleDateString()}
+                    </span>
+                    
+                    <button
+                      onClick={() => createSession(template.version)}
+                      className="btn btn-primary"
+                    >
+                      Start Editing
+                    </button>
+                  </div>
                 </div>
               </div>
             ))}
@@ -262,30 +236,26 @@ export const HomePage: React.FC = () => {
       {/* Recent Sessions Section */}
       {recentSessions.length > 0 && (
         <div>
-          <h2 className="text-2xl font-bold text-secondary-900 mb-6">
+          <h2 className="text-2xl font-bold font-baskerville mb-8">
             Recent Sessions
           </h2>
           <div className="space-y-4">
             {recentSessions.map((session) => (
               <div key={session.id} className="card">
                 <div className="flex items-center justify-between">
-                  <div className="flex items-center space-x-3">
-                    <User className="w-5 h-5 text-secondary-600" />
-                    <div>
-                      <h3 className="font-medium text-secondary-900">
-                        {session.template_version}
-                      </h3>
-                      <p className="text-sm text-secondary-600">
-                        Status: {session.status}
-                      </p>
-                    </div>
+                  <div>
+                    <h3 className="font-medium font-baskerville">
+                      {session.template_version}
+                    </h3>
+                    <p className="text-sm text-muted-foreground font-baskerville">
+                      Status: {session.status}
+                    </p>
                   </div>
                   
                   <div className="flex items-center space-x-4">
-                    <div className="text-sm text-secondary-600">
-                      <Clock className="w-4 h-4 inline mr-1" />
+                    <span className="text-sm text-muted-foreground font-baskerville">
                       {new Date(session.updated_at).toLocaleDateString()}
-                    </div>
+                    </span>
                     
                     <button
                       onClick={() => navigate(`/editor/${session.id}`)}
@@ -302,26 +272,26 @@ export const HomePage: React.FC = () => {
       )}
 
       {/* Getting Started Section */}
-      <div className="card bg-primary-50 border-primary-200">
-        <h2 className="text-xl font-bold text-primary-900 mb-4">
+      <div className="card border-primary/30 max-w-4xl mx-auto">
+        <h2 className="text-2xl font-bold font-baskerville mb-8 gradient-text text-center">
           Getting Started
         </h2>
-        <div className="space-y-3 text-primary-800">
-          <div className="flex items-start space-x-2">
-            <span className="font-semibold">1.</span>
-            <span>Choose a deployment scenario that matches your infrastructure needs</span>
+        <div className="space-y-6 font-baskerville text-lg">
+          <div className="flex items-start space-x-4">
+            <span className="font-semibold text-primary text-xl">1.</span>
+            <span className="leading-relaxed">Choose a deployment scenario that matches your infrastructure needs</span>
           </div>
-          <div className="flex items-start space-x-2">
-            <span className="font-semibold">2.</span>
-            <span>Chat with the AI agent to configure all related files at once</span>
+          <div className="flex items-start space-x-4">
+            <span className="font-semibold text-primary text-xl">2.</span>
+            <span className="leading-relaxed">Chat with the AI agent to configure all related files at once</span>
           </div>
-          <div className="flex items-start space-x-2">
-            <span className="font-semibold">3.</span>
-            <span>Review cross-file dependencies and validate your configuration</span>
+          <div className="flex items-start space-x-4">
+            <span className="font-semibold text-primary text-xl">3.</span>
+            <span className="leading-relaxed">Review cross-file dependencies and validate your configuration</span>
           </div>
-          <div className="flex items-start space-x-2">
-            <span className="font-semibold">4.</span>
-            <span>Download your complete, production-ready deployment package</span>
+          <div className="flex items-start space-x-4">
+            <span className="font-semibold text-primary text-xl">4.</span>
+            <span className="leading-relaxed">Download your complete, production-ready deployment package</span>
           </div>
         </div>
       </div>

@@ -1,29 +1,30 @@
-import React from 'react';
 import { Link } from 'react-router-dom';
-import { FileText, Settings } from 'lucide-react';
 
 export const Header: React.FC = () => {
   return (
-    <header className="bg-white shadow-sm border-b border-secondary-200">
-      <div className="container mx-auto px-4">
-        <div className="flex items-center justify-between h-16">
-          <Link to="/" className="flex items-center space-x-2">
-            <FileText className="w-8 h-8 text-primary-600" />
-            <span className="text-xl font-bold text-secondary-900">
-              Template Editor
-            </span>
+    <header className="navbar-glass">
+      <div className="container mx-auto px-6">
+        <div className="flex items-center justify-between h-20">
+          <Link to="/" className="flex items-center space-x-4">
+            <img 
+              src="/ceneca-light.png" 
+              alt="Ceneca" 
+              className="w-20 h-20"
+            />
+            <div className="flex items-center">
+              <span className="text-3xl font-bold gradient-text font-baskerville">
+                Ceneca
+              </span>
+            </div>
           </Link>
           
-          <nav className="flex items-center space-x-4">
+          <nav className="flex items-center">
             <Link
               to="/"
-              className="text-secondary-600 hover:text-secondary-900 transition-colors"
+              className="text-lg font-medium text-foreground hover:text-primary transition-colors font-baskerville px-4 py-2"
             >
               Home
             </Link>
-            <button className="p-2 text-secondary-600 hover:text-secondary-900 transition-colors">
-              <Settings className="w-5 h-5" />
-            </button>
           </nav>
         </div>
       </div>

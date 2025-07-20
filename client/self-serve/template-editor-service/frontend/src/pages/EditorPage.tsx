@@ -1,17 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { 
-  FileText, 
-  MessageSquare, 
-  Download, 
-  ArrowLeft,
-  RefreshCw,
-  AlertCircle,
-  CheckCircle
-} from 'lucide-react';
 import { apiService } from '../services/apiService';
 import { websocketService } from '../services/websocketService';
-import type { Session, WorkspaceData, FileContent, ChatMessage, SessionTemplate } from '../types';
+import type { Session, WorkspaceData, FileContent, ChatMessage } from '../types';
 
 export const EditorPage: React.FC = () => {
   const { sessionId } = useParams<{ sessionId: string }>();
@@ -19,7 +10,7 @@ export const EditorPage: React.FC = () => {
   
   const [session, setSession] = useState<Session | null>(null);
   const [workspaceData, setWorkspaceData] = useState<WorkspaceData | null>(null);
-  const [sessionTemplates, setSessionTemplates] = useState<SessionTemplate[]>([]);
+
   const [selectedFile, setSelectedFile] = useState<FileContent | null>(null);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [inputMessage, setInputMessage] = useState('');
@@ -47,15 +38,13 @@ export const EditorPage: React.FC = () => {
       setLoading(true);
       setError(null);
       
-      const [sessionData, workspaceData, templates] = await Promise.all([
+      const [sessionData, workspaceData] = await Promise.all([
         apiService.getSession(sessionId),
-        apiService.getWorkspace(sessionId),
-        apiService.getSessionTemplates(sessionId)
+        apiService.getWorkspace(sessionId)
       ]);
       
       setSession(sessionData);
       setWorkspaceData(workspaceData);
-      setSessionTemplates(templates);
       
       // Select first file by default
       if (workspaceData.files.length > 0) {
@@ -164,7 +153,7 @@ export const EditorPage: React.FC = () => {
     }
   };
 
-  const handleKeyPress = (e: React.KeyboardEvent) => {
+  const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
       sendMessage();
@@ -200,8 +189,8 @@ export const EditorPage: React.FC = () => {
     return (
       <div className="flex items-center justify-center h-64">
         <div className="text-center">
-          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary-600 mx-auto"></div>
-          <p className="mt-4 text-secondary-600">Loading editor...</p>
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary mx-auto"></div>
+          <p className="mt-4 text-muted-foreground font-baskerville">Loading editor...</p>
         </div>
       </div>
     );
@@ -210,19 +199,16 @@ export const EditorPage: React.FC = () => {
   if (error) {
     return (
       <div className="card bg-red-50 border-red-200">
-        <div className="flex items-center space-x-2 text-red-800">
-          <AlertCircle className="w-5 h-5" />
-          <div>
-            <h2 className="text-lg font-semibold mb-2">Error</h2>
-            <p className="mb-4">{error}</p>
-            <div className="space-x-2">
-              <button onClick={loadSessionData} className="btn btn-outline">
-                Try Again
-              </button>
-              <button onClick={handleBackToHome} className="btn btn-secondary">
-                Back to Home
-              </button>
-            </div>
+        <div className="text-red-800">
+          <h2 className="text-lg font-semibold mb-2 font-baskerville">Error</h2>
+          <p className="mb-4 font-baskerville">{error}</p>
+          <div className="space-x-2">
+            <button onClick={loadSessionData} className="btn btn-outline">
+              Try Again
+            </button>
+            <button onClick={handleBackToHome} className="btn btn-secondary">
+              Back to Home
+            </button>
           </div>
         </div>
       </div>
@@ -232,7 +218,7 @@ export const EditorPage: React.FC = () => {
   if (!session || !workspaceData) {
     return (
       <div className="card">
-        <p className="text-secondary-600">Session not found</p>
+        <p className="text-muted-foreground font-baskerville">Session not found</p>
         <button onClick={handleBackToHome} className="mt-4 btn btn-primary">
           Back to Home
         </button>
@@ -241,78 +227,69 @@ export const EditorPage: React.FC = () => {
   }
 
   return (
-    <div className="h-screen flex flex-col">
-      {/* Header */}
-      <div className="bg-white border-b border-secondary-200 px-6 py-4">
+    <div className="h-screen flex flex-col bg-background">
+      {/* Compact Header */}
+      <div className="navbar-glass border-b border-border px-4 py-2 flex-shrink-0">
         <div className="flex items-center justify-between">
           <div className="flex items-center space-x-4">
             <button
               onClick={handleBackToHome}
-              className="btn btn-outline flex items-center space-x-2"
+              className="text-sm text-muted-foreground hover:text-foreground font-baskerville"
             >
-              <ArrowLeft className="w-4 h-4" />
-              <span>Back</span>
+              ← Back
             </button>
-            
-            <div>
-              <h1 className="text-xl font-bold text-secondary-900">
+            <div className="text-sm font-baskerville">
+              <span className="gradient-text font-semibold">
                 {session.scenario_id ? 'Deployment Editor' : 'Template Editor'}
-              </h1>
-              <p className="text-sm text-secondary-600">
+              </span>
+              <span className="text-muted-foreground ml-2">
                 {session.scenario_id 
                   ? `${session.metadata?.scenario_name} (${session.metadata?.template_count} files)`
                   : session.template_version
-                } • Session: {session.id.slice(0, 8)}...
-              </p>
+                }
+              </span>
             </div>
           </div>
 
           <div className="flex items-center space-x-4">
-            {/* Connection Status */}
             <div className="flex items-center space-x-2">
-              {isConnected ? (
-                <CheckCircle className="w-5 h-5 text-green-600" />
-              ) : (
-                <AlertCircle className="w-5 h-5 text-red-600" />
-              )}
-              <span className={`text-sm ${isConnected ? 'text-green-600' : 'text-red-600'}`}>
+              <div className={`w-2 h-2 rounded-full ${isConnected ? 'bg-green-400' : 'bg-red-400'}`}></div>
+              <span className={`text-sm font-baskerville ${isConnected ? 'text-green-600' : 'text-red-600'}`}>
                 {isConnected ? 'Connected' : 'Disconnected'}
               </span>
             </div>
-
             <button
               onClick={loadSessionData}
-              className="btn btn-outline"
-              title="Refresh"
+              className="text-sm text-muted-foreground hover:text-foreground font-baskerville"
             >
-              <RefreshCw className="w-4 h-4" />
+              Refresh
             </button>
-
             <button
               onClick={handleDownload}
-              className="btn btn-primary flex items-center space-x-2"
+              className="text-sm bg-primary text-primary-foreground px-3 py-1 rounded font-baskerville hover:bg-primary/90"
             >
-              <Download className="w-4 h-4" />
-              <span>Download</span>
+              Download
             </button>
           </div>
         </div>
       </div>
 
-      {/* Main Content */}
-      <div className="flex-1 flex">
-        {/* Left Sidebar - File List with Categories */}
-        <div className="w-72 bg-white border-r border-secondary-200 overflow-y-auto">
-          <div className="p-4">
-            <div className="flex items-center justify-between mb-3">
-              <h3 className="font-medium text-secondary-900">Files</h3>
+      {/* Main Content - Single Viewport */}
+      <div className="flex-1 flex min-h-0">
+        {/* Compact File Sidebar */}
+        <div className="w-64 bg-card border-r border-border flex flex-col">
+          <div className="p-3 border-b border-border flex-shrink-0">
+            <div className="flex items-center justify-between">
+              <h3 className="text-sm font-medium font-baskerville">Files</h3>
               {session?.scenario_id && (
-                <span className="text-xs bg-blue-100 text-blue-800 px-2 py-1 rounded">
-                  {workspaceData.files.length} files
+                <span className="text-xs bg-muted text-muted-foreground px-2 py-1 rounded font-baskerville">
+                  {workspaceData.files.length}
                 </span>
               )}
             </div>
-            
+          </div>
+          
+          <div className="flex-1 overflow-y-auto p-3">
             <div className="space-y-2">
               {workspaceData.files.map((file) => {
                 const fileExtension = file.path.split('.').pop();
@@ -321,7 +298,7 @@ export const EditorPage: React.FC = () => {
                 const isNginx = file.path.includes('nginx');
                 const isAuth = file.path.includes('auth');
                 
-                let categoryColor = 'text-gray-600';
+                let categoryColor = 'text-muted-foreground';
                 let categoryLabel = 'config';
                 
                 if (isDocker) {
@@ -345,100 +322,79 @@ export const EditorPage: React.FC = () => {
                       setSelectedFile(file);
                       setActiveTab('files');
                     }}
-                    className={`w-full text-left p-3 rounded-lg transition-colors border ${
+                    className={`w-full text-left p-2 rounded transition-colors border font-baskerville text-xs ${
                       selectedFile?.path === file.path
-                        ? 'bg-primary-50 border-primary-200 text-primary-800'
-                        : 'border-secondary-200 hover:bg-secondary-50'
+                        ? 'bg-primary/10 border-primary text-primary'
+                        : 'border-border hover:bg-accent/50'
                     }`}
                   >
-                    <div className="flex items-start space-x-3">
-                      <FileText className={`w-4 h-4 mt-0.5 ${categoryColor}`} />
-                      <div className="flex-1 min-w-0">
-                        <div className="text-sm font-medium text-secondary-900 truncate">
-                          {file.path}
-                        </div>
-                        <div className="flex items-center space-x-2 mt-1">
-                          <span className={`text-xs ${categoryColor}`}>
-                            {categoryLabel}
-                          </span>
-                          <span className="text-xs text-secondary-500">
-                            {fileExtension?.toUpperCase()}
-                          </span>
-                          {file.modified && (
-                            <div className="w-2 h-2 bg-yellow-500 rounded-full"></div>
-                          )}
-                        </div>
+                    <div className="space-y-1">
+                      <div className="font-medium truncate font-mono">
+                        {file.path}
+                      </div>
+                      <div className="flex items-center space-x-2">
+                        <span className={`text-xs ${categoryColor}`}>
+                          {categoryLabel}
+                        </span>
+                        <span className="text-xs text-muted-foreground">
+                          {fileExtension?.toUpperCase()}
+                        </span>
+                        {file.modified && (
+                          <div className="w-1.5 h-1.5 bg-yellow-400 rounded-full"></div>
+                        )}
                       </div>
                     </div>
                   </button>
                 );
               })}
             </div>
-            
-            {/* Template Info for Scenarios */}
-            {session?.scenario_id && sessionTemplates.length > 0 && (
-              <div className="mt-6 pt-4 border-t border-secondary-200">
-                <h4 className="text-sm font-medium text-secondary-700 mb-2">Templates Used</h4>
-                <div className="space-y-1">
-                  {sessionTemplates.map((template) => (
-                    <div key={template.id} className="text-xs text-secondary-600">
-                      {template.template_version}
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
           </div>
         </div>
 
         {/* Main Content Area */}
-        <div className="flex-1 flex flex-col">
-          {/* Tab Navigation */}
-          <div className="flex border-b border-secondary-200 bg-white">
+        <div className="flex-1 flex flex-col min-w-0">
+          {/* Compact Tab Navigation */}
+          <div className="flex border-b border-border bg-card flex-shrink-0">
             <button
               onClick={() => setActiveTab('files')}
-              className={`px-4 py-2 font-medium ${
+              className={`px-4 py-2 font-medium font-baskerville text-sm ${
                 activeTab === 'files'
-                  ? 'border-b-2 border-primary-600 text-primary-600'
-                  : 'text-secondary-600 hover:text-secondary-900'
+                  ? 'border-b-2 border-primary text-primary'
+                  : 'text-muted-foreground hover:text-foreground'
               }`}
             >
-              <FileText className="w-4 h-4 inline mr-2" />
               Files
             </button>
             <button
               onClick={() => setActiveTab('chat')}
-              className={`px-4 py-2 font-medium ${
+              className={`px-4 py-2 font-medium font-baskerville text-sm ${
                 activeTab === 'chat'
-                  ? 'border-b-2 border-primary-600 text-primary-600'
-                  : 'text-secondary-600 hover:text-secondary-900'
+                  ? 'border-b-2 border-primary text-primary'
+                  : 'text-muted-foreground hover:text-foreground'
               }`}
             >
-              <MessageSquare className="w-4 h-4 inline mr-2" />
-              {session?.scenario_id ? 'Deployment Assistant' : 'AI Assistant'}
+              {session?.scenario_id ? 'Assistant' : 'AI Assistant'}
             </button>
           </div>
 
-          {/* Tab Content */}
-          <div className="flex-1 overflow-hidden">
+          {/* Tab Content - Fills remaining space */}
+          <div className="flex-1 min-h-0">
             {activeTab === 'files' && selectedFile && (
-              <div className="h-full p-4">
-                <div className="h-full border border-secondary-300 rounded-lg overflow-hidden">
-                  <div className="bg-secondary-50 px-4 py-2 border-b border-secondary-300">
-                    <h4 className="font-medium text-secondary-900">{selectedFile.path}</h4>
-                  </div>
-                  <div className="p-4 h-full overflow-auto">
-                    <pre className="text-sm text-secondary-800 whitespace-pre-wrap">
-                      {selectedFile.content}
-                    </pre>
-                  </div>
+              <div className="h-full flex flex-col">
+                <div className="bg-muted px-4 py-2 border-b border-border flex-shrink-0">
+                  <h4 className="font-medium font-mono text-sm">{selectedFile.path}</h4>
+                </div>
+                <div className="flex-1 overflow-auto p-4 bg-background">
+                  <pre className="font-mono whitespace-pre-wrap text-foreground text-sm leading-relaxed">
+                    {selectedFile.content}
+                  </pre>
                 </div>
               </div>
             )}
             
             {activeTab === 'chat' && (
               <div className="flex flex-col h-full">
-                {/* Messages */}
+                {/* Messages - Scrollable area */}
                 <div className="flex-1 overflow-y-auto p-4 space-y-4">
                   {messages.map((message) => (
                     <div
@@ -446,18 +402,18 @@ export const EditorPage: React.FC = () => {
                       className={`flex ${message.role === 'user' ? 'justify-end' : 'justify-start'}`}
                     >
                       <div
-                        className={`max-w-xs lg:max-w-md px-4 py-2 rounded-lg ${
+                        className={`max-w-md px-4 py-3 rounded-lg ${
                           message.role === 'user'
-                            ? 'bg-primary-600 text-white'
+                            ? 'bg-primary text-primary-foreground'
                             : message.role === 'system'
-                            ? 'bg-yellow-100 text-yellow-800 border border-yellow-300'
-                            : 'bg-secondary-100 text-secondary-900'
+                            ? 'bg-yellow-50 text-yellow-800 border border-yellow-200'
+                            : 'bg-muted text-foreground'
                         }`}
                       >
-                        <div className="text-sm whitespace-pre-wrap">
+                        <div className="whitespace-pre-wrap font-baskerville text-sm leading-relaxed">
                           {message.content}
                         </div>
-                        <div className="text-xs opacity-70 mt-1">
+                        <div className="text-xs opacity-70 mt-2 font-baskerville">
                           {new Date(message.timestamp).toLocaleTimeString()}
                         </div>
                       </div>
@@ -466,35 +422,35 @@ export const EditorPage: React.FC = () => {
                   
                   {isLoading && (
                     <div className="flex justify-start">
-                      <div className="bg-secondary-100 text-secondary-900 px-4 py-2 rounded-lg">
+                      <div className="bg-muted text-foreground px-4 py-3 rounded-lg">
                         <div className="flex items-center space-x-2">
-                          <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-primary-600"></div>
-                          <span className="text-sm">AI is thinking...</span>
+                          <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-primary"></div>
+                          <span className="font-baskerville text-sm">AI is thinking...</span>
                         </div>
                       </div>
                     </div>
                   )}
                 </div>
 
-                {/* Input */}
-                <div className="p-4 bg-white border-t border-secondary-200">
-                  <div className="flex space-x-2">
+                {/* Input - Fixed at bottom */}
+                <div className="p-4 bg-card border-t border-border flex-shrink-0">
+                  <div className="flex space-x-3">
                     <textarea
                       value={inputMessage}
                       onChange={(e) => setInputMessage(e.target.value)}
-                      onKeyPress={handleKeyPress}
+                      onKeyDown={handleKeyDown}
                       placeholder={session?.scenario_id 
-                        ? "Ask me about your deployment configuration. I can coordinate changes across all files..."
-                        : "Ask me anything about your template configuration..."
+                        ? "Ask me about your deployment configuration..."
+                        : "Ask me about your template configuration..."
                       }
-                      className="flex-1 resize-none input"
+                      className="flex-1 resize-none input text-sm"
                       rows={2}
                       disabled={!isConnected || isLoading}
                     />
                     <button
                       onClick={sendMessage}
                       disabled={!isConnected || isLoading || !inputMessage.trim()}
-                      className="btn btn-primary disabled:opacity-50 disabled:cursor-not-allowed"
+                      className="btn btn-primary disabled:opacity-50 disabled:cursor-not-allowed text-sm px-4 py-2"
                     >
                       Send
                     </button>
