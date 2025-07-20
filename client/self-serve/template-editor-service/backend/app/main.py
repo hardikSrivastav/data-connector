@@ -5,7 +5,7 @@ import os
 from dotenv import load_dotenv
 
 from app.database.database import create_tables
-from app.api import sessions, templates, health, tools
+from app.api import sessions, templates, health, tools, scenarios
 
 load_dotenv()
 
@@ -37,6 +37,7 @@ app.add_middleware(
 app.include_router(health.router, prefix="/health", tags=["health"])
 app.include_router(sessions.router, prefix="/api/sessions", tags=["sessions"])
 app.include_router(templates.router, prefix="/api/templates", tags=["templates"])
+app.include_router(scenarios.router, prefix="/api/scenarios", tags=["scenarios"])
 app.include_router(tools.router, prefix="/api/tools", tags=["tools"])
 
 @app.websocket("/ws/{session_id}")

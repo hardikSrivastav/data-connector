@@ -11,7 +11,7 @@ import {
 } from 'lucide-react';
 import { apiService } from '../services/apiService';
 import { websocketService } from '../services/websocketService';
-import type { Session, WorkspaceData, FileContent, ChatMessage } from '../types';
+import type { Session, WorkspaceData, FileContent, ChatMessage, SessionTemplate } from '../types';
 
 export const EditorPage: React.FC = () => {
   const { sessionId } = useParams<{ sessionId: string }>();
@@ -19,6 +19,7 @@ export const EditorPage: React.FC = () => {
   
   const [session, setSession] = useState<Session | null>(null);
   const [workspaceData, setWorkspaceData] = useState<WorkspaceData | null>(null);
+  const [sessionTemplates, setSessionTemplates] = useState<SessionTemplate[]>([]);
   const [selectedFile, setSelectedFile] = useState<FileContent | null>(null);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [inputMessage, setInputMessage] = useState('');
@@ -46,13 +47,15 @@ export const EditorPage: React.FC = () => {
       setLoading(true);
       setError(null);
       
-      const [sessionData, workspaceData] = await Promise.all([
+      const [sessionData, workspaceData, templates] = await Promise.all([
         apiService.getSession(sessionId),
-        apiService.getWorkspace(sessionId)
+        apiService.getWorkspace(sessionId),
+        apiService.getSessionTemplates(sessionId)
       ]);
       
       setSession(sessionData);
       setWorkspaceData(workspaceData);
+      setSessionTemplates(templates);
       
       // Select first file by default
       if (workspaceData.files.length > 0) {
@@ -101,11 +104,19 @@ export const EditorPage: React.FC = () => {
         websocketService.checkConnectionStatus();
       }, 100);
       
-      // Send initial greeting
+      // Send initial greeting based on session type
+      const isScenario = session?.scenario_id;
+      const scenarioName = session?.metadata?.scenario_name || 'deployment';
+      const templateCount = session?.metadata?.template_count || 1;
+      
+      const greeting = isScenario 
+        ? `Welcome! I'm your AI deployment assistant. I'll help you configure your ${scenarioName.toLowerCase()} with ${templateCount} related files. I can coordinate changes across all files to ensure consistency. What would you like to configure?`
+        : `Welcome! I'm your AI assistant. I'll help you customize your template. What would you like to configure?`;
+      
       const initialMessage: ChatMessage = {
         id: Date.now().toString(),
         role: 'system',
-        content: 'Welcome! I\'m your AI assistant. I\'ll help you customize your authentication template. What would you like to configure?',
+        content: greeting,
         timestamp: new Date().toISOString(),
       };
       
@@ -245,10 +256,13 @@ export const EditorPage: React.FC = () => {
             
             <div>
               <h1 className="text-xl font-bold text-secondary-900">
-                Template Editor
+                {session.scenario_id ? 'Deployment Editor' : 'Template Editor'}
               </h1>
               <p className="text-sm text-secondary-600">
-                {session.template_version} • Session: {session.id.slice(0, 8)}...
+                {session.scenario_id 
+                  ? `${session.metadata?.scenario_name} (${session.metadata?.template_count} files)`
+                  : session.template_version
+                } • Session: {session.id.slice(0, 8)}...
               </p>
             </div>
           </div>
@@ -287,34 +301,93 @@ export const EditorPage: React.FC = () => {
 
       {/* Main Content */}
       <div className="flex-1 flex">
-        {/* Left Sidebar - File List */}
-        <div className="w-64 bg-white border-r border-secondary-200 overflow-y-auto">
+        {/* Left Sidebar - File List with Categories */}
+        <div className="w-72 bg-white border-r border-secondary-200 overflow-y-auto">
           <div className="p-4">
-            <h3 className="font-medium text-secondary-900 mb-3">Files</h3>
-            <div className="space-y-1">
-              {workspaceData.files.map((file) => (
-                <button
-                  key={file.path}
-                  onClick={() => {
-                    setSelectedFile(file);
-                    setActiveTab('files');
-                  }}
-                  className={`w-full text-left p-2 rounded-lg transition-colors ${
-                    selectedFile?.path === file.path
-                      ? 'bg-primary-100 text-primary-800'
-                      : 'hover:bg-secondary-100'
-                  }`}
-                >
-                  <div className="flex items-center space-x-2">
-                    <FileText className="w-4 h-4" />
-                    <span className="text-sm">{file.path}</span>
-                    {file.modified && (
-                      <div className="w-2 h-2 bg-yellow-500 rounded-full"></div>
-                    )}
-                  </div>
-                </button>
-              ))}
+            <div className="flex items-center justify-between mb-3">
+              <h3 className="font-medium text-secondary-900">Files</h3>
+              {session?.scenario_id && (
+                <span className="text-xs bg-blue-100 text-blue-800 px-2 py-1 rounded">
+                  {workspaceData.files.length} files
+                </span>
+              )}
             </div>
+            
+            <div className="space-y-2">
+              {workspaceData.files.map((file) => {
+                const fileExtension = file.path.split('.').pop();
+                const isConfig = file.path.includes('config');
+                const isDocker = file.path.includes('docker-compose') || file.path.includes('compose');
+                const isNginx = file.path.includes('nginx');
+                const isAuth = file.path.includes('auth');
+                
+                let categoryColor = 'text-gray-600';
+                let categoryLabel = 'config';
+                
+                if (isDocker) {
+                  categoryColor = 'text-blue-600';
+                  categoryLabel = 'deployment';
+                } else if (isNginx) {
+                  categoryColor = 'text-purple-600';
+                  categoryLabel = 'infrastructure';
+                } else if (isAuth) {
+                  categoryColor = 'text-red-600';
+                  categoryLabel = 'authentication';
+                } else if (isConfig) {
+                  categoryColor = 'text-green-600';
+                  categoryLabel = 'configuration';
+                }
+                
+                return (
+                  <button
+                    key={file.path}
+                    onClick={() => {
+                      setSelectedFile(file);
+                      setActiveTab('files');
+                    }}
+                    className={`w-full text-left p-3 rounded-lg transition-colors border ${
+                      selectedFile?.path === file.path
+                        ? 'bg-primary-50 border-primary-200 text-primary-800'
+                        : 'border-secondary-200 hover:bg-secondary-50'
+                    }`}
+                  >
+                    <div className="flex items-start space-x-3">
+                      <FileText className={`w-4 h-4 mt-0.5 ${categoryColor}`} />
+                      <div className="flex-1 min-w-0">
+                        <div className="text-sm font-medium text-secondary-900 truncate">
+                          {file.path}
+                        </div>
+                        <div className="flex items-center space-x-2 mt-1">
+                          <span className={`text-xs ${categoryColor}`}>
+                            {categoryLabel}
+                          </span>
+                          <span className="text-xs text-secondary-500">
+                            {fileExtension?.toUpperCase()}
+                          </span>
+                          {file.modified && (
+                            <div className="w-2 h-2 bg-yellow-500 rounded-full"></div>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+            
+            {/* Template Info for Scenarios */}
+            {session?.scenario_id && sessionTemplates.length > 0 && (
+              <div className="mt-6 pt-4 border-t border-secondary-200">
+                <h4 className="text-sm font-medium text-secondary-700 mb-2">Templates Used</h4>
+                <div className="space-y-1">
+                  {sessionTemplates.map((template) => (
+                    <div key={template.id} className="text-xs text-secondary-600">
+                      {template.template_version}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
           </div>
         </div>
 
@@ -342,7 +415,7 @@ export const EditorPage: React.FC = () => {
               }`}
             >
               <MessageSquare className="w-4 h-4 inline mr-2" />
-              AI Assistant
+              {session?.scenario_id ? 'Deployment Assistant' : 'AI Assistant'}
             </button>
           </div>
 
@@ -410,9 +483,12 @@ export const EditorPage: React.FC = () => {
                       value={inputMessage}
                       onChange={(e) => setInputMessage(e.target.value)}
                       onKeyPress={handleKeyPress}
-                      placeholder="Ask me anything about your template configuration..."
+                      placeholder={session?.scenario_id 
+                        ? "Ask me about your deployment configuration. I can coordinate changes across all files..."
+                        : "Ask me anything about your template configuration..."
+                      }
                       className="flex-1 resize-none input"
-                      rows={1}
+                      rows={2}
                       disabled={!isConnected || isLoading}
                     />
                     <button

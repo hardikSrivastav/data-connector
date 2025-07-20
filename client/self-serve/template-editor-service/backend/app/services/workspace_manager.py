@@ -8,6 +8,7 @@ from pathlib import Path
 from datetime import datetime
 
 from app.services.template_manager import TemplateManager
+from app.services.scenario_manager import ScenarioManager
 
 class WorkspaceManager:
     def __init__(self):
@@ -64,6 +65,120 @@ class WorkspaceManager:
             await f.write(json.dumps(metadata, indent=2))
         
         return metadata
+    
+    async def create_scenario_workspace(self, session_id: str, scenario_id: str, template_versions: List[str], variables: Dict[str, str] = None) -> Dict:
+        """Create workspace for a deployment scenario with multiple templates"""
+        workspace_dir = self.workspaces_dir / session_id
+        workspace_dir.mkdir(exist_ok=True)
+        
+        scenario_manager = ScenarioManager()
+        scenario = scenario_manager.get_scenario_by_id(scenario_id)
+        if not scenario:
+            raise ValueError(f"Scenario {scenario_id} not found")
+        
+        # Collect all files from all templates
+        all_workspace_files = []
+        template_metadata = {}
+        shared_variables = variables or {}
+        
+        for template_version in template_versions:
+            # Get template files
+            template_files = self.template_manager.get_template_files(template_version)
+            if not template_files:
+                continue
+            
+            template_info = self.template_manager.get_template_info(template_version)
+            template_metadata[template_version] = {
+                "name": template_info["name"],
+                "category": template_info.get("category"),
+                "format": template_info.get("format"),
+                "hash": template_info["hash"]
+            }
+            
+            # Process template files
+            for template_file in template_files:
+                # Determine output filename based on template format
+                filename = self._get_scenario_filename(template_file["path"], template_info)
+                workspace_file_path = workspace_dir / filename
+                
+                # Apply variable substitutions if provided
+                content = template_file["content"]
+                if shared_variables:
+                    content = self._substitute_variables(content, shared_variables)
+                
+                # Ensure directory exists for nested paths
+                workspace_file_path.parent.mkdir(parents=True, exist_ok=True)
+                
+                # Write file content  
+                async with aiofiles.open(workspace_file_path, 'w') as f:
+                    await f.write(content)
+                
+                all_workspace_files.append({
+                    "path": filename,
+                    "content": content,
+                    "hash": hashlib.sha256(content.encode()).hexdigest(),
+                    "original_template": template_file["path"],
+                    "template_version": template_version,
+                    "template_category": template_info.get("category"),
+                    "template_format": template_info.get("format")
+                })
+        
+        # Create scenario workspace metadata
+        metadata = {
+            "session_id": session_id,
+            "scenario_id": scenario_id,
+            "scenario_name": scenario["name"],
+            "scenario_category": scenario["category"],
+            "template_versions": template_versions,
+            "template_metadata": template_metadata,
+            "created_at": datetime.utcnow().isoformat(),
+            "files": all_workspace_files,
+            "placeholders": self._extract_placeholders(all_workspace_files),
+            "shared_variables": shared_variables,
+            "dependencies": scenario.get("dependencies", {}),
+            "variable_mappings": scenario.get("variable_mappings", {})
+        }
+        
+        # Save metadata
+        metadata_file = workspace_dir / "metadata.json"
+        async with aiofiles.open(metadata_file, 'w') as f:
+            await f.write(json.dumps(metadata, indent=2))
+        
+        return metadata
+    
+    def _get_scenario_filename(self, template_path: str, template_info: Dict) -> str:
+        """Generate appropriate filename for scenario files based on template format"""
+        # Remove .template extension
+        filename = template_path.replace(".template", "")
+        
+        # Handle special cases based on template category and format
+        category = template_info.get("category")
+        format_type = template_info.get("format")
+        
+        if category == "deployment" and format_type == "docker-compose":
+            if "enterprise" in template_info.get("name", "").lower():
+                return "docker-compose-enterprise.yml"
+            else:
+                return "docker-compose.yml"
+        elif category == "infrastructure" and format_type == "nginx":
+            return "nginx/nginx.conf"
+        elif category == "authentication" and format_type == "yaml":
+            return "auth-config.yaml"
+        elif category == "configuration" and format_type == "yaml":
+            return "config.yaml"
+        
+        # Default: use filename as-is
+        return filename
+    
+    def _substitute_variables(self, content: str, variables: Dict[str, str]) -> str:
+        """Substitute {{ VARIABLE }} patterns with actual values"""
+        import re
+        
+        def replace_var(match):
+            var_name = match.group(1).strip()
+            return variables.get(var_name, match.group(0))  # Return original if not found
+        
+        return re.sub(r'{{\s*([^}]+)\s*}}', replace_var, content)
     
     def _extract_placeholders(self, files: List[Dict]) -> List[str]:
         """Extract all {{PLACEHOLDER}} patterns from files"""
@@ -195,13 +310,9 @@ class WorkspaceManager:
         return sorted(files)
     
     async def validate_workspace(self, session_id: str) -> Dict:
-        """Validate workspace files against template schema"""
+        """Validate workspace files against template schema or scenario dependencies"""
         workspace_data = await self.get_workspace_files(session_id)
         metadata = workspace_data["metadata"]
-        schema = metadata.get("schema")
-        
-        if not schema:
-            return {"valid": True, "errors": [], "warnings": []}
         
         errors = []
         warnings = []
@@ -212,6 +323,11 @@ class WorkspaceManager:
             remaining_placeholders = re.findall(r'{{([^}]+)}}', file["content"])
             if remaining_placeholders:
                 errors.append(f"Unfilled placeholders in {file['path']}: {', '.join(remaining_placeholders)}")
+        
+        # For scenario-based workspaces, validate dependencies
+        if "scenario_id" in metadata:
+            scenario_errors = self._validate_scenario_dependencies(workspace_data)
+            errors.extend(scenario_errors)
         
         # Calculate similarity score
         similarity_score = self._calculate_similarity_score(workspace_data["files"], metadata["files"])
@@ -225,6 +341,34 @@ class WorkspaceManager:
             "warnings": warnings,
             "similarity_score": similarity_score
         }
+    
+    def _validate_scenario_dependencies(self, workspace_data: Dict) -> List[str]:
+        """Validate cross-file dependencies for scenario-based workspaces"""
+        errors = []
+        metadata = workspace_data["metadata"]
+        dependencies = metadata.get("dependencies", {})
+        files = workspace_data["files"]
+        
+        # Check cross-file variable consistency
+        cross_file_vars = dependencies.get("cross_file_variables", {})
+        for var_name, expected_templates in cross_file_vars.items():
+            values_found = set()
+            files_with_var = []
+            
+            for file in files:
+                import re
+                # Look for the variable in the file content
+                var_pattern = f'{var_name}:\s*([^\n]+)' # YAML format
+                matches = re.findall(var_pattern, file["content"])
+                if matches:
+                    values_found.update(matches)
+                    files_with_var.append(file["path"])
+            
+            # Check if all files that should have this variable actually have it
+            if len(values_found) > 1:
+                errors.append(f"Inconsistent values for {var_name} across files: {list(values_found)}")
+        
+        return errors
     
     def _calculate_similarity_score(self, current_files: List[Dict], original_files: List[Dict]) -> float:
         """Calculate similarity score between current and original files"""

@@ -1,0 +1,38 @@
+version: '3.8'
+
+services:
+  ceneca-agent:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    image: ceneca-agent:latest
+    container_name: ceneca-agent
+    ports:
+      - "8787:8787"
+    volumes:
+      - ./config.yaml:/root/.data-connector/config.yaml
+    environment:
+      - AGENT_PORT=8787
+      - LLM_API_KEY={{ LLM_API_KEY_VALUE }}
+    restart: unless-stopped
+    networks:
+      - ceneca-network
+      # Uncomment and modify to join your existing networks
+      - data-connector_connector-network
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    # Optional: Add host mappings if needed for DNS resolution
+    extra_hosts:
+      - "{{ POSTGRES_HOST }}:{{ POSTGRES_HOST_IP }}"
+      - "{{ MONGODB_HOST }}:{{ MONGODB_HOST_IP }}"
+      - "{{ QDRANT_HOST }}:{{ QDRANT_HOST_IP }}"
+
+networks:
+  ceneca-network:
+    driver: bridge
+  # Uncomment and modify to reference your existing networks
+  data-connector_connector-network:
+    external: true 

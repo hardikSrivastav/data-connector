@@ -4,6 +4,10 @@ import type {
   Session,
   WorkspaceData,
   SessionCreateRequest,
+  DeploymentScenario,
+  SessionTemplate,
+  ScenarioValidationRequest,
+  ScenarioValidationResponse,
 } from '../types';
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8501';
@@ -82,6 +86,43 @@ class ApiService {
 
   async deleteSession(sessionId: string): Promise<void> {
     await this.axiosInstance.delete(`/api/sessions/${sessionId}`);
+  }
+
+  async getSessionTemplates(sessionId: string): Promise<SessionTemplate[]> {
+    const response = await this.axiosInstance.get(`/api/sessions/${sessionId}/templates`);
+    return response.data;
+  }
+
+  // Scenarios
+  async getScenarios(): Promise<DeploymentScenario[]> {
+    const response = await this.axiosInstance.get('/api/scenarios');
+    return response.data;
+  }
+
+  async getScenario(scenarioId: string): Promise<DeploymentScenario> {
+    const response = await this.axiosInstance.get(`/api/scenarios/${scenarioId}`);
+    return response.data;
+  }
+
+  async getScenariosByCategory(category?: string): Promise<DeploymentScenario[]> {
+    const params = category ? { category } : {};
+    const response = await this.axiosInstance.get('/api/scenarios/by-category', { params });
+    return response.data;
+  }
+
+  async getScenarioCategories(): Promise<string[]> {
+    const response = await this.axiosInstance.get('/api/scenarios/categories');
+    return response.data.categories;
+  }
+
+  async validateScenario(request: ScenarioValidationRequest): Promise<ScenarioValidationResponse> {
+    const response = await this.axiosInstance.post('/api/scenarios/validate', request);
+    return response.data;
+  }
+
+  async getScenarioSchema(scenarioId: string): Promise<any> {
+    const response = await this.axiosInstance.get(`/api/scenarios/${scenarioId}/schema`);
+    return response.data.schema;
   }
 
   // Error handling utility
