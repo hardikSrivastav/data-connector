@@ -98,16 +98,6 @@ export const HomePage: React.FC = () => {
 
   return (
     <div className="space-y-16">
-      {/* Hero Section */}
-      <div className="text-center space-y-6 py-12">
-        <h1 className="text-5xl font-bold font-baskerville gradient-text">
-          AI-Powered Deployment Editor
-        </h1>
-        <p className="text-2xl text-muted-foreground max-w-4xl mx-auto font-baskerville">
-          Transform deployment scenarios into production-ready configurations with intelligent AI guidance
-        </p>
-      </div>
-
       {/* Tab Navigation */}
       <div className="flex space-x-1 bg-muted p-1 rounded-lg max-w-lg mx-auto">
         <button

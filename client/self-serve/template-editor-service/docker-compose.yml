@@ -4,6 +4,9 @@ services:
     build: ./frontend
     ports:
       - "8500:8500"
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
     depends_on:
       - backend
 
