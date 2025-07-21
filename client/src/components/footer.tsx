@@ -84,6 +84,16 @@ export function Footer() {
           <p className="text-base text-muted-foreground font-baskerville">
             © {new Date().getFullYear()} {siteConfig.name}. All rights reserved.
           </p>
+          
+          {/* Company Registration Information */}
+          <div className="text-sm text-muted-foreground font-baskerville max-w-2xl">
+            <p className="mb-2">
+              <strong>Registered Company:</strong> Servurance Technologies Pvt Ltd
+            </p>
+            <p>
+              <strong>Directors:</strong> Shubham Srivastava & Smriti Srivastava
+            </p>
+          </div>
         </div>
       </div>
     </footer>

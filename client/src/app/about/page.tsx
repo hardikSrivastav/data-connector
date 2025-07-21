@@ -198,6 +198,39 @@ export default function AboutPage() {
           </div>
         </div>
 
+        {/* Company Information Section */}
+        <motion.div 
+          className="max-w-4xl mx-auto mb-32"
+          initial={{ opacity: 0, y: 20 }}
+          whileInView={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.5 }}
+          viewport={{ once: true, amount: 0.3 }}
+        >
+          <div className="bg-card/30 backdrop-blur-sm border border-muted rounded-xl p-10 relative overflow-hidden">
+            <div className="absolute -left-28 -top-28 w-56 h-56 rounded-full bg-gradient-to-r from-[#9d4edd]/20 to-[#ff006e]/5 blur-3xl"></div>
+            <div className="absolute -right-28 -bottom-28 w-56 h-56 rounded-full bg-gradient-to-r from-[#3a86ff]/20 to-[#00b4d8]/5 blur-3xl"></div>
+            
+            <h2 className="text-3xl md:text-4xl font-bold mb-8 font-baskerville">Company Information</h2>
+            
+            <div className="space-y-6 relative z-10">
+              <div className="grid md:grid-cols-2 gap-8">
+                <div>
+                  <h3 className="text-xl font-bold mb-4 font-baskerville text-[#9d4edd]">Registered Company</h3>
+                  <p className="text-lg text-muted-foreground font-baskerville">
+                    Servurance Technologies Pvt Ltd
+                  </p>
+                </div>
+                <div>
+                  <h3 className="text-xl font-bold mb-4 font-baskerville text-[#9d4edd]">Directors</h3>
+                  <p className="text-lg text-muted-foreground font-baskerville">
+                    Shubham Srivastava & Smriti Srivastava
+                  </p>
+                </div>
+              </div>
+            </div>
+          </div>
+        </motion.div>
+
         {/* Join Us CTA */}
         <motion.div 
           className="max-w-4xl mx-auto text-center"
