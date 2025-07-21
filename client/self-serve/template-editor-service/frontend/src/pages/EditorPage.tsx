@@ -20,6 +20,62 @@ export const EditorPage: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
+  // Local storage key for this session's chat
+  const getStorageKey = () => `chat_messages_${sessionId}`;
+
+  // Check if localStorage is available
+  const isLocalStorageAvailable = () => {
+    try {
+      const test = '__localStorage_test__';
+      localStorage.setItem(test, test);
+      localStorage.removeItem(test);
+      return true;
+    } catch {
+      return false;
+    }
+  };
+
+  // Save messages to localStorage
+  const saveMessagesToStorage = (messages: ChatMessage[]) => {
+    if (!sessionId || !isLocalStorageAvailable()) return;
+    try {
+      localStorage.setItem(getStorageKey(), JSON.stringify(messages));
+    } catch (error) {
+      console.warn('Failed to save messages to localStorage:', error);
+    }
+  };
+
+  // Load messages from localStorage
+  const loadMessagesFromStorage = (): ChatMessage[] => {
+    if (!sessionId || !isLocalStorageAvailable()) return [];
+    try {
+      const stored = localStorage.getItem(getStorageKey());
+      return stored ? JSON.parse(stored) : [];
+    } catch (error) {
+      console.warn('Failed to load messages from localStorage:', error);
+      return [];
+    }
+  };
+
+  // Clear messages from localStorage
+  const clearMessagesFromStorage = () => {
+    if (!sessionId || !isLocalStorageAvailable()) return;
+    try {
+      localStorage.removeItem(getStorageKey());
+    } catch (error) {
+      console.warn('Failed to clear messages from localStorage:', error);
+    }
+  };
+
+  // Update messages state and persist to localStorage
+  const updateMessages = (newMessages: ChatMessage[] | ((prev: ChatMessage[]) => ChatMessage[])) => {
+    setMessages(prev => {
+      const updated = typeof newMessages === 'function' ? newMessages(prev) : newMessages;
+      saveMessagesToStorage(updated);
+      return updated;
+    });
+  };
+
   useEffect(() => {
     if (sessionId) {
       loadSessionData();
@@ -30,6 +86,8 @@ export const EditorPage: React.FC = () => {
       websocketService.disconnect();
     };
   }, [sessionId]);
+
+
 
   const loadSessionData = async () => {
     if (!sessionId) return;
@@ -63,6 +121,9 @@ export const EditorPage: React.FC = () => {
     if (!sessionId) return;
     
     try {
+      // Load existing messages from localStorage first
+      const existingMessages = loadMessagesFromStorage();
+      
       // Set up event handlers BEFORE connecting
       websocketService.onConnection((connected) => {
         console.log('WebSocket connection status changed:', connected);
@@ -71,6 +132,18 @@ export const EditorPage: React.FC = () => {
 
       websocketService.onMessage((message) => {
         console.log('WebSocket message received:', message);
+        
+        // Filter out initialization messages
+        const initMessages = [
+          'Connected to AI assistant',
+          'AI assistant initialized successfully. How can I help you customize your authentication template?'
+        ];
+        
+        if (initMessages.some(initMsg => message.includes(initMsg))) {
+          console.log('Filtering out initialization message:', message);
+          return;
+        }
+        
         const aiMessage: ChatMessage = {
           id: Date.now().toString(),
           role: 'assistant',
@@ -78,7 +151,7 @@ export const EditorPage: React.FC = () => {
           timestamp: new Date().toISOString(),
         };
         
-        setMessages(prev => [...prev, aiMessage]);
+        updateMessages(prev => [...prev, aiMessage]);
         setIsLoading(false);
         
         // Reload workspace data when AI makes changes
@@ -93,23 +166,28 @@ export const EditorPage: React.FC = () => {
         websocketService.checkConnectionStatus();
       }, 100);
       
-      // Send initial greeting based on session type
-      const isScenario = session?.scenario_id;
-      const scenarioName = session?.metadata?.scenario_name || 'deployment';
-      const templateCount = session?.metadata?.template_count || 1;
-      
-      const greeting = isScenario 
-        ? `Welcome! I'm your AI deployment assistant. I'll help you configure your ${scenarioName.toLowerCase()} with ${templateCount} related files. I can coordinate changes across all files to ensure consistency. What would you like to configure?`
-        : `Welcome! I'm your AI assistant. I'll help you customize your template. What would you like to configure?`;
-      
-      const initialMessage: ChatMessage = {
-        id: Date.now().toString(),
-        role: 'system',
-        content: greeting,
-        timestamp: new Date().toISOString(),
-      };
-      
-      setMessages([initialMessage]);
+      // Only show welcome message if no existing messages
+      if (existingMessages.length === 0) {
+        const isScenario = session?.scenario_id;
+        const scenarioName = session?.metadata?.scenario_name || 'deployment';
+        const templateCount = session?.metadata?.template_count || 1;
+        
+        const greeting = isScenario 
+          ? `Welcome! I'm your AI deployment assistant. I'll help you configure your ${scenarioName.toLowerCase()} with ${templateCount} related files. I can coordinate changes across all files to ensure consistency. What would you like to configure?`
+          : `Welcome! I'm your AI assistant. I'll help you customize your template. What would you like to configure?`;
+        
+        const initialMessage: ChatMessage = {
+          id: Date.now().toString(),
+          role: 'system',
+          content: greeting,
+          timestamp: new Date().toISOString(),
+        };
+        
+        updateMessages([initialMessage]);
+      } else {
+        // Restore existing messages
+        updateMessages(existingMessages);
+      }
       
     } catch (error) {
       console.error('Failed to initialize chat:', error);
@@ -120,7 +198,7 @@ export const EditorPage: React.FC = () => {
         content: 'Failed to connect to AI assistant. Please try refreshing the page.',
         timestamp: new Date().toISOString(),
       };
-      setMessages([errorMessage]);
+      updateMessages([errorMessage]);
     }
   };
 
@@ -134,7 +212,7 @@ export const EditorPage: React.FC = () => {
       timestamp: new Date().toISOString(),
     };
 
-    setMessages(prev => [...prev, userMessage]);
+    updateMessages(prev => [...prev, userMessage]);
     setInputMessage('');
     setIsLoading(true);
 
@@ -148,7 +226,7 @@ export const EditorPage: React.FC = () => {
         content: 'Failed to send message. Please check your connection.',
         timestamp: new Date().toISOString(),
       };
-      setMessages(prev => [...prev, errorMessage]);
+      updateMessages(prev => [...prev, errorMessage]);
       setIsLoading(false);
     }
   };
@@ -183,6 +261,31 @@ export const EditorPage: React.FC = () => {
 
   const handleBackToHome = () => {
     navigate('/');
+  };
+
+  const handleClearChat = () => {
+    if (confirm('Are you sure you want to clear the chat history? This action cannot be undone.')) {
+      clearMessagesFromStorage();
+      updateMessages([]);
+      
+      // Show welcome message again after clearing
+      const isScenario = session?.scenario_id;
+      const scenarioName = session?.metadata?.scenario_name || 'deployment';
+      const templateCount = session?.metadata?.template_count || 1;
+      
+      const greeting = isScenario 
+        ? `Welcome! I'm your AI deployment assistant. I'll help you configure your ${scenarioName.toLowerCase()} with ${templateCount} related files. I can coordinate changes across all files to ensure consistency. What would you like to configure?`
+        : `Welcome! I'm your AI assistant. I'll help you customize your template. What would you like to configure?`;
+      
+      const initialMessage: ChatMessage = {
+        id: Date.now().toString(),
+        role: 'system',
+        content: greeting,
+        timestamp: new Date().toISOString(),
+      };
+      
+      updateMessages([initialMessage]);
+    }
   };
 
   if (loading) {
@@ -263,6 +366,13 @@ export const EditorPage: React.FC = () => {
               className="text-sm text-muted-foreground hover:text-foreground font-baskerville"
             >
               Refresh
+            </button>
+            <button
+              onClick={handleClearChat}
+              className="text-sm text-red-600 hover:text-red-700 font-baskerville"
+              title="Clear chat history"
+            >
+              Clear Chat
             </button>
             <button
               onClick={handleDownload}
@@ -373,7 +483,14 @@ export const EditorPage: React.FC = () => {
                   : 'text-muted-foreground hover:text-foreground'
               }`}
             >
-              {session?.scenario_id ? 'Assistant' : 'AI Assistant'}
+              <div className="flex items-center space-x-2">
+                <span>{session?.scenario_id ? 'Assistant' : 'AI Assistant'}</span>
+                {messages.length > 1 && (
+                  <span className="text-xs bg-muted text-muted-foreground px-1.5 py-0.5 rounded">
+                    {messages.length - 1}
+                  </span>
+                )}
+              </div>
             </button>
           </div>
 
