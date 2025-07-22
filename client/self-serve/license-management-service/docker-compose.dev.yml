@@ -1,0 +1,83 @@
+version: '3.8'
+
+services:
+  # PostgreSQL Database
+  license-db:
+    image: postgres:15
+    container_name: license-management-db
+    environment:
+      POSTGRES_DB: license_db
+      POSTGRES_USER: license_user
+      POSTGRES_PASSWORD: license_pass
+    ports:
+      - "5433:5432"
+    volumes:
+      - license_db_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U license_user -d license_db"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Backend API Service
+  license-backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: license-management-backend
+    environment:
+      DATABASE_URL: postgresql://license_user:license_pass@license-db:5432/license_db
+      PRIVATE_KEY_PATH: /app/keys/private_key.pem
+    ports:
+      - "8010:8000"
+    volumes:
+      - ./backend/keys:/app/keys
+      - ./backend/app:/app/app
+    depends_on:
+      license-db:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    restart: unless-stopped
+
+  # Frontend Development Service (using npm run dev)
+  license-frontend-dev:
+    image: node:18-alpine
+    container_name: license-management-frontend-dev
+    working_dir: /app
+    environment:
+      VITE_API_URL: http://localhost:8010
+    ports:
+      - "3010:5173"  # Vite dev server default port
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+    command: sh -c "npm install && npm run dev -- --host 0.0.0.0 --port 5173"
+    depends_on:
+      - license-backend
+    restart: unless-stopped
+
+  # Redis for caching (optional)
+  license-redis:
+    image: redis:7-alpine
+    container_name: license-management-redis
+    ports:
+      - "6380:6379"
+    volumes:
+      - license_redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+volumes:
+  license_db_data:
+  license_redis_data:
+
+networks:
+  default:
+    name: license-management-network
