@@ -17,7 +17,11 @@ const nextConfig = {
     return [
       {
         source: '/api/chat/:path*',
-        destination: 'http://waitlist-backend:3001/api/chat/:path*',
+        destination: 'http://ceneca-backend:3001/api/chat/:path*',
+      },
+      {
+        source: '/api/deployment/:path*',
+        destination: 'http://ceneca-backend:3001/api/deployment/:path*',
       },
     ];
   },

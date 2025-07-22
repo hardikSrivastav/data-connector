@@ -70,7 +70,7 @@ async def get_scenario_schema(scenario_id: str):
             detail=f"Schema for scenario {scenario_id} not found"
         )
     
-    return TemplateSchemaResponse(version=scenario_id, schema=schema)
+    return TemplateSchemaResponse(version=scenario_id, template_schema=schema)
 
 @router.post("/validate", response_model=ScenarioValidationResponse)
 async def validate_scenario(request: ScenarioValidationRequest):

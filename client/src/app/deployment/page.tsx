@@ -93,6 +93,7 @@ export default function DeploymentPortal() {
   });
   const [isValidated, setIsValidated] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
+  const [deploymentLoading, setDeploymentLoading] = useState(false);
 
   const handleLicenseValidation = async () => {
     if (!licenseKey.trim()) {
@@ -180,6 +181,54 @@ export default function DeploymentPortal() {
     }
   };
 
+  const handleAIDeployment = async (deploymentType: string) => {
+    setDeploymentLoading(true);
+    
+    try {
+      // Create session with template editor service
+      const response = await fetch('/api/deployment/create', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          userId: customerInfo.email || 'anonymous',
+          deploymentType: deploymentType,
+          requirements: {
+            company: customerInfo.company,
+            environment: customerInfo.environment,
+            licenseKey: licenseKey
+          },
+          context: {
+            source: 'deployment-portal',
+            timestamp: new Date().toISOString()
+          }
+        })
+      });
+
+      if (!response.ok) {
+        throw new Error('Failed to create deployment session');
+      }
+
+      const data = await response.json();
+      
+      if (data.success) {
+        toast.success("Redirecting to AI Template Editor...");
+        
+        // Redirect to template editor (will be subdomain in production)
+        window.open(data.editorUrl, '_blank');
+      } else {
+        throw new Error(data.error);
+      }
+      
+    } catch (error) {
+      console.error('Error creating AI deployment:', error);
+      toast.error("Failed to launch AI Template Editor. Please try again.");
+    } finally {
+      setDeploymentLoading(false);
+    }
+  };
+
   return (
     <div className="min-h-screen bg-gradient-to-b from-background via-background/95 to-muted/10">
       <div className="container mx-auto px-4 py-8 pt-32">
@@ -190,13 +239,30 @@ export default function DeploymentPortal() {
             <p className="text-lg text-muted-foreground font-baskerville">
               Download your enterprise deployment package for on-premise installation
             </p>
-            <div className="mt-4">
+            <div className="mt-4 flex flex-col sm:flex-row gap-4 justify-center">
               <Link href="/deployment/chat">
                 <Button variant="outline" className="font-baskerville hover:bg-[#7b35b8] hover:text-white transition-all duration-300">
                   <MessageCircle className="h-4 w-4 mr-2" />
-                  Try Our AI Configuration Assistant
+                  AI Configuration Assistant
                 </Button>
               </Link>
+              <Button 
+                onClick={() => handleAIDeployment('basic')}
+                disabled={deploymentLoading}
+                className="font-baskerville bg-[#7b35b8] hover:bg-[#6a2d9f] text-white transition-all duration-300 disabled:opacity-50"
+              >
+                {deploymentLoading ? (
+                  <div className="flex items-center gap-2">
+                    <Clock className="h-4 w-4 animate-spin" />
+                    Launching Editor...
+                  </div>
+                ) : (
+                  <>
+                    <MessageCircle className="h-4 w-4 mr-2" />
+                    Smart Template Editor
+                  </>
+                )}
+              </Button>
             </div>
           </div>
 

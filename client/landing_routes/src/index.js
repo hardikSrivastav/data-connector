@@ -5,6 +5,7 @@ const waitlistRoutes = require('./routes/waitlistRoutes');
 const paymentRoutes = require('./routes/paymentRoutes');
 const adminRoutes = require('./routes/adminRoutes');
 const chatRoutes = require('./routes/chatRoutes');
+const deploymentRoutes = require('./routes/deploymentRoutes');
 const { sequelize } = require('./config/database');
 
 // Redis services and cleanup
@@ -23,6 +24,7 @@ app.use('/api/waitlist', waitlistRoutes);
 app.use('/api/payments', paymentRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api/chat', chatRoutes);
+app.use('/api/deployment', deploymentRoutes);
 
 // Health check
 app.get('/health', (req, res) => {

@@ -28,6 +28,7 @@ class SessionCreate(BaseModel):
     template_version: Optional[str] = None  # For backwards compatibility
     project_context: Optional[Dict[str, Any]] = None
     variables: Optional[Dict[str, str]] = None  # Initial variable values
+    callback_url: Optional[str] = None  # For main app integration
 
 class SessionResponse(BaseModel):
     id: str
@@ -54,7 +55,7 @@ class TemplateVersionResponse(BaseModel):
     name: str
     description: Optional[str] = None
     hash: str
-    schema: Optional[Dict[str, Any]] = None
+    template_schema: Optional[Dict[str, Any]] = None
     created_at: datetime
     category: Optional[str] = None
     format: Optional[str] = None
@@ -97,7 +98,7 @@ class TemplateCategoriesResponse(BaseModel):
 
 class TemplateSchemaResponse(BaseModel):
     version: str
-    schema: Dict[str, Any]
+    template_schema: Dict[str, Any]
 
 class DeploymentScenario(BaseModel):
     id: str
@@ -126,3 +127,24 @@ class SessionTemplateResponse(BaseModel):
     status: str
     variables: Optional[Dict[str, str]] = None
     created_at: datetime
+
+class SessionHandoffRequest(BaseModel):
+    user_id: str
+    deployment_type: str  # "basic", "enterprise", "custom"
+    requirements: Dict[str, Any]
+    callback_url: str
+    context: Optional[Dict[str, Any]] = None
+
+class SessionHandoffResponse(BaseModel):
+    session_id: str
+    editor_url: str
+    success: bool
+    message: str
+
+class DeploymentCompleteNotification(BaseModel):
+    session_id: str
+    user_id: str
+    status: str  # "completed", "failed"
+    generated_files: List[FileContent]
+    metadata: Dict[str, Any]
+    download_url: Optional[str] = None

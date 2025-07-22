@@ -67,7 +67,7 @@ class TemplateVersion(Base):
     name = Column(String, nullable=False)
     description = Column(Text)
     hash = Column(String, nullable=False)
-    schema = Column(JSON)
+    template_schema = Column(JSON)
     category = Column(String)  # authentication, deployment, infrastructure, configuration
     format = Column(String)   # yaml, docker-compose, nginx, javascript, env
     created_at = Column(DateTime, default=datetime.utcnow)

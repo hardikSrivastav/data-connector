@@ -342,9 +342,6 @@ export const EditorPage: React.FC = () => {
               ← Back
             </button>
             <div className="text-sm font-baskerville">
-              <span className="gradient-text font-semibold">
-                {session.scenario_id ? 'Deployment Editor' : 'Template Editor'}
-              </span>
               <span className="text-muted-foreground ml-2">
                 {session.scenario_id 
                   ? `${session.metadata?.scenario_name} (${session.metadata?.template_count} files)`

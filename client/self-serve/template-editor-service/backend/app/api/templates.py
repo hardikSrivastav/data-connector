@@ -25,7 +25,7 @@ async def list_templates():
             name=template["name"],
             description=template.get("description"),
             hash=template["hash"],
-            schema=template.get("schema"),
+            template_schema=template.get("schema"),
             created_at=template["created_at"],
             category=template.get("category"),
             format=template.get("format")
@@ -50,7 +50,7 @@ async def get_template(version: str):
         name=template["name"],
         description=template.get("description"),
         hash=template["hash"],
-        schema=template.get("schema"),
+        template_schema=template.get("schema"),
         created_at=template["created_at"]
     )
 
@@ -91,7 +91,7 @@ async def list_templates_by_category(category: Optional[str] = Query(None, descr
             name=template["name"],
             description=template.get("description"),
             hash=template["hash"],
-            schema=template.get("schema"),
+            template_schema=template.get("schema"),
             created_at=template["created_at"],
             category=template.get("category"),
             format=template.get("format")
@@ -119,4 +119,4 @@ async def get_template_schema(version: str):
             detail=f"Schema for template version {version} not found"
         )
     
-    return TemplateSchemaResponse(version=version, schema=schema)
+    return TemplateSchemaResponse(version=version, template_schema=schema)

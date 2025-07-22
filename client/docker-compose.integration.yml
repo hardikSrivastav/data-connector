@@ -1,0 +1,131 @@
+version: '3.8'
+
+networks:
+  ceneca-integration:
+    driver: bridge
+
+services:
+  # Main Application Services
+  frontend:
+    build:
+      context: .
+      dockerfile: docker/frontend.development.Dockerfile
+    container_name: ceneca-frontend
+    ports:
+      - "3000:3000"
+    environment:
+      - NODE_ENV=development
+      - NEXT_PUBLIC_API_URL=http://localhost:3001/api
+    networks:
+      - ceneca-integration
+    volumes:
+      - ./src:/app/src
+      - ./public:/app/public
+      - /app/node_modules
+    depends_on:
+      - backend
+    restart: unless-stopped
+
+  backend:
+    build:
+      context: .
+      dockerfile: docker/backend.Dockerfile
+    container_name: ceneca-backend
+    ports:
+      - "3001:3001"
+    environment:
+      - PORT=3001
+      - DB_HOST=postgres
+      - DB_PORT=5432
+      - DB_USER=postgres
+      - DB_PASSWORD=postgres
+      - DB_NAME=waitlist_db
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - ENABLE_REDIS=true
+      - RAZORPAY_KEY_ID=${RAZORPAY_KEY_ID}
+      - RAZORPAY_KEY_SECRET=${RAZORPAY_KEY_SECRET}
+      - JWT_SECRET=admin-secret-key-change-in-production
+      # Integration environment variables
+      - TEMPLATE_SERVICE_URL=http://template-editor-backend:8000
+      - MAIN_APP_URL=http://localhost:3001
+    networks:
+      - ceneca-integration
+    depends_on:
+      - postgres
+      - redis
+    volumes:
+      - ./landing_routes:/app
+      - /app/node_modules
+    restart: unless-stopped
+
+  postgres:
+    image: postgres:14-alpine
+    container_name: ceneca-postgres
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: waitlist_db
+    ports:
+      - "5460:5432"
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+    networks:
+      - ceneca-integration
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    container_name: ceneca-redis
+    ports:
+      - "6379:6379"
+    networks:
+      - ceneca-integration
+    restart: unless-stopped
+
+  # Template Editor Services
+  template-editor-frontend:
+    build: ./self-serve/template-editor-service/frontend
+    container_name: template-editor-frontend
+    ports:
+      - "8500:8500"
+    environment:
+      - VITE_API_URL=http://localhost:8501
+      - VITE_WS_URL=ws://localhost:8501
+    networks:
+      - ceneca-integration
+    volumes:
+      - ./self-serve/template-editor-service/frontend:/app
+      - /app/node_modules
+    depends_on:
+      - template-editor-backend
+    restart: unless-stopped
+
+  template-editor-backend:
+    build: ./self-serve/template-editor-service/backend
+    container_name: template-editor-backend
+    ports:
+      - "8501:8000"
+    environment:
+      - DATABASE_URL=sqlite:///./app.db
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - CORS_ORIGINS=http://localhost:8500,http://localhost:3000
+      - TEMPLATE_EDITOR_BASE_URL=http://localhost:8500
+    networks:
+      - ceneca-integration
+    volumes:
+      - ./self-serve/template-editor-service/backend:/app
+      - ./self-serve/template-editor-service/backend/templates:/app/templates
+      - ./self-serve/template-editor-service/backend/workspaces:/app/workspaces
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+    restart: unless-stopped
+
+volumes:
+  pg_data:
+
+# Health checks and service discovery
+x-healthcheck: &healthcheck
+  test: ["CMD", "curl", "-f", "http://localhost:3000/health"]
+  interval: 30s
+  timeout: 10s
+  retries: 3

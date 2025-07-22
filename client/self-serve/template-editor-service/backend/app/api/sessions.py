@@ -287,3 +287,44 @@ async def get_session_templates(session_id: str, db: Session = Depends(get_db)):
         ]
     
     return []
+
+@router.get("/{session_id}/download")
+async def download_session_files(session_id: str, db: Session = Depends(get_db)):
+    """Download all generated files as ZIP for integration"""
+    session = db.query(SessionModel).filter(SessionModel.id == session_id).first()
+    
+    if not session:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Session not found"
+        )
+    
+    try:
+        workspace_manager = WorkspaceManager()
+        workspace_data = await workspace_manager.get_workspace_files(session_id)
+        
+        # For now, return JSON. In production, you'd want to create a ZIP file
+        from fastapi.responses import JSONResponse
+        return JSONResponse(
+            content={
+                "session_id": session_id,
+                "files": [
+                    {
+                        "path": file.path,
+                        "content": file.content,
+                        "hash": file.hash
+                    } for file in workspace_data["files"]
+                ],
+                "metadata": workspace_data["metadata"],
+                "download_format": "json"
+            },
+            headers={
+                "Content-Disposition": f"attachment; filename=deployment-{session_id}.json"
+            }
+        )
+        
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to prepare download: {str(e)}"
+        )

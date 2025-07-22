@@ -283,7 +283,7 @@ CRITICAL: Always use the tools to examine the workspace and understand cross-fil
         
         # Call Claude with tools
         response = self.client.messages.create(
-            model="claude-3-sonnet-20240229",
+            model="claude-3-5-sonnet-20241022",
             max_tokens=4000,
             system=self.system_prompt,
             messages=messages,
@@ -313,7 +313,7 @@ CRITICAL: Always use the tools to examine the workspace and understand cross-fil
             print(f"Making follow-up API call with {len(tool_results)} tool results")
             try:
                 tool_response = self.client.messages.create(
-                    model="claude-3-sonnet-20240229",
+                    model="claude-3-5-sonnet-20241022",
                     max_tokens=4000,
                     system=self.system_prompt,
                     messages=messages + [
@@ -355,7 +355,7 @@ CRITICAL: Always use the tools to examine the workspace and understand cross-fil
                     ]
                     
                     final_response = self.client.messages.create(
-                        model="claude-3-sonnet-20240229",
+                        model="claude-3-5-sonnet-20241022",
                         max_tokens=4000,
                         system=self.system_prompt,
                         messages=updated_messages,

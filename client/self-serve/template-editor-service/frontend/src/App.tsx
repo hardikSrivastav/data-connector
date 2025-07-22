@@ -5,6 +5,17 @@ import { EditorPage } from './pages/EditorPage';
 function AppContent() {
   const location = useLocation();
   const isEditorPage = location.pathname.startsWith('/editor/');
+  
+  // Check for direct session access via URL params (integration mode)
+  const urlParams = new URLSearchParams(location.search);
+  const sessionId = urlParams.get('session_id');
+  const isIntegration = urlParams.get('integration') === 'true';
+  
+  // If we have session_id in URL params, redirect to editor
+  if (sessionId && !isEditorPage) {
+    window.location.href = `/editor/${sessionId}${isIntegration ? '?integration=true' : ''}`;
+    return <div>Redirecting to editor...</div>;
+  }
 
   if (isEditorPage) {
     return (

@@ -5,7 +5,7 @@ import os
 from dotenv import load_dotenv
 
 from app.database.database import create_tables
-from app.api import sessions, templates, health, tools, scenarios
+from app.api import sessions, templates, health, tools, scenarios, integration
 
 load_dotenv()
 
@@ -27,7 +27,7 @@ app = FastAPI(
 # CORS configuration
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=os.getenv("CORS_ORIGINS", "http://localhost:8500").split(","),
+    allow_origins=os.getenv("CORS_ORIGINS", "http://localhost:8500,http://localhost:3000").split(","),
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -39,6 +39,7 @@ app.include_router(sessions.router, prefix="/api/sessions", tags=["sessions"])
 app.include_router(templates.router, prefix="/api/templates", tags=["templates"])
 app.include_router(scenarios.router, prefix="/api/scenarios", tags=["scenarios"])
 app.include_router(tools.router, prefix="/api/tools", tags=["tools"])
+app.include_router(integration.router, prefix="/api/integration", tags=["integration"])
 
 @app.websocket("/ws/{session_id}")
 async def websocket_endpoint(websocket: WebSocket, session_id: str):
