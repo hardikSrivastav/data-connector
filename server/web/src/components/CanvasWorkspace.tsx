@@ -53,35 +53,35 @@ const isChainRelevantToCanvas = (
   
   // Method 1: Direct blockId match to canvas block
   if (chain.blockId === canvasBlock.id) {
-    console.log(`🎯 Reasoning chain matched by blockId: ${chain.blockId} === ${canvasBlock.id}`);
+    console.log(`Reasoning chain matched by blockId: ${chain.blockId} === ${canvasBlock.id}`);
     return true;
   }
   
   // Method 2: SessionId/threadId match
   if (chain.sessionId && canvasData?.threadId && chain.sessionId === canvasData.threadId) {
-    console.log(`🎯 Reasoning chain matched by sessionId: ${chain.sessionId} === ${canvasData.threadId}`);
+    console.log(`Reasoning chain matched by sessionId: ${chain.sessionId} === ${canvasData.threadId}`);
     return true;
   }
   
   // Method 3: Original query match (exact match)
   if (chain.originalQuery && canvasData?.originalQuery && chain.originalQuery === canvasData.originalQuery) {
-    console.log(`🎯 Reasoning chain matched by originalQuery: "${chain.originalQuery}" === "${canvasData.originalQuery}"`);
+    console.log(`Reasoning chain matched by originalQuery: "${chain.originalQuery}" === "${canvasData.originalQuery}"`);
     return true;
   }
   
   // Method 4: Check if chain's pageId matches this canvas workspace page
   if ((chain as any).pageId === canvasPageId) {
-    console.log(`🎯 Reasoning chain matched by pageId: ${(chain as any).pageId} === ${canvasPageId}`);
+    console.log(`Reasoning chain matched by pageId: ${(chain as any).pageId} === ${canvasPageId}`);
     return true;
   }
   
   // Method 5: Check if chain's originalPageId matches canvas workspace page
   if ((chain as any).originalPageId === canvasPageId) {
-    console.log(`🎯 Reasoning chain matched by originalPageId: ${(chain as any).originalPageId} === ${canvasPageId}`);
+    console.log(`Reasoning chain matched by originalPageId: ${(chain as any).originalPageId} === ${canvasPageId}`);
     return true;
   }
   
-  console.log(`🎯 Reasoning chain NOT relevant:`, {
+  console.log(`Reasoning chain NOT relevant:`, {
     chainBlockId: chain.blockId,
     canvasBlockId: canvasBlock.id,
     chainSessionId: chain.sessionId,
@@ -123,7 +123,7 @@ export const CanvasWorkspace = ({
 
   // ✅ NEW: Log visualizationData state changes
   useEffect(() => {
-    console.log('📊📊📊 VISUALIZATION DATA STATE CHANGE 📊📊📊');
+    console.log('VISUALIZATION DATA STATE CHANGE');
     console.log('  - New visualizationData length:', visualizationData.length);
     if (visualizationData.length > 0) {
       console.log('  - Visualization data items:');
@@ -1242,11 +1242,11 @@ export const CanvasWorkspace = ({
   };
 
   return (
-    <div className="flex h-screen w-full bg-white dark:bg-gray-900">
+    <div className="flex h-screen w-full bg-white dark:bg-zinc-900">
       {/* Main Content Area - Full Width */}
       <div className="flex-1 flex flex-col">
         {/* Header */}
-        <div className="border-b border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900">
+        <div className="border-b border-gray-200 dark:border-gray-700 bg-white dark:bg-zinc-900">
           <div className="flex items-center justify-between p-4">
             <div className="flex items-center gap-4">
               <Button

@@ -1,82 +1,108 @@
-import axios from 'axios'
-import type { Customer, License, LicenseCreate, ValidationRequest, ValidationResponse } from '../types'
+const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8020'
 
-const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8010'
+// API client with error handling
+class ApiClient {
+  private baseUrl: string
 
-const api = axios.create({
-  baseURL: API_BASE_URL,
-  headers: {
-    'Content-Type': 'application/json',
-  },
-})
+  constructor(baseUrl: string) {
+    this.baseUrl = baseUrl
+  }
 
-// Health checks
-export const healthApi = {
-  checkHealth: () => api.get('/health/'),
-  checkDbHealth: () => api.get('/health/db'),
+  private async request<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
+    const url = `${this.baseUrl}${endpoint}`
+    
+    const response = await fetch(url, {
+      headers: {
+        'Content-Type': 'application/json',
+        ...options.headers,
+      },
+      ...options,
+    })
+
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => ({ message: 'Unknown error' }))
+      throw new Error(errorData.message || `HTTP ${response.status}`)
+    }
+
+    return response.json()
+  }
+
+  // Customer endpoints
+  async createCustomer(data: { company_name: string; contact_email: string; industry?: string }) {
+    return this.request('/api/customers/', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    })
+  }
+
+  async getCustomer(customerId: string) {
+    return this.request(`/api/customers/${customerId}`)
+  }
+
+  async getCustomerDashboard(customerId: string) {
+    return this.request(`/api/customers/${customerId}/dashboard`)
+  }
+
+  // License endpoints
+  async createLicense(data: { customer_id: string; plan: string; trial_days?: number }) {
+    return this.request('/api/licenses/', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    })
+  }
+
+  async getLicenses(customerId?: string) {
+    const params = customerId ? `?customer_id=${customerId}` : ''
+    return this.request(`/api/licenses/${params}`)
+  }
+
+  async getLicense(licenseId: string) {
+    return this.request(`/api/licenses/${licenseId}`)
+  }
+
+  async downloadLicense(licenseId: string) {
+    return this.request(`/api/licenses/${licenseId}/download`)
+  }
+
+  async validateLicense(data: { license_key: string; user_id: string; deployment_id?: string }) {
+    return this.request('/api/licenses/validate', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    })
+  }
+
+  // Telemetry endpoints
+  async getTelemetryReports(params: { 
+    customer_id?: string; 
+    license_key?: string; 
+    days?: number;
+    skip?: number;
+    limit?: number;
+  } = {}) {
+    const searchParams = new URLSearchParams()
+    Object.entries(params).forEach(([key, value]) => {
+      if (value !== undefined) {
+        searchParams.append(key, value.toString())
+      }
+    })
+    
+    const query = searchParams.toString()
+    return this.request(`/api/telemetry/${query ? `?${query}` : ''}`)
+  }
+
+  async getUsageAnalytics(customerId: string, days: number = 30) {
+    return this.request(`/api/telemetry/analytics/${customerId}?days=${days}`)
+  }
+
+  async getBillingData(customerId: string, month?: string) {
+    const params = month ? `?month=${month}` : ''
+    return this.request(`/api/telemetry/billing/${customerId}${params}`)
+  }
+
+  // Health check
+  async healthCheck() {
+    return this.request('/health/')
+  }
 }
 
-// Customer API
-export const customerApi = {
-  getCustomers: (skip = 0, limit = 100) => 
-    api.get<Customer[]>('/api/customers/', { params: { skip, limit } }),
-  
-  getCustomer: (customerId: string) => 
-    api.get<Customer>(`/api/customers/${customerId}`),
-  
-  createCustomer: (customer: Omit<Customer, 'id' | 'created_at' | 'updated_at'>) => 
-    api.post<Customer>('/api/customers/', customer),
-  
-  updateCustomer: (customerId: string, customer: Omit<Customer, 'id' | 'created_at' | 'updated_at'>) => 
-    api.put<Customer>(`/api/customers/${customerId}`, customer),
-  
-  deleteCustomer: (customerId: string) => 
-    api.delete(`/api/customers/${customerId}`),
-}
-
-// License API
-export const licenseApi = {
-  getLicenses: (skip = 0, limit = 100, customerId?: string) => 
-    api.get<License[]>('/api/licenses/', { 
-      params: { skip, limit, customer_id: customerId } 
-    }),
-  
-  getLicense: (licenseId: string) => 
-    api.get<License>(`/api/licenses/${licenseId}`),
-  
-  createLicense: (license: LicenseCreate) => 
-    api.post<License>('/api/licenses/', license),
-  
-  revokeLicense: (licenseId: string, reason: string) => 
-    api.put(`/api/licenses/${licenseId}/revoke`, null, { 
-      params: { reason } 
-    }),
-  
-  getLicenseToken: (licenseId: string) => 
-    api.get<{ license_id: string; license_token: string; expires_at?: string }>
-      (`/api/licenses/${licenseId}/token`),
-}
-
-// Validation API
-export const validationApi = {
-  validateLicense: (request: ValidationRequest) => 
-    api.post<ValidationResponse>('/api/validation/validate', request),
-  
-  getPublicKey: () => 
-    api.get<{ public_key: string; algorithm: string; key_id: string }>
-      ('/api/validation/public-key'),
-  
-  reportUsage: (data: {
-    license_id: string
-    event_type: string
-    event_data?: Record<string, any>
-    user_count?: number
-    resource_usage?: Record<string, any>
-    client_info?: Record<string, any>
-  }) => api.post('/api/validation/usage', data),
-  
-  getLicenseStatus: (licenseId: string) => 
-    api.get(`/api/validation/license/${licenseId}/status`),
-}
-
-export default api
+export const apiClient = new ApiClient(API_BASE_URL)

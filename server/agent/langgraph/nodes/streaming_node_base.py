@@ -19,7 +19,7 @@ class StreamingNodeBase:
         # Add output integration
         self.output_integrator = get_output_integrator()
         
-        logger.info(f"🔄 [STREAMING_NODE] Initialized {node_id} with output aggregation")
+        logger.info(f"[STREAMING_NODE] Initialized {node_id} with output aggregation")
     
     # ... existing methods ...
     
@@ -36,10 +36,10 @@ class StreamingNodeBase:
                 node_execution_result=execution_result
             )
             
-            logger.debug(f"🔄 [STREAMING_NODE] Captured outputs for {self.node_id}")
+            logger.debug(f"[STREAMING_NODE] Captured outputs for {self.node_id}")
             
         except Exception as e:
-            logger.warning(f"🔄 [STREAMING_NODE] Failed to capture outputs for {self.node_id}: {e}")
+            logger.warning(f"[STREAMING_NODE] Failed to capture outputs for {self.node_id}: {e}")
     
     def create_result_chunk(
         self,
@@ -85,7 +85,7 @@ class StreamingNodeBase:
                 chunk["metadata"]["output_captured"] = True
                 
             except Exception as e:
-                logger.warning(f"🔄 [STREAMING_NODE] Failed to schedule output capture: {e}")
+                logger.warning(f"[STREAMING_NODE] Failed to schedule output capture: {e}")
         
         return chunk
     
@@ -132,6 +132,6 @@ class StreamingNodeBase:
                 )
                 
             except Exception as e:
-                logger.warning(f"🔄 [STREAMING_NODE] Failed to capture progress event: {e}")
+                logger.warning(f"[STREAMING_NODE] Failed to capture progress event: {e}")
         
         return chunk 

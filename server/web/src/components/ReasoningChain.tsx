@@ -87,7 +87,7 @@ export const ReasoningChain = ({
   const canRetry = data.status === 'failed' || data.status === 'cancelled';
 
   return (
-    <div className="border border-gray-200 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-800">
+    <div className="border border-gray-200 dark:border-gray-700 rounded-lg bg-white dark:bg-zinc-900">
       {/* Header */}
       <div className="flex items-center justify-between p-4 border-b border-gray-200 dark:border-gray-700">
         <div className="flex items-center gap-3">
@@ -188,7 +188,7 @@ export const ReasoningChain = ({
               {/* Events list */}
               <div className="max-h-96 overflow-y-auto space-y-2">
                 {displayEvents.map((event, index) => (
-                  <div key={index} className="flex items-start gap-3 p-3 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700/50 transition-colors">
+                  <div key={index} className="flex items-start gap-3 p-3 rounded-lg hover:bg-gray-50 dark:hover:bg-zinc-800/50 transition-colors">
                     <div className="flex-shrink-0 mt-0.5">
                     {getEventIcon(event.type)}
                   </div>
@@ -210,7 +210,7 @@ export const ReasoningChain = ({
                           <summary className="text-xs text-gray-500 dark:text-gray-400 cursor-pointer hover:text-gray-700 dark:hover:text-gray-200">
                             View details
                         </summary>
-                          <pre className="text-xs text-gray-500 dark:text-gray-400 mt-1 p-2 bg-gray-100 dark:bg-gray-700 rounded overflow-auto max-h-32">
+                          <pre className="text-xs text-gray-500 dark:text-gray-400 mt-1 p-2 bg-gray-100 dark:bg-zinc-800 rounded overflow-auto max-h-32">
                           {JSON.stringify(event.metadata, null, 2)}
                         </pre>
                       </details>

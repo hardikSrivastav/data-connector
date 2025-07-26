@@ -422,6 +422,36 @@ def authenticate(
     asyncio.run(run())
 
 @app.command()
+def reset_auth(
+    db_type: str = typer.Argument(..., help="Database type to reset authentication for ('slack', 'shopify', 'shiprocket', 'payu', 'easebuzz', 'ga4', etc.)"),
+    force: bool = typer.Option(False, "--force", "-f", help="Force reset without confirmation")
+):
+    """Reset authentication for various database types"""
+    
+    async def run():
+        if not force:
+            confirm = input(f"Are you sure you want to reset authentication for {db_type}? (y/N): ").strip().lower()
+            if confirm != 'y':
+                console.print("[yellow]Reset cancelled[/yellow]")
+                return
+        
+        if db_type.lower() == "payu":
+            await reset_payu_auth()
+        elif db_type.lower() == "easebuzz":
+            await reset_easebuzz_auth()
+        elif db_type.lower() == "shopify":
+            await reset_shopify_auth()
+        elif db_type.lower() == "slack":
+            await reset_slack_auth()
+        elif db_type.lower() == "shiprocket":
+            await reset_shiprocket_auth()
+        else:
+            console.print(f"[red]Unsupported database type: {db_type}[/red]")
+            console.print("Supported types: slack, shopify, shiprocket, payu, easebuzz, ga4")
+    
+    asyncio.run(run())
+
+@app.command()
 def test_connection(
     db_uri: Optional[str] = typer.Option(None, "--uri", "-u", help="Database connection URI (overrides settings)"),
     db_type: Optional[str] = typer.Option(None, "--type", "-t", help="Database type ('postgres', 'mongodb', 'qdrant', 'shopify', 'shiprocket', 'payu', 'easebuzz', 'ga4', etc.)")
@@ -2101,7 +2131,9 @@ async def payu_auth(args):
     
     try:
         # Test authentication
-        adapter = PayUAdapter("https://info.payu.in", merchant_id=merchant_id, environment=environment)
+        # Use correct PayU URLs based on environment
+        base_url = "https://test.payu.in" if environment == "test" else "https://secure.payu.in"
+        adapter = PayUAdapter(base_url, merchant_id=merchant_id, environment=environment)
         
         with console.status("[bold green]Authenticating with PayU..."):
             success = await adapter.authenticate(merchant_key, salt, merchant_id, environment)
@@ -2257,6 +2289,122 @@ async def shiprocket_auth(args):
         # Clean up the adapter
         if 'adapter' in locals():
             await adapter.close()
+
+async def reset_payu_auth():
+    """Reset PayU authentication by clearing stored credentials"""
+    from agent.db.adapters.payu import PayUAdapter
+    from pathlib import Path
+    
+    try:
+        # Create a temporary adapter to access the reset method
+        adapter = PayUAdapter("https://test.payu.in")
+        
+        console.print("Resetting PayU authentication...")
+        success = adapter.reset_authentication()
+        
+        if success:
+            console.print("[green]✅ PayU authentication reset successful![/green]")
+            console.print("You can now re-authenticate using: python -m agent.cmd.query authenticate payu")
+            return True
+        else:
+            console.print("[red]❌ PayU authentication reset failed[/red]")
+            return False
+            
+    except Exception as e:
+        console.print(f"[red]❌ Error resetting PayU authentication: {e}[/red]")
+        return False
+
+async def reset_easebuzz_auth():
+    """Reset Easebuzz authentication by clearing stored credentials"""
+    from pathlib import Path
+    import os
+    
+    try:
+        # Remove credentials file
+        credentials_file = Path.home() / ".data-connector" / "easebuzz_credentials.json"
+        
+        if credentials_file.exists():
+            credentials_file.unlink()
+            console.print("[green]✅ Easebuzz credentials file removed[/green]")
+        else:
+            console.print("[yellow]⚠️ No Easebuzz credentials file found[/yellow]")
+        
+        console.print("Easebuzz authentication reset successful!")
+        console.print("You can now re-authenticate using: python -m agent.cmd.query authenticate easebuzz")
+        return True
+        
+    except Exception as e:
+        console.print(f"[red]❌ Error resetting Easebuzz authentication: {e}[/red]")
+        return False
+
+async def reset_shopify_auth():
+    """Reset Shopify authentication by clearing stored credentials"""
+    from pathlib import Path
+    import os
+    
+    try:
+        # Remove credentials file
+        credentials_file = Path.home() / ".data-connector" / "shopify_credentials.json"
+        
+        if credentials_file.exists():
+            credentials_file.unlink()
+            console.print("[green]✅ Shopify credentials file removed[/green]")
+        else:
+            console.print("[yellow]⚠️ No Shopify credentials file found[/yellow]")
+        
+        console.print("Shopify authentication reset successful!")
+        console.print("You can now re-authenticate using: python -m agent.cmd.query authenticate shopify --shop your-store")
+        return True
+        
+    except Exception as e:
+        console.print(f"[red]❌ Error resetting Shopify authentication: {e}[/red]")
+        return False
+
+async def reset_slack_auth():
+    """Reset Slack authentication by clearing stored credentials"""
+    from pathlib import Path
+    import os
+    
+    try:
+        # Remove credentials file
+        credentials_file = Path.home() / ".data-connector" / "slack_credentials.json"
+        
+        if credentials_file.exists():
+            credentials_file.unlink()
+            console.print("[green]✅ Slack credentials file removed[/green]")
+        else:
+            console.print("[yellow]⚠️ No Slack credentials file found[/yellow]")
+        
+        console.print("Slack authentication reset successful!")
+        console.print("You can now re-authenticate using: python -m agent.cmd.query authenticate slack")
+        return True
+        
+    except Exception as e:
+        console.print(f"[red]❌ Error resetting Slack authentication: {e}[/red]")
+        return False
+
+async def reset_shiprocket_auth():
+    """Reset Shiprocket authentication by clearing stored credentials"""
+    from pathlib import Path
+    import os
+    
+    try:
+        # Remove credentials file
+        credentials_file = Path.home() / ".data-connector" / "shiprocket_credentials.json"
+        
+        if credentials_file.exists():
+            credentials_file.unlink()
+            console.print("[green]✅ Shiprocket credentials file removed[/green]")
+        else:
+            console.print("[yellow]⚠️ No Shiprocket credentials file found[/yellow]")
+        
+        console.print("Shiprocket authentication reset successful!")
+        console.print("You can now re-authenticate using: python -m agent.cmd.query authenticate shiprocket")
+        return True
+        
+    except Exception as e:
+        console.print(f"[red]❌ Error resetting Shiprocket authentication: {e}[/red]")
+        return False
 
 async def main():
     parser = argparse.ArgumentParser(description='Data Connector CLI')

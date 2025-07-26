@@ -33,26 +33,26 @@ class ClassificationNode(StreamingNodeBase):
         # Cache for preventing re-initialization
         self._classification_cache = {}
         
-        logger.info("🔍 ClassificationNode initialized with database classifier")
+        logger.info("ClassificationNode initialized with database classifier")
     
     async def __call__(self, state: LangGraphState, **kwargs) -> Dict[str, Any]:
         """Non-streaming execution of classification node."""
-        logger.info("🔍 [CLASSIFICATION] Starting non-streaming classification")
+        logger.info("[CLASSIFICATION] Starting non-streaming classification")
         
         # Get the user query from state
         user_query = state.get("user_query", state.get("question", ""))
         session_id = state.get("session_id", "unknown")
         
         if not user_query:
-            logger.error("🔍 [CLASSIFICATION] No user query found in state")
+            logger.error("[CLASSIFICATION] No user query found in state")
             return {"classification_error": "No user query provided"}
         
-        logger.info(f"🔍 [CLASSIFICATION] Processing query: '{user_query}' (session: {session_id})")
+        logger.info(f"[CLASSIFICATION] Processing query: '{user_query}' (session: {session_id})")
         
         # Check cache to prevent re-initialization
         cache_key = f"{session_id}_{hash(user_query)}"
         if cache_key in self._classification_cache:
-            logger.info("🔍 [CLASSIFICATION] Using cached classification result")
+            logger.info("[CLASSIFICATION] Using cached classification result")
             cached_result = self._classification_cache[cache_key]
             
             # Update state with cached results
@@ -68,16 +68,16 @@ class ClassificationNode(StreamingNodeBase):
         
         try:
             # Step 1: Perform database classification
-            logger.info("🔍 [CLASSIFICATION] Step 1: Performing database classification")
+            logger.info("[CLASSIFICATION] Step 1: Performing database classification")
             start_time = time.time()
             
             classification_result = await self.classifier.classify(user_query)
             
             classification_time = time.time() - start_time
-            logger.info(f"🔍 [CLASSIFICATION] Classification completed in {classification_time:.2f}s")
+            logger.info(f"[CLASSIFICATION] Classification completed in {classification_time:.2f}s")
             
             # Step 2: Process classification results
-            logger.info("🔍 [CLASSIFICATION] Step 2: Processing classification results")
+            logger.info("[CLASSIFICATION] Step 2: Processing classification results")
             
             sources = classification_result.get("sources", [])
             reasoning = classification_result.get("reasoning", "")
@@ -104,19 +104,19 @@ class ClassificationNode(StreamingNodeBase):
                         "relevance": "high"  # Could implement scoring here
                     })
                     
-                    logger.info(f"🔍 [CLASSIFICATION] Identified relevant database: {db_type} ({source_id})")
+                    logger.info(f"[CLASSIFICATION] Identified relevant database: {db_type} ({source_id})")
             
             # Remove duplicates while preserving order
             unique_database_types = list(dict.fromkeys(database_types))
             is_cross_database = len(unique_database_types) > 1
             
-            logger.info(f"🔍 [CLASSIFICATION] Step 3: Classification summary")
-            logger.info(f"🔍 [CLASSIFICATION] - Databases identified: {unique_database_types}")
-            logger.info(f"🔍 [CLASSIFICATION] - Cross-database query: {is_cross_database}")
-            logger.info(f"🔍 [CLASSIFICATION] - Total sources: {len(enhanced_sources)}")
+            logger.info(f"[CLASSIFICATION] Step 3: Classification summary")
+            logger.info(f"[CLASSIFICATION] - Databases identified: {unique_database_types}")
+            logger.info(f"[CLASSIFICATION] - Cross-database query: {is_cross_database}")
+            logger.info(f"[CLASSIFICATION] - Total sources: {len(enhanced_sources)}")
             
             # Step 4: Cache results
-            logger.info("🔍 [CLASSIFICATION] Step 4: Caching results for future use")
+            logger.info("[CLASSIFICATION] Step 4: Caching results for future use")
             
             cache_result = {
                 "database_types": unique_database_types,
@@ -130,7 +130,7 @@ class ClassificationNode(StreamingNodeBase):
             self._classification_cache[cache_key] = cache_result
             
             # Step 5: Update state
-            logger.info("🔍 [CLASSIFICATION] Step 5: Updating LangGraph state")
+            logger.info("[CLASSIFICATION] Step 5: Updating LangGraph state")
             
             state.update({
                 "databases_identified": unique_database_types,
@@ -142,12 +142,12 @@ class ClassificationNode(StreamingNodeBase):
                 "classification_duration": classification_time
             })
             
-            logger.info("🔍 [CLASSIFICATION] Classification node completed successfully")
+            logger.info("[CLASSIFICATION] Classification node completed successfully")
             return state
             
         except Exception as e:
-            logger.error(f"🔍 [CLASSIFICATION] Error during classification: {str(e)}")
-            logger.exception("🔍 [CLASSIFICATION] Full error traceback:")
+            logger.error(f"[CLASSIFICATION] Error during classification: {str(e)}")
+            logger.exception("[CLASSIFICATION] Full error traceback:")
             
             # Update state with error information
             state.update({
@@ -177,7 +177,7 @@ class ClassificationNode(StreamingNodeBase):
         user_query = state.get("user_query", state.get("question", ""))
         session_id = state.get("session_id", "unknown")
         
-        logger.info(f"🔍 [CLASSIFICATION STREAM] Starting streaming classification for: '{user_query}'")
+        logger.info(f"[CLASSIFICATION STREAM] Starting streaming classification for: '{user_query}'")
         
         if not user_query:
             yield self.create_progress_chunk(
@@ -190,7 +190,7 @@ class ClassificationNode(StreamingNodeBase):
         # Check cache first
         cache_key = f"{session_id}_{hash(user_query)}"
         if cache_key in self._classification_cache:
-            logger.info("🔍 [CLASSIFICATION STREAM] Using cached classification result")
+            logger.info("[CLASSIFICATION STREAM] Using cached classification result")
             
             yield self.create_progress_chunk(
                 20.0,
@@ -241,7 +241,7 @@ class ClassificationNode(StreamingNodeBase):
                 }
             )
             
-            logger.info("🔍 [CLASSIFICATION STREAM] Step 1: Initializing classification")
+            logger.info("[CLASSIFICATION STREAM] Step 1: Initializing classification")
             
             # Step 2: Analyze query semantics
             yield self.create_progress_chunk(
@@ -250,7 +250,7 @@ class ClassificationNode(StreamingNodeBase):
                 {"step": "semantic_analysis"}
             )
             
-            logger.info("🔍 [CLASSIFICATION STREAM] Step 2: Analyzing query semantics")
+            logger.info("[CLASSIFICATION STREAM] Step 2: Analyzing query semantics")
             
             # Step 3: Search schema metadata
             yield self.create_progress_chunk(
@@ -259,7 +259,7 @@ class ClassificationNode(StreamingNodeBase):
                 {"step": "schema_search"}
             )
             
-            logger.info("🔍 [CLASSIFICATION STREAM] Step 3: Searching schema metadata")
+            logger.info("[CLASSIFICATION STREAM] Step 3: Searching schema metadata")
             
             # Perform the actual classification
             start_time = time.time()
@@ -273,7 +273,7 @@ class ClassificationNode(StreamingNodeBase):
                 {"step": "result_processing", "duration": classification_time}
             )
             
-            logger.info(f"🔍 [CLASSIFICATION STREAM] Step 4: Processing results (took {classification_time:.2f}s)")
+            logger.info(f"[CLASSIFICATION STREAM] Step 4: Processing results (took {classification_time:.2f}s)")
             
             sources = classification_result.get("sources", [])
             reasoning = classification_result.get("reasoning", "")
@@ -315,8 +315,8 @@ class ClassificationNode(StreamingNodeBase):
                 }
             )
             
-            logger.info(f"🔍 [CLASSIFICATION STREAM] Step 5: Found databases: {unique_database_types}")
-            logger.info(f"🔍 [CLASSIFICATION STREAM] Cross-database query: {is_cross_database}")
+            logger.info(f"[CLASSIFICATION STREAM] Step 5: Found databases: {unique_database_types}")
+            logger.info(f"[CLASSIFICATION STREAM] Cross-database query: {is_cross_database}")
             
             # Step 6: Cache and finalize
             cache_result = {
@@ -353,11 +353,11 @@ class ClassificationNode(StreamingNodeBase):
                 }
             )
             
-            logger.info("🔍 [CLASSIFICATION STREAM] Classification completed successfully")
+            logger.info("[CLASSIFICATION STREAM] Classification completed successfully")
             
         except Exception as e:
-            logger.error(f"🔍 [CLASSIFICATION STREAM] Error during streaming classification: {str(e)}")
-            logger.exception("🔍 [CLASSIFICATION STREAM] Full error traceback:")
+            logger.error(f"[CLASSIFICATION STREAM] Error during streaming classification: {str(e)}")
+            logger.exception("[CLASSIFICATION STREAM] Full error traceback:")
             
             yield self.create_progress_chunk(
                 100.0,

@@ -291,7 +291,7 @@ export const CanvasBlock = ({
           {/* Header */}
         <div className={cn(
           "flex items-center justify-between p-4 border-b border-gray-200 dark:border-gray-700",
-          isCanvasPageMissing ? "bg-orange-100 dark:bg-orange-900/30" : "bg-gray-50 dark:bg-gray-800"
+          isCanvasPageMissing ? "bg-orange-100 dark:bg-orange-900/30" : "bg-gray-50 dark:bg-zinc-900"
         )}>
             <div className="flex items-center gap-3">
               <div className="flex items-center gap-2">
@@ -361,8 +361,8 @@ export const CanvasBlock = ({
             <div className="p-4 space-y-4">
               {/* Summary */}
             {preview.summary && (
-                <div className="text-sm text-gray-700 dark:text-gray-300 bg-blue-50 dark:bg-blue-900/30 p-3 rounded-lg border-l-4 border-blue-200 dark:border-blue-600">
-                  <div className="flex items-center gap-2 font-medium text-blue-900 dark:text-blue-100 mb-1">
+                <div className="text-sm text-gray-700 dark:text-gray-300 bg-gray-50 dark:bg-zinc-900 p-3 rounded-lg border-l-4 border-gray-200 dark:border-gray-600">
+                  <div className="flex items-center gap-2 font-medium text-gray-900 dark:text-gray-100 mb-1">
                     <Eye className="h-4 w-4" />
                   Analysis Summary
                   </div>
@@ -458,7 +458,7 @@ export const CanvasBlock = ({
 
                 {/* SQL Queries Executed */}
                 {execData.sqlQueries && execData.sqlQueries.length > 0 && (
-                  <div className="bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-700 rounded-lg p-4">
+                  <div className="bg-gray-50 dark:bg-zinc-900 border border-gray-200 dark:border-gray-700 rounded-lg p-4">
                     <div className="flex items-center gap-2 text-blue-700 dark:text-blue-300 font-medium mb-3">
                       <span className="text-lg">🔍</span>
                       <span>SQL Queries Executed ({execData.sqlQueries.length})</span>
@@ -634,8 +634,8 @@ export const CanvasBlock = ({
         ) : threadName ? (
           // Show basic preview for named canvases without content yet
             <div className="p-4 space-y-4">
-              <div className="text-sm text-gray-700 dark:text-gray-300 bg-blue-50 dark:bg-blue-900/30 p-3 rounded-lg border-l-4 border-blue-200 dark:border-blue-600">
-                <div className="flex items-center gap-2 font-medium text-blue-900 dark:text-blue-100 mb-1">
+              <div className="text-sm text-gray-700 dark:text-gray-300 bg-gray-50 dark:bg-zinc-900 p-3 rounded-lg border-l-4 border-gray-200 dark:border-gray-600">
+                <div className="flex items-center gap-2 font-medium text-gray-900 dark:text-gray-100 mb-1">
                   <Eye className="h-4 w-4" />
                 Analysis Workspace
                 </div>

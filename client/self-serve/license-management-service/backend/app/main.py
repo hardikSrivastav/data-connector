@@ -1,42 +1,44 @@
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
-import os
-from dotenv import load_dotenv
+from contextlib import asynccontextmanager
 
-from app.api import health, licenses, validation, customers
-from app.database.database import engine, Base
+from app.database.database import create_tables
+from app.api import health, licenses, telemetry, customers
 
-load_dotenv()
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Startup
+    create_tables()
+    yield
+    # Shutdown
+    pass
 
 app = FastAPI(
-    title="License Management Service",
-    description="Enterprise License Management System",
-    version="1.0.0"
+    title="Ceneca License Management Service",
+    description="Simplified on-premise licensing with telemetry",
+    version="2.0.0",
+    lifespan=lifespan
 )
 
+# CORS middleware
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=["*"],  # Configure for production
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-Base.metadata.create_all(bind=engine)
-
+# Include routers
 app.include_router(health.router, prefix="/health", tags=["health"])
-app.include_router(licenses.router, prefix="/api/licenses", tags=["licenses"])
-app.include_router(validation.router, prefix="/api/validation", tags=["validation"])
 app.include_router(customers.router, prefix="/api/customers", tags=["customers"])
+app.include_router(licenses.router, prefix="/api/licenses", tags=["licenses"])
+app.include_router(telemetry.router, prefix="/api/telemetry", tags=["telemetry"])
 
-@app.exception_handler(HTTPException)
-async def http_exception_handler(request, exc):
-    return JSONResponse(
-        status_code=exc.status_code,
-        content={"error": exc.detail, "status_code": exc.status_code}
-    )
-
-if __name__ == "__main__":
-    import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+@app.get("/")
+async def root():
+    return {
+        "service": "Ceneca License Management Service",
+        "version": "2.0.0",
+        "status": "running"
+    }

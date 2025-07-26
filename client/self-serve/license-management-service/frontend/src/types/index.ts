@@ -2,7 +2,7 @@ export interface Customer {
   id: string
   company_name: string
   contact_email: string
-  industry_classification?: string
+  industry?: string
   created_at: string
   updated_at?: string
 }
@@ -10,80 +10,77 @@ export interface Customer {
 export interface License {
   id: string
   customer_id: string
-  product_sku: string
-  edition_tier: string
-  license_type: 'perpetual' | 'subscription' | 'trial'
-  start_date: string
-  expiration_date?: string
-  grace_period_days: number
-  user_limit?: number
-  node_limit?: number
-  feature_flags: Record<string, boolean>
-  resource_limits: Record<string, any>
-  binding_type: 'strict' | 'flexible' | 'none'
-  hardware_signatures: string[]
-  tolerance_level: number
-  phone_home_frequency: number
-  offline_grace_period: number
-  usage_reporting_level: string
-  issue_date: string
-  issuer: string
-  sales_order_reference?: string
-  support_tier?: string
+  license_key: string
+  plan: string
+  max_seats: number
+  features: string[]
+  monthly_price?: number
+  issued_at: string
+  expires_at: string
+  trial_expires_at?: string
+  jwt_token: string
   is_active: boolean
-  revoked_at?: string
-  revocation_reason?: string
-  license_token?: string
   created_at: string
-  updated_at?: string
 }
 
-export interface LicenseCreate {
-  customer_id: string
-  product_sku: string
-  edition_tier: string
-  license_type: 'perpetual' | 'subscription' | 'trial'
-  start_date: string
-  expiration_date?: string
-  grace_period_days?: number
-  user_limit?: number
-  node_limit?: number
-  feature_flags?: Record<string, boolean>
-  resource_limits?: Record<string, any>
-  binding_type?: 'strict' | 'flexible' | 'none'
-  hardware_signatures?: string[]
-  tolerance_level?: number
-  phone_home_frequency?: number
-  offline_grace_period?: number
-  usage_reporting_level?: string
-  sales_order_reference?: string
-  support_tier?: string
-}
-
-export interface ValidationRequest {
-  license_token: string
-  hardware_fingerprint?: Record<string, string>
-  client_info?: Record<string, any>
-}
-
-export interface ValidationResponse {
-  valid: boolean
-  license_id?: string
-  reason?: string
-  expires_at?: string
-  feature_flags?: Record<string, boolean>
-  user_limit?: number
-  node_limit?: number
-  resource_limits?: Record<string, any>
-}
-
-export interface UsageEvent {
+export interface TelemetryReport {
   id: string
+  customer_id: string
   license_id: string
-  event_type: string
-  event_data?: Record<string, any>
-  user_count?: number
-  resource_usage?: Record<string, any>
-  client_info?: Record<string, any>
-  timestamp: string
+  license_key: string
+  report_date: string
+  deployment_id?: string
+  active_users: {
+    unique_daily: number
+    peak_concurrent: number
+    user_list?: string[]
+  }
+  usage_stats: {
+    queries_executed?: number
+    databases_connected?: number
+    api_calls?: number
+    features_used?: string[]
+  }
+  system_info: {
+    version?: string
+    os?: string
+    deployment_id?: string
+  }
+  max_seats_used: number
+  overage_seats: number
+  created_at: string
+}
+
+export interface Plan {
+  name: string
+  display_name: string
+  max_seats: number
+  monthly_price: number
+  features: string[]
+  description: string
+  popular?: boolean
+}
+
+export interface UsageAnalytics {
+  customer_id: string
+  period_days: number
+  total_reports: number
+  unique_deployments: number
+  seat_usage: {
+    max_seats_used_ever: number
+    avg_seats_used: number
+    recent_avg_seats: number
+    overage_incidents: number
+    max_overage: number
+  }
+  feature_usage: {
+    total_queries: number
+    total_api_calls: number
+    avg_queries_per_day: number
+  }
+  billing_summary: {
+    billable_seats: number
+    overage_charges_applicable: boolean
+    max_overage_seats: number
+  }
 }

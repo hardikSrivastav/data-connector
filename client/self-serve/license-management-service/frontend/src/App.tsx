@@ -1,38 +1,20 @@
-import { Routes, Route } from 'react-router-dom'
-import Layout from './components/Layout'
-import Dashboard from './pages/Dashboard'
-import Customers from './pages/Customers'
-import Licenses from './pages/Licenses'
-import Usage from './pages/Usage'
-import Validation from './pages/Validation'
-
-// Simplified Customer Portal Components
-import SelectTier from './pages/customer/SelectTier'
-import SimpleDashboard from './pages/customer/SimpleDashboard'
+import { Routes, Route, Navigate } from 'react-router-dom'
+import { HomePage } from './pages/HomePage'
+import { DashboardPage } from './pages/DashboardPage'
+import { PlansPage } from './pages/PlansPage'
+import { LicenseDetailPage } from './pages/LicenseDetailPage'
 
 function App() {
   return (
-    <Routes>
-      {/* Admin Routes */}
-      <Route path="/admin/*" element={
-        <Layout>
-          <Routes>
-            <Route path="/" element={<Dashboard />} />
-            <Route path="/customers" element={<Customers />} />
-            <Route path="/licenses" element={<Licenses />} />
-            <Route path="/usage" element={<Usage />} />
-            <Route path="/validation" element={<Validation />} />
-          </Routes>
-        </Layout>
-      } />
-      
-      {/* Simplified Customer Portal Routes */}
-      <Route path="/customer" element={<SimpleDashboard />} />
-      <Route path="/customer/select-tier" element={<SelectTier />} />
-      
-      {/* Default redirect to admin */}
-      <Route path="/" element={<Dashboard />} />
-    </Routes>
+    <div className="min-h-screen bg-gray-50">
+      <Routes>
+        <Route path="/" element={<HomePage />} />
+        <Route path="/dashboard" element={<DashboardPage />} />
+        <Route path="/plans" element={<PlansPage />} />
+        <Route path="/license/:licenseId" element={<LicenseDetailPage />} />
+        <Route path="*" element={<Navigate to="/" replace />} />
+      </Routes>
+    </div>
   )
 }
 

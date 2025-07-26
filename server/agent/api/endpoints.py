@@ -2670,7 +2670,7 @@ async def langgraph_stream(request: LangGraphQueryRequest, http_request: Request
             
             # Start detailed reasoning with immediate feedback
             yield create_stream_event("detailed_reasoning_start", session_id,
-                message="🔍 STARTING DETAILED REASONING CHAIN"
+                message="STARTING DETAILED REASONING CHAIN"
             )
             
             # Add granular progress events
@@ -2681,25 +2681,25 @@ async def langgraph_stream(request: LangGraphQueryRequest, http_request: Request
             )
             
             yield create_stream_event("progress", session_id,
-                message="🎯 Analyzing query complexity...",
+                message="Analyzing query complexity...",
                 progress=20,
                 status="analyzing"
             )
             
             yield create_stream_event("progress", session_id,
-                message="🔍 Selecting optimal workflow path...",
+                message="Selecting optimal workflow path...",
                 progress=30,
                 status="routing"
             )
             
             yield create_stream_event("progress", session_id,
-                message="📊 Connecting to data sources...",
+                message="Connecting to data sources...",
                 progress=40,
                 status="connecting"
             )
             
             yield create_stream_event("progress", session_id,
-                message="⚡ Executing workflow operations...",
+                message="Executing workflow operations...",
                 progress=50,
                 status="executing"
             )
@@ -2800,7 +2800,7 @@ async def langgraph_stream(request: LangGraphQueryRequest, http_request: Request
                 
                 # Stream the same detailed information as CLI
                 yield create_stream_event("detailed_reasoning_start", session_id,
-                    message="🔍 DETAILED REASONING CHAIN"
+                    message="DETAILED REASONING CHAIN"
                 )
                 
                 # 🔍 SQL QUERIES EXECUTED (same as CLI)
@@ -2809,7 +2809,7 @@ async def langgraph_stream(request: LangGraphQueryRequest, http_request: Request
                 
                 if raw_data:
                     yield create_stream_event("sql_queries_section", session_id,
-                        message="🔍 SQL QUERIES EXECUTED:"
+                        message="SQL QUERIES EXECUTED:"
                     )
                     
                     sql_queries = [rd for rd in raw_data if rd.query]
@@ -2839,7 +2839,7 @@ async def langgraph_stream(request: LangGraphQueryRequest, http_request: Request
                 
                 if tool_executions:
                     yield create_stream_event("tool_executions_section", session_id,
-                        message="🔧 TOOL EXECUTIONS:"
+                        message="TOOL EXECUTIONS:"
                     )
                     
                     success_count = sum(1 for tool in tool_executions if tool.success)
@@ -2871,7 +2871,7 @@ async def langgraph_stream(request: LangGraphQueryRequest, http_request: Request
                 schema_data = [rd for rd in raw_data if not rd.query]  # Schema data doesn't have queries
                 if schema_data:
                     yield create_stream_event("schema_discovery_section", session_id,
-                        message="📊 DATABASE SCHEMA DISCOVERY:"
+                        message="DATABASE SCHEMA DISCOVERY:"
                     )
                     
                     for rd in schema_data:
@@ -2906,7 +2906,7 @@ async def langgraph_stream(request: LangGraphQueryRequest, http_request: Request
                 execution_plans = aggregator.get_all_execution_plans()
                 if execution_plans:
                     yield create_stream_event("execution_plans_section", session_id,
-                        message="📋 EXECUTION PLAN DETAILS:"
+                        message="EXECUTION PLAN DETAILS:"
                     )
                     
                     for i, plan in enumerate(execution_plans, 1):
@@ -2940,15 +2940,15 @@ async def langgraph_stream(request: LangGraphQueryRequest, http_request: Request
                         confidence_score=confidence,
                         sources_used=sources_used,
                         synthesis_preview=synthesis_text[:500] + "..." if len(synthesis_text) > 500 else synthesis_text,
-                        message=f"📝 FINAL SYNTHESIS: {synthesis_length} chars, confidence: {confidence:.2f}, sources: {sources_used}"
+                        message=f"FINAL SYNTHESIS: {synthesis_length} chars, confidence: {confidence:.2f}, sources: {sources_used}"
                     )
                 else:
                     yield create_stream_event("no_final_synthesis", session_id,
-                        message="📝 No final synthesis available"
+                        message="No final synthesis available"
                     )
                 
                 yield create_stream_event("detailed_reasoning_complete", session_id,
-                    message="🔍 Detailed reasoning chain complete"
+                    message="Detailed reasoning chain complete"
                 )
                 
                 # ✅ TIMING FIX: Clear progress update after detailed reasoning is extracted
@@ -3028,7 +3028,7 @@ async def langgraph_stream(request: LangGraphQueryRequest, http_request: Request
                     # ✅ NEW: Show captured data if requested (EXACT CLI LOGIC)
                     if request.show_captured_data:
                         yield create_stream_event("captured_data_start", session_id,
-                            message="🔍 CAPTURED DATA SUMMARY"
+                            message="CAPTURED DATA SUMMARY"
                         )
                         
                         # Get all captured data (same as CLI)
@@ -3047,7 +3047,7 @@ async def langgraph_stream(request: LangGraphQueryRequest, http_request: Request
                         
                         # 🔍 SQL QUERIES EXECUTED (same as CLI)
                         yield create_stream_event("sql_queries_section", session_id,
-                            message="🔍 SQL QUERIES EXECUTED:"
+                            message="SQL QUERIES EXECUTED:"
                         )
                         
                         sql_queries = [rd for rd in raw_data if rd.query]
@@ -3068,7 +3068,7 @@ async def langgraph_stream(request: LangGraphQueryRequest, http_request: Request
                         
                         # 🔧 TOOL EXECUTIONS (same as CLI)
                         yield create_stream_event("tool_executions_section", session_id,
-                            message="🔧 TOOL EXECUTIONS:"
+                            message="TOOL EXECUTIONS:"
                         )
                         
                         if tool_executions:
@@ -3091,7 +3091,7 @@ async def langgraph_stream(request: LangGraphQueryRequest, http_request: Request
                         schema_data = [rd for rd in raw_data if not rd.query]  # Schema data doesn't have queries
                         if schema_data:
                             yield create_stream_event("schema_discovery_section", session_id,
-                                message="📊 DATABASE SCHEMA DISCOVERY:"
+                                message="DATABASE SCHEMA DISCOVERY:"
                             )
                             
                             for rd in schema_data:
@@ -3126,7 +3126,7 @@ async def langgraph_stream(request: LangGraphQueryRequest, http_request: Request
                         execution_plans = aggregator.get_all_execution_plans()
                         if execution_plans:
                             yield create_stream_event("execution_plans_section", session_id,
-                                message="📋 EXECUTION PLAN DETAILS:"
+                                message="EXECUTION PLAN DETAILS:"
                             )
                             
                             for i, plan in enumerate(execution_plans, 1):
@@ -3160,20 +3160,20 @@ async def langgraph_stream(request: LangGraphQueryRequest, http_request: Request
                                 confidence_score=confidence,
                                 sources_used=sources_used,
                                 synthesis_preview=synthesis_text[:500] + "..." if len(synthesis_text) > 500 else synthesis_text,
-                                message=f"📝 FINAL SYNTHESIS: {synthesis_length} chars, confidence: {confidence:.2f}, sources: {sources_used}"
+                                message=f"FINAL SYNTHESIS: {synthesis_length} chars, confidence: {confidence:.2f}, sources: {sources_used}"
                             )
                         else:
                             yield create_stream_event("no_final_synthesis", session_id,
-                                message="📝 No final synthesis available"
+                                message="No final synthesis available"
                             )
                         
                         yield create_stream_event("detailed_reasoning_complete", session_id,
-                            message="🔍 Detailed reasoning chain complete"
+                            message="Detailed reasoning chain complete"
                             )
                     
                     # ✅ CRITICAL ENHANCEMENT: Verify and log captured SQL queries and tool execution data
                     yield create_stream_event("data_verification", session_id,
-                        message="🔍 Verifying captured SQL queries and tool execution data..."
+                        message="Verifying captured SQL queries and tool execution data..."
                     )
                     
                     # Get captured data for verification  
@@ -3184,7 +3184,7 @@ async def langgraph_stream(request: LangGraphQueryRequest, http_request: Request
                     # Stream SQL queries that were captured
                     if raw_data:
                         yield create_stream_event("sql_queries_captured", session_id,
-                            message=f"📊 Captured {len(raw_data)} SQL queries/operations:",
+                            message=f"Captured {len(raw_data)} SQL queries/operations:",
                             sql_count=len(raw_data)
                         )
                         
@@ -3205,7 +3205,7 @@ async def langgraph_stream(request: LangGraphQueryRequest, http_request: Request
                     # Stream tool execution details
                     if tool_executions:
                         yield create_stream_event("tool_executions_captured", session_id,
-                            message=f"🔧 Captured {len(tool_executions)} tool executions:",
+                            message=f"Captured {len(tool_executions)} tool executions:",
                             tool_count=len(tool_executions)
                         )
                         
@@ -3226,7 +3226,7 @@ async def langgraph_stream(request: LangGraphQueryRequest, http_request: Request
                     # Show output breakdown (same as CLI display_output_breakdown function)
                     if request.show_outputs:
                         yield create_stream_event("output_analysis", session_id,
-                            message="📊 Comprehensive Output Analysis"
+                            message="Comprehensive Output Analysis"
                         )
                         
                         # Get all different types of outputs (same as CLI)
@@ -3399,7 +3399,7 @@ async def langgraph_stream(request: LangGraphQueryRequest, http_request: Request
                     chart_type=chart_type,
                     dataset_size=dataset_size,
                     intent=visualization_data.get('visualization_intent', 'N/A'),
-                    message="🎨 Visualization Created"
+                    message="Visualization Created"
                 )
                 
                 # Show chart configuration summary (same as CLI)
@@ -3419,7 +3419,7 @@ async def langgraph_stream(request: LangGraphQueryRequest, http_request: Request
                     import json as json_module  # Use explicit import to avoid shadowing
                     logger.info("🎨 YIELDING chart_config_json EVENT")
                     yield create_stream_event("chart_config_json", session_id,
-                        message="📋 Complete Chart Configuration JSON:",
+                        message="Complete Chart Configuration JSON:",
                         metadata={
                             "chart_config": chart_config,
                             "json_size": len(json_module.dumps(chart_config, indent=2))
@@ -3538,7 +3538,7 @@ async def langgraph_stream(request: LangGraphQueryRequest, http_request: Request
                             hybrid_viz_data = tool_result.get("result", {})
                             if hybrid_viz_data and hybrid_viz_data.get("visualization_created"):
                                 yield create_stream_event("hybrid_visualization_found", session_id,
-                                    message="🎨 Hybrid workflow generated visualization",
+                                    message="Hybrid workflow generated visualization",
                                     chart_type=hybrid_viz_data.get("performance_metrics", {}).get("chart_type", "unknown"),
                                     dataset_size=hybrid_viz_data.get("dataset_info", {}).get("size", 0)
                                 )
@@ -3548,7 +3548,7 @@ async def langgraph_stream(request: LangGraphQueryRequest, http_request: Request
                                 if hybrid_chart_config:
                                     import json as json_module  # Use explicit import to avoid shadowing
                                     yield create_stream_event("hybrid_chart_config_json", session_id,
-                                        message="📋 Hybrid Workflow Chart Configuration JSON:",
+                                        message="Hybrid Workflow Chart Configuration JSON:",
                                         metadata={
                                             "chart_config": hybrid_chart_config,
                                             "json_size": len(json_module.dumps(hybrid_chart_config, indent=2))
