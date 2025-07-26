@@ -20,7 +20,7 @@ fi
 
 # Build and start services
 echo "🔧 Building and starting services..."
-docker-compose up --build
+docker-compose up --build -d
 
 echo "✅ Services started successfully!"
 echo "🌐 Frontend: http://localhost:8500"

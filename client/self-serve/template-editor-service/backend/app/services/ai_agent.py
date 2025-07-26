@@ -83,6 +83,8 @@ EDITING CONSTRAINTS:
 - Use available tools for all file operations
 - For multi-file changes, use apply_cross_file_changes
 - Always verify edits maintain cross-file consistency
+- CRITICAL: When replacing template placeholders {{VARIABLE_NAME}} with actual values, remove the double curly braces entirely
+- Replace {{PLACEHOLDER}} with actual_value, not {{ actual_value }}
 
 AVAILABLE TOOLS (USE THESE IMMEDIATELY):
 - get_session_context: Understand deployment scenario and session type
@@ -281,110 +283,91 @@ CRITICAL: Always use the tools to examine the workspace and understand cross-fil
             {"role": "user", "content": message}
         ]
         
-        # Call Claude with tools
-        response = self.client.messages.create(
-            model="claude-3-5-sonnet-20241022",
-            max_tokens=4000,
-            system=self.system_prompt,
-            messages=messages,
-            tools=tools
-        )
-        
-        response_text = ""
-        
-        # Process response and handle tool calls
-        tool_results = []
-        for content in response.content:
-            if content.type == "text":
-                response_text += content.text
-            elif content.type == "tool_use":
-                # Execute tool and get result
-                print(f"Executing tool: {content.name} with input: {content.input}")
-                tool_result = await self._execute_tool(content.name, content.input)
-                print(f"Tool result: {tool_result}")
-                tool_results.append({
-                    "type": "tool_result",
-                    "tool_use_id": content.id,
-                    "content": json.dumps(tool_result)
-                })
-        
-        # If there were tool calls, get a follow-up response
-        if tool_results:
-            print(f"Making follow-up API call with {len(tool_results)} tool results")
-            try:
-                tool_response = self.client.messages.create(
+        # Process the conversation with recursive tool calling
+        return await self._process_conversation_with_tools(messages, tools)
+    
+    async def _process_conversation_with_tools(self, messages: List[Dict], tools: List[Dict]) -> str:
+        """Process conversation with recursive tool calling until completion"""
+        try:
+            # Make the initial API call
+            response = self.client.messages.create(
+                model="claude-3-5-sonnet-20241022",
+                max_tokens=4000,
+                system=self.system_prompt,
+                messages=messages,
+                tools=tools
+            )
+            
+            # Build the conversation iteratively
+            current_messages = messages.copy()
+            final_user_message = ""
+            
+            # Process the response and continue until no more tool calls
+            while True:
+                tool_calls = []
+                response_text = ""
+                
+                # Extract text and tool calls from current response
+                for content in response.content:
+                    if content.type == "text":
+                        response_text = content.text  # Keep only the latest text
+                    elif content.type == "tool_use":
+                        tool_calls.append(content)
+                
+                # Add assistant's response to conversation
+                current_messages.append({"role": "assistant", "content": response.content})
+                
+                # If no tool calls, we have the final response
+                if not tool_calls:
+                    final_user_message = response_text
+                    break
+                
+                # Execute all tool calls
+                tool_results = []
+                for tool_call in tool_calls:
+                    print(f"Executing tool: {tool_call.name} with input: {tool_call.input}")
+                    tool_result = await self._execute_tool(tool_call.name, tool_call.input)
+                    print(f"Tool result: {tool_result}")
+                    
+                    tool_results.append({
+                        "type": "tool_result",
+                        "tool_use_id": tool_call.id,
+                        "content": json.dumps(tool_result)
+                    })
+                
+                # Add tool results to conversation
+                current_messages.append({"role": "user", "content": tool_results})
+                
+                # Get next response from Claude
+                print(f"Making follow-up API call with {len(tool_results)} tool results")
+                response = self.client.messages.create(
                     model="claude-3-5-sonnet-20241022",
                     max_tokens=4000,
                     system=self.system_prompt,
-                    messages=messages + [
-                        {"role": "assistant", "content": response.content},
-                        {"role": "user", "content": tool_results}
-                    ],
+                    messages=current_messages,
                     tools=tools
                 )
-                
-                print(f"Follow-up response received with {len(tool_response.content)} content blocks")
-                
-                # Handle nested tool calls in follow-up response
-                follow_up_tool_results = []
-                for i, follow_up_content in enumerate(tool_response.content):
-                    print(f"Content block {i}: type={follow_up_content.type}")
-                    if follow_up_content.type == "text":
-                        print(f"Adding follow-up text: {follow_up_content.text[:100]}...")
-                        response_text += follow_up_content.text
-                    elif follow_up_content.type == "tool_use":
-                        print(f"Follow-up tool call: {follow_up_content.name} with input: {follow_up_content.input}")
-                        # Execute the nested tool call
-                        nested_tool_result = await self._execute_tool(follow_up_content.name, follow_up_content.input)
-                        print(f"Nested tool result: {nested_tool_result}")
-                        follow_up_tool_results.append({
-                            "type": "tool_result",
-                            "tool_use_id": follow_up_content.id,
-                            "content": json.dumps(nested_tool_result)
-                        })
-                
-                # If there were nested tool calls, handle them recursively
-                if follow_up_tool_results:
-                    print(f"Processing {len(follow_up_tool_results)} nested tool results")
-                    # Add the tool results to conversation and continue
-                    updated_messages = messages + [
-                        {"role": "assistant", "content": response.content},
-                        {"role": "user", "content": tool_results},
-                        {"role": "assistant", "content": tool_response.content},
-                        {"role": "user", "content": follow_up_tool_results}
-                    ]
-                    
-                    final_response = self.client.messages.create(
-                        model="claude-3-5-sonnet-20241022",
-                        max_tokens=4000,
-                        system=self.system_prompt,
-                        messages=updated_messages,
-                        tools=tools
-                    )
-                    
-                    # Process final response (including any final tool calls)
-                    final_tool_results = []
-                    for final_content in final_response.content:
-                        if final_content.type == "text":
-                            print(f"Adding final text: {final_content.text[:100]}...")
-                            response_text += final_content.text
-                        elif final_content.type == "tool_use":
-                            print(f"Executing final tool: {final_content.name} with input: {final_content.input}")
-                            # Execute the final tool call (like edit_file or write_file)
-                            final_tool_result = await self._execute_tool(final_content.name, final_content.input)
-                            print(f"Final tool result: {final_tool_result}")
-                            
-                            # Add success message to response
-                            if final_tool_result.get('success'):
-                                response_text += f"\n\n✅ Successfully executed {final_content.name}"
-                            else:
-                                response_text += f"\n\n❌ Failed to execute {final_content.name}: {final_tool_result.get('error', 'Unknown error')}"
-                        
-            except Exception as e:
-                print(f"Error in follow-up API call: {e}")
-                response_text += f"\n\n[Tool execution completed but follow-up response failed: {str(e)}]"
-        
-        return response_text
+                print(f"Follow-up response received with {len(response.content)} content blocks")
+            
+            # Add tool execution status messages if there were any tool calls in the final response
+            status_messages = []
+            for content in response.content:
+                if content.type == "tool_use":
+                    tool_result = await self._execute_tool(content.name, content.input)
+                    if tool_result.get('success'):
+                        status_messages.append(f"✅ Successfully executed {content.name}")
+                    else:
+                        status_messages.append(f"❌ Failed to execute {content.name}: {tool_result.get('error', 'Unknown error')}")
+            
+            # Combine final message with any status messages
+            if status_messages:
+                final_user_message += "\n\n" + "\n".join(status_messages)
+            
+            return final_user_message
+            
+        except Exception as e:
+            print(f"Error in tool calling process: {e}")
+            return f"I encountered an error while processing your request: {str(e)}"
     
     async def _execute_tool(self, tool_name: str, tool_input: Dict[str, Any]) -> Dict[str, Any]:
         """Execute a tool and return the result"""

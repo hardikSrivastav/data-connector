@@ -5,7 +5,7 @@ import os
 import requests
 from typing import Dict, Any
 
-from app.database.database import get_db, Session as SessionModel
+from app.database.database import get_db, Session
 from app.models.schemas import (
     SessionHandoffRequest, 
     SessionHandoffResponse, 
@@ -68,7 +68,7 @@ async def create_session_handoff(
             await workspace_manager.create_workspace(session_id, "ceneca-config-v1.0.0")
         
         # Store session in database
-        db_session = SessionModel(
+        db_session = Session(
             id=session_id,
             user_id=request.user_id,
             template_version=scenario_id or "custom",
@@ -111,7 +111,7 @@ async def mark_deployment_complete(
     db: Session = Depends(get_db)
 ):
     """Mark deployment as complete and notify main app"""
-    session = db.query(SessionModel).filter(SessionModel.id == session_id).first()
+    session = db.query(Session).filter(Session.id == session_id).first()
     
     if not session:
         raise HTTPException(
@@ -167,7 +167,7 @@ async def get_integration_status(
     db: Session = Depends(get_db)
 ):
     """Get integration session status for main app polling"""
-    session = db.query(SessionModel).filter(SessionModel.id == session_id).first()
+    session = db.query(Session).filter(Session.id == session_id).first()
     
     if not session:
         raise HTTPException(

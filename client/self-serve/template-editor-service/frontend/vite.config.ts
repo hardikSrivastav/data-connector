@@ -8,11 +8,11 @@ export default defineConfig({
     host: true,
     proxy: {
       '/api': {
-        target: 'http://template-editor-backend:8000',
+        target: 'http://backend:8000',
         changeOrigin: true,
       },
       '/ws': {
-        target: 'ws://template-editor-backend:8000',
+        target: 'ws://backend:8000',
         ws: true,
         changeOrigin: true,
       },
