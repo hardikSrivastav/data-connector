@@ -9,8 +9,9 @@ from app.services.workspace_manager import WorkspaceManager
 from app.services.template_manager import TemplateManager
 
 class AIAgent:
-    def __init__(self, session_id: str):
+    def __init__(self, session_id: str, websocket=None):
         self.session_id = session_id
+        self.websocket = websocket
         self.workspace_manager = WorkspaceManager()
         self.template_manager = TemplateManager()
         
@@ -29,6 +30,25 @@ class AIAgent:
         
         # Initialize system prompt
         self.system_prompt = self._create_system_prompt()
+    
+    async def _emit_tool_event(self, event_type: str, tool_call_id: str, tool_name: str, data: Dict[str, Any] = None):
+        """Emit tool call events via WebSocket"""
+        if not self.websocket:
+            return
+            
+        try:
+            event = {
+                "type": "tool_call_event",
+                "event_type": event_type,  # 'started', 'completed', 'failed'
+                "tool_call_id": tool_call_id,
+                "tool_name": tool_name,
+                "timestamp": datetime.now().isoformat(),
+                "data": data or {}
+            }
+            
+            await self.websocket.send_text(json.dumps(event))
+        except Exception as e:
+            print(f"Failed to emit tool event: {e}")
     
     def _create_system_prompt(self) -> str:
         return """You are an AI Deployment Configuration Agent. Your role is to transform deployment templates into production-ready configurations through intelligent analysis and cross-file coordination.
@@ -326,8 +346,33 @@ CRITICAL: Always use the tools to examine the workspace and understand cross-fil
                 tool_results = []
                 for tool_call in tool_calls:
                     print(f"Executing tool: {tool_call.name} with input: {tool_call.input}")
+                    
+                    # Emit tool started event
+                    await self._emit_tool_event(
+                        "started", 
+                        tool_call.id, 
+                        tool_call.name, 
+                        {"input": tool_call.input}
+                    )
+                    
                     tool_result = await self._execute_tool(tool_call.name, tool_call.input)
                     print(f"Tool result: {tool_result}")
+                    
+                    # Emit tool completed/failed event
+                    if tool_result.get('success'):
+                        await self._emit_tool_event(
+                            "completed", 
+                            tool_call.id, 
+                            tool_call.name, 
+                            {"result": tool_result}
+                        )
+                    else:
+                        await self._emit_tool_event(
+                            "failed", 
+                            tool_call.id, 
+                            tool_call.name, 
+                            {"error": tool_result.get('error', 'Unknown error')}
+                        )
                     
                     tool_results.append({
                         "type": "tool_result",

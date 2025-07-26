@@ -73,12 +73,24 @@ export interface WorkspaceData {
   };
 }
 
+export interface ToolCall {
+  id: string;
+  name: string;
+  input: Record<string, any>;
+  status: 'pending' | 'running' | 'completed' | 'failed';
+  result?: any;
+  error?: string;
+  timestamp: string;
+}
+
 export interface ChatMessage {
   id: string;
-  role: 'user' | 'assistant' | 'system';
+  role: 'user' | 'assistant' | 'system' | 'tool';
   content: string;
   timestamp: string;
   metadata?: Record<string, any>;
+  toolCalls?: ToolCall[];
+  isToolCallUpdate?: boolean;
 }
 
 export interface ValidationResult {

@@ -54,7 +54,7 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
         ai_agent = None
         try:
             from app.services.ai_agent import AIAgent
-            ai_agent = AIAgent(session_id)
+            ai_agent = AIAgent(session_id, websocket)
             await websocket.send_text("AI assistant initialized successfully. How can I help you customize your authentication template?")
         except Exception as e:
             print(f"Failed to initialize AI agent: {e}")

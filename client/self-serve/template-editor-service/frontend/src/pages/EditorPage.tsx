@@ -2,7 +2,8 @@ import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { apiService } from '../services/apiService';
 import { websocketService } from '../services/websocketService';
-import type { Session, WorkspaceData, FileContent, ChatMessage } from '../types';
+import { ToolCallVisualization } from '../components/ToolCallVisualization';
+import type { Session, WorkspaceData, FileContent, ChatMessage, ToolCall } from '../types';
 
 export const EditorPage: React.FC = () => {
   const { sessionId } = useParams<{ sessionId: string }>();
@@ -19,6 +20,9 @@ export const EditorPage: React.FC = () => {
   const [activeTab, setActiveTab] = useState<'files' | 'chat'>('chat');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [activeToolCalls, setActiveToolCalls] = useState<Map<string, ToolCall>>(new Map());
+  const [completedToolCalls, setCompletedToolCalls] = useState<Map<string, ToolCall>>(new Map());
+  const [currentConversationToolCalls, setCurrentConversationToolCalls] = useState<ToolCall[]>([]);
 
   // Local storage key for this session's chat
   const getStorageKey = () => `chat_messages_${sessionId}`;
@@ -117,6 +121,96 @@ export const EditorPage: React.FC = () => {
     }
   };
 
+  const handleToolCallEvent = (event: any) => {
+    const { event_type, tool_call_id, tool_name, timestamp, data } = event;
+    console.log('Handling tool call event:', event_type, tool_name, tool_call_id);
+    
+    setActiveToolCalls(prev => {
+      const next = new Map(prev);
+      const existing = next.get(tool_call_id);
+      
+      switch (event_type) {
+        case 'started':
+          const newToolCall = {
+            id: tool_call_id,
+            name: tool_name,
+            input: data.input || {},
+            status: 'running' as const,
+            timestamp
+          };
+          next.set(tool_call_id, newToolCall);
+          console.log('Started tool call:', tool_call_id, newToolCall);
+          
+          // Also add to conversation tool calls immediately
+          setCurrentConversationToolCalls(prev => {
+            const filtered = prev.filter(call => call.id !== tool_call_id);
+            const updated = [...filtered, newToolCall];
+            console.log('Adding started call to conversation:', tool_call_id, 'Previous:', prev.length, 'Updated:', updated.length);
+            return updated;
+          });
+          break;
+          
+        case 'completed':
+          if (existing) {
+            const completedCall = {
+              ...existing,
+              status: 'completed' as const,
+              result: data.result,
+              timestamp
+            };
+            next.set(tool_call_id, completedCall);
+            
+            // Also store in completed calls for persistence
+            setCompletedToolCalls(prevCompleted => {
+              const nextCompleted = new Map(prevCompleted);
+              nextCompleted.set(tool_call_id, completedCall);
+              console.log('Added to completed calls:', tool_call_id, completedCall);
+              return nextCompleted;
+            });
+            
+            // Add to current conversation tool calls
+            setCurrentConversationToolCalls(prev => {
+              const filtered = prev.filter(call => call.id !== tool_call_id);
+              const updated = [...filtered, completedCall];
+              console.log('Adding completed call to conversation:', tool_call_id, 'Previous:', prev.length, 'Updated:', updated.length);
+              return updated;
+            });
+          }
+          break;
+          
+        case 'failed':
+          if (existing) {
+            const failedCall = {
+              ...existing,
+              status: 'failed' as const,
+              error: data.error,
+              timestamp
+            };
+            next.set(tool_call_id, failedCall);
+            
+            // Also store in completed calls for persistence
+            setCompletedToolCalls(prevCompleted => {
+              const nextCompleted = new Map(prevCompleted);
+              nextCompleted.set(tool_call_id, failedCall);
+              console.log('Added failed call to completed calls:', tool_call_id, failedCall);
+              return nextCompleted;
+            });
+            
+            // Add to current conversation tool calls
+            setCurrentConversationToolCalls(prev => {
+              const filtered = prev.filter(call => call.id !== tool_call_id);
+              const updated = [...filtered, failedCall];
+              console.log('Adding failed call to conversation:', tool_call_id, 'Previous:', prev.length, 'Updated:', updated.length);
+              return updated;
+            });
+          }
+          break;
+      }
+      
+      return next;
+    });
+  };
+
   const initializeChat = async () => {
     if (!sessionId) return;
     
@@ -133,6 +227,17 @@ export const EditorPage: React.FC = () => {
       websocketService.onMessage((message) => {
         console.log('WebSocket message received:', message);
         
+        // Try to parse as JSON for structured events
+        try {
+          const parsed = JSON.parse(message);
+          if (parsed.type === 'tool_call_event') {
+            handleToolCallEvent(parsed);
+            return;
+          }
+        } catch {
+          // Not JSON, treat as regular text message
+        }
+        
         // Filter out initialization messages
         const initMessages = [
           'Connected to AI assistant',
@@ -144,15 +249,30 @@ export const EditorPage: React.FC = () => {
           return;
         }
         
+        // Use the persistent conversation tool calls
+        const allToolCalls = [...currentConversationToolCalls];
+        
+        console.log('Creating message with tool calls:', allToolCalls);
+        console.log('Current conversation tool calls length:', currentConversationToolCalls.length);
+        console.log('Current conversation tool calls:', currentConversationToolCalls);
+        console.log('Completed tool calls state size:', completedToolCalls.size);
+        console.log('Active tool calls state size:', activeToolCalls.size);
+        
         const aiMessage: ChatMessage = {
           id: Date.now().toString(),
           role: 'assistant',
           content: message,
           timestamp: new Date().toISOString(),
+          toolCalls: allToolCalls.length > 0 ? allToolCalls : undefined
         };
         
         updateMessages(prev => [...prev, aiMessage]);
         setIsLoading(false);
+        
+        // Clear all tool call states for next interaction
+        setActiveToolCalls(new Map());
+        setCompletedToolCalls(new Map());
+        setCurrentConversationToolCalls([]);
         
         // Reload workspace data when AI makes changes
         loadSessionData();
@@ -215,6 +335,9 @@ export const EditorPage: React.FC = () => {
     updateMessages(prev => [...prev, userMessage]);
     setInputMessage('');
     setIsLoading(true);
+    
+    // Clear tool calls for new conversation turn
+    setCurrentConversationToolCalls([]);
 
     try {
       websocketService.sendMessage(inputMessage);
@@ -527,6 +650,14 @@ export const EditorPage: React.FC = () => {
                         <div className="whitespace-pre-wrap font-baskerville text-sm leading-relaxed">
                           {message.content}
                         </div>
+                        
+                        {/* Tool Call Visualization */}
+                        {message.toolCalls && message.toolCalls.length > 0 && (
+                          <div className="mt-3">
+                            <ToolCallVisualization toolCalls={message.toolCalls} />
+                          </div>
+                        )}
+                        
                         <div className="text-xs opacity-70 mt-2 font-baskerville">
                           {new Date(message.timestamp).toLocaleTimeString()}
                         </div>
@@ -534,13 +665,29 @@ export const EditorPage: React.FC = () => {
                     </div>
                   ))}
                   
-                  {isLoading && (
+                  {/* Show active tool calls while loading */}
+                  {(isLoading || activeToolCalls.size > 0 || currentConversationToolCalls.length > 0) && (
                     <div className="flex justify-start">
-                      <div className="bg-muted text-foreground px-4 py-3 rounded-lg">
-                        <div className="flex items-center space-x-2">
-                          <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-primary"></div>
-                          <span className="font-baskerville text-sm">AI is thinking...</span>
-                        </div>
+                      <div className="bg-muted text-foreground px-4 py-3 rounded-lg max-w-2xl">
+                        {(activeToolCalls.size > 0 || currentConversationToolCalls.length > 0) ? (
+                          <div className="space-y-2">
+                            <div className="flex items-center space-x-2">
+                              <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-primary"></div>
+                              <span className="font-baskerville text-sm">AI is working...</span>
+                            </div>
+                            <ToolCallVisualization toolCalls={[
+                              ...Array.from(activeToolCalls.values()),
+                              ...currentConversationToolCalls.filter(conv => 
+                                !Array.from(activeToolCalls.values()).some(active => active.id === conv.id)
+                              )
+                            ]} />
+                          </div>
+                        ) : (
+                          <div className="flex items-center space-x-2">
+                            <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-primary"></div>
+                            <span className="font-baskerville text-sm">AI is thinking...</span>
+                          </div>
+                        )}
                       </div>
                     </div>
                   )}
