@@ -312,6 +312,36 @@ class UserPreferencesDB(Base):
         Index('idx_user_preferences_updated_at', 'updated_at'),
     )
 
+# Chart Storage for persistent visualization data
+class ChartDB(Base):
+    __tablename__ = "charts"
+    
+    id = Column(String, primary_key=True)  # Unique chart ID
+    workspace_id = Column(String, nullable=False)
+    page_id = Column(String, nullable=False)  # Canvas page ID (where results are displayed)
+    original_page_id = Column(String, nullable=True)  # Original page ID (where query was made)
+    block_id = Column(String, nullable=True)  # Optional link to block
+    user_id = Column(String, nullable=False)  # User isolation
+    original_query = Column(Text, nullable=False)  # The query that generated this chart
+    chart_type = Column(String, nullable=False)  # heatmap, bar, scatter, etc.
+    chart_config = Column(JSONB, nullable=False)  # Full Plotly chart configuration
+    chart_metadata = Column(JSONB, default=dict)  # Session info, timing, data summary, etc.
+    raw_data = Column(JSONB, nullable=True)  # Optional raw data used to generate chart
+    file_path = Column(String, nullable=True)  # Optional reference to file on disk
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    
+    # Indexes for performance and querying
+    __table_args__ = (
+        Index('idx_charts_workspace_id', 'workspace_id'),
+        Index('idx_charts_page_id', 'page_id'),
+        Index('idx_charts_original_page_id', 'original_page_id'),
+        Index('idx_charts_block_id', 'block_id'),
+        Index('idx_charts_user_id', 'user_id'),
+        Index('idx_charts_chart_type', 'chart_type'),
+        Index('idx_charts_created_at', 'created_at'),
+    )
+
 # Create tables
 Base.metadata.create_all(bind=engine)
 

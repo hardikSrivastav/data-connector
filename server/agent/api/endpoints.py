@@ -679,6 +679,112 @@ async def cleanup_sessions(max_age_hours: int = 24):
         logger.error(f"❌ Error cleaning up sessions: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Failed to cleanup sessions: {str(e)}")
 
+@router.get("/sessions/{session_id}/charts")
+async def get_session_charts(session_id: str):
+    """
+    Get chart configurations for a specific session
+    
+    Args:
+        session_id: ID of the session to retrieve charts for
+        
+    Returns:
+        List of chart configurations saved for this session
+    """
+    logger.info(f"📊 API ENDPOINT: /sessions/{session_id}/charts - Getting chart configs")
+    
+    try:
+        import os
+        import glob
+        
+        # Path to charts directory - use absolute path consistent with storage
+        charts_dir = os.path.join(os.getcwd(), "charts")
+        if not os.path.exists(charts_dir):
+            logger.info(f"Charts directory does not exist: {charts_dir}")
+            return {"charts": [], "session_id": session_id}
+        
+        # Primary lookup: Find chart files using session_id in filename (new format)
+        pattern = os.path.join(charts_dir, f"chart_config_{session_id}_*.json")
+        chart_files = glob.glob(pattern)
+        
+        # Also check for new filename format: {session_id}_{query}_{timestamp}.json
+        if not chart_files:
+            logger.info(f"No old format charts found, checking new filename format for {session_id}")
+            new_pattern = os.path.join(charts_dir, f"{session_id}_*.json")
+            chart_files = glob.glob(new_pattern)
+            logger.info(f"Found {len(chart_files)} charts with new filename format")
+        
+        # Fallback: If no session-based files found, check content for backward compatibility
+        if not chart_files:
+            logger.info(f"No session-based chart files found for {session_id}, checking content-based fallback")
+            pattern = os.path.join(charts_dir, "*.json")
+            all_files = glob.glob(pattern)
+            # Filter by checking file content for session_id
+            chart_files = []
+            for file_path in all_files:
+                try:
+                    with open(file_path, 'r', encoding='utf-8') as f:
+                        content = json.load(f)
+                        if content.get('metadata', {}).get('session_id') == session_id:
+                            chart_files.append(file_path)
+                            logger.info(f"Found chart via content matching: {file_path}")
+                except Exception as e:
+                    logger.debug(f"Error reading chart file {file_path}: {e}")
+                    continue
+        
+        charts = []
+        for file_path in chart_files:
+            try:
+                with open(file_path, 'r', encoding='utf-8') as f:
+                    chart_data = json.load(f)
+                    
+                    # Extract the chart config and metadata
+                    chart_config = chart_data.get('chart_config', {})
+                    metadata = chart_data.get('metadata', {})
+                    analysis_summary = chart_data.get('analysis_summary', {})
+                    dataset_info = chart_data.get('dataset_info', {})
+                    
+                    # Format for frontend consumption
+                    formatted_chart = {
+                        'chart_config': chart_config,
+                        'chart_summary': {
+                            'type': metadata.get('chart_type', analysis_summary.get('chart_type', 'unknown')),
+                            'title': chart_config.get('layout', {}).get('title', 'Chart'),
+                            'data_points': metadata.get('data_points', dataset_info.get('size', 0))
+                        },
+                        'visualization_data': {
+                            'dataset_info': dataset_info,
+                            'analysis_summary': analysis_summary,
+                            'performance_metrics': {
+                                'chart_type': metadata.get('chart_type', 'unknown'),
+                                'data_points': metadata.get('data_points', 0)
+                            }
+                        },
+                        'metadata': {
+                            'generated_at': metadata.get('generated_at'),
+                            'chart_type': metadata.get('chart_type', 'unknown'),
+                            'data_points': metadata.get('data_points', 0),
+                            'user_query': metadata.get('user_query', 'Data visualization'),
+                            'file_path': file_path
+                        }
+                    }
+                    
+                    charts.append(formatted_chart)
+                    
+            except Exception as e:
+                logger.warning(f"Failed to load chart file {file_path}: {e}")
+                continue
+        
+        logger.info(f"✅ Found {len(charts)} chart configs for session {session_id}")
+        return {
+            "charts": charts,
+            "session_id": session_id,
+            "total_charts": len(charts)
+        }
+        
+    except Exception as e:
+        logger.error(f"❌ Error getting session charts: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to get session charts: {str(e)}")
+
 # Keep the legacy endpoints for backward compatibility
 async def execute_postgres_query(llm, question: str, analyze: bool, orchestrator: Orchestrator, db_type: str) -> Dict[str, Any]:
     """Execute a PostgreSQL query (legacy)"""

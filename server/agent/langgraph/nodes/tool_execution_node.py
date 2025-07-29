@@ -149,6 +149,12 @@ class ToolExecutionNode:
         logger.info(f"🔧 DEPENDENCY_RESOLUTION: Available step outputs: {list(step_outputs.keys())}")
         logger.info(f"🔧 DEPENDENCY_RESOLUTION: Execution results count: {len(execution_results)}")
         
+        # Add specific logging for visualization tools
+        if "visualization" in tool_id:
+            logger.info(f"🎨 VISUALIZATION_TOOL: Processing parameters for visualization tool")
+            logger.info(f"🎨 VISUALIZATION_TOOL: Original parameters: {parameters}")
+            logger.info(f"🎨 VISUALIZATION_TOOL: Available step outputs: {list(step_outputs.keys())}")
+        
         for key, value in parameters.items():
             if isinstance(value, str):
                 # Check for step output placeholders
@@ -294,7 +300,7 @@ class ToolExecutionNode:
         else:
             return [{"value": str(data), "type": type(data).__name__}]
     
-    def _validate_tool_parameters(self, tool_id: str, parameters: Dict[str, Any]) -> Dict[str, Any]:
+    def _validate_tool_parameters(self, tool_id: str, parameters: Dict[str, Any], session_id: str = None, user_query: str = None) -> Dict[str, Any]:
         """Validate and enhance tool parameters before execution."""
         validated_params = parameters.copy()
         
@@ -336,6 +342,12 @@ class ToolExecutionNode:
                     validated_params[param_name] = "sample_orders"
                 elif param_name == "collection_name":
                     validated_params[param_name] = "sample_orders"
+                elif param_name == "output_filename" and tool_id == "visualization.create_visualization":
+                    # Generate filename with session + query + timestamp
+                    safe_session_id = (session_id or 'unknown')[:20]
+                    safe_query = (user_query or 'query')[:30].replace(' ', '_').replace('/', '_').replace('\\', '_')
+                    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                    validated_params[param_name] = f"{safe_session_id}_{safe_query}_{timestamp}"
                 else:
                     # Generic defaults
                     if param_type == "str":
@@ -348,6 +360,25 @@ class ToolExecutionNode:
                         validated_params[param_name] = {}
                     elif param_type == "list":
                         validated_params[param_name] = []
+        
+        # Special validation for visualization tools
+        if tool_id == "visualization.create_visualization":
+            if "data" not in validated_params or not validated_params["data"]:
+                logger.error(f"🎨 VALIDATION_ERROR: Visualization tool missing required 'data' parameter")
+                # Add default data parameter if missing
+                validated_params["data"] = "output_from_step_1"  # Assume first step has data
+                logger.info(f"🎨 VALIDATION_FIX: Added default data parameter: output_from_step_1")
+            
+            # Ensure other critical visualization parameters are present
+            if "chart_type" not in validated_params:
+                validated_params["chart_type"] = "bar"  # Default to bar chart
+                logger.info(f"🎨 VALIDATION_FIX: Added default chart_type: bar")
+            
+            if "title" not in validated_params:
+                validated_params["title"] = "Data Visualization"  # Default title
+                logger.info(f"🎨 VALIDATION_FIX: Added default title: Data Visualization")
+            
+            logger.info(f"🎨 VALIDATION_SUCCESS: Visualization tool parameters validated: {list(validated_params.keys())}")
         
         return validated_params
 
@@ -639,7 +670,9 @@ class ToolExecutionNode:
                     # Validate and enhance parameters
                     validated_parameters = self._validate_tool_parameters(
                         tool_call.tool_id, 
-                        resolved_parameters
+                        resolved_parameters,
+                        session_id=session_id,
+                        user_query=state["user_query"]
                     )
                     
                     logger.info(f"🔧 DEBUG: Validated parameters for {tool_call.tool_id}: {validated_parameters}")
@@ -653,6 +686,16 @@ class ToolExecutionNode:
                     )
                     
                     logger.info(f"🔧 DEBUG: About to execute tool {tool_call.tool_id} with final parameters: {validated_parameters}")
+                    
+                    # Add pre-execution validation for visualization tools
+                    if "visualization" in tool_call.tool_id:
+                        data_param = validated_parameters.get("data")
+                        if not data_param or (isinstance(data_param, list) and len(data_param) == 0):
+                            logger.error(f"🎨 VISUALIZATION_ERROR: No valid data provided for visualization tool")
+                            logger.error(f"🎨 VISUALIZATION_ERROR: Parameters: {validated_parameters}")
+                            logger.error(f"🎨 VISUALIZATION_ERROR: This will likely cause the visualization to fail")
+                        else:
+                            logger.info(f"🎨 VISUALIZATION_SUCCESS: Valid data found for visualization: {type(data_param)} with {len(data_param) if isinstance(data_param, list) else 'N/A'} items")
                     
                     # Execute the tool
                     result = await self.tool_registry.execute_tool(updated_tool_call)
@@ -810,11 +853,12 @@ class ToolExecutionNode:
         return tools_text
     
     def _create_tool_selection_prompt(self, user_query: str, tools_description: str) -> str:
-        """Create prompt for tool selection with database context awareness."""
-        # Detect database context from query
+        """Create prompt for intelligent tool selection without pre-filtering."""
+        # Only detect database context (since this is still useful for platform-specific tools)
         query_lower = user_query.lower()
         database_hints = ""
         
+        # Database context detection (keeping this as it helps with platform selection)
         if "shopify" in query_lower or "product" in query_lower or "inventory" in query_lower or "order" in query_lower:
             database_hints = "\n🛍️ SHOPIFY CONTEXT DETECTED: Prioritize shopify.* tools for e-commerce data analysis"
         elif "mongodb" in query_lower or "mongo" in query_lower or "collection" in query_lower:
@@ -838,29 +882,31 @@ CRITICAL TOOL SELECTION RULES:
 1. **Database Context Priority**: If the query mentions specific platforms (Shopify, MongoDB, PostgreSQL, etc.), STRONGLY prioritize tools from that platform
 2. **Domain-Specific Analysis**: For e-commerce queries, use Shopify tools; for document analysis, use MongoDB tools; for relational data, use PostgreSQL tools
 3. **Tool Relevance**: Select tools that directly address the user's specific request (performance analysis, inventory optimization, etc.)
-4. **Workflow Completeness**: Include supporting tools for data validation, export, or visualization if the query implies these needs
+4. **Intelligent Visualization**: If the query involves data analysis, trends, comparisons, numerical insights, or would benefit from visual representation, include visualization tools alongside data retrieval tools
+5. **Workflow Completeness**: Consider the full user journey - data retrieval, analysis, and presentation
 
 Instructions:
-1. Analyze the user's query to identify the primary database/platform context
-2. Select the most relevant tools that can help answer their query
-3. Prioritize platform-specific tools when context is clear
-4. Consider the tool categories and descriptions carefully
-5. Select between 2-5 tools maximum - focus on what's necessary for a complete analysis
+1. Analyze the user's query to understand their true intent and information needs
+2. Identify the primary database/platform context when relevant
+3. Consider whether the response would be enhanced by data visualization (charts, graphs, plots)
+4. Select tools that provide the most comprehensive and useful answer
+5. Think about how users consume information - sometimes a chart communicates better than raw data
+6. Select between 2-6 tools maximum - focus on what's necessary for a complete analysis
 
 Response Format:
 Provide your selection as a JSON object with this structure:
 {{
-    "analysis": "Brief analysis of the user's request and detected database context",
+    "analysis": "Brief analysis of the user's request and your reasoning for tool selection",
     "selected_tools": [
         {{
             "tool_id": "tool_identifier",
-            "reason": "Why this tool is needed for the specific context"
+            "reason": "Why this tool is needed to address the user's request"
         }}
     ],
     "execution_strategy": "Brief description of how these tools should work together"
 }}
 
-Focus on practical utility and database-appropriate tool selection."""
+Focus on providing the most helpful and complete response to the user's request."""
     
     def _create_execution_plan_prompt(self, user_query: str, tool_details: List[Dict]) -> str:
         """Create prompt for execution plan generation."""
@@ -881,7 +927,10 @@ Focus on practical utility and database-appropriate tool selection."""
                     elif param_name == "nl_prompt":
                         tools_info += f"  - {param_name} ({param_type}): Natural language description of what you want to query\n"
                     elif param_name == "data":
-                        tools_info += f"  - {param_name} ({param_type}): Data to process (use 'output_from_step_X' to reference previous step outputs)\n"
+                        if "visualization" in tool['tool_id']:
+                            tools_info += f"  - {param_name} ({param_type}): CRITICAL - Must reference previous step output using 'output_from_step_X' format. This tool requires actual data, not placeholders.\n"
+                        else:
+                            tools_info += f"  - {param_name} ({param_type}): Data to process (use 'output_from_step_X' to reference previous step outputs)\n"
                     elif param_name == "filepath":
                         tools_info += f"  - {param_name} ({param_type}): File path for output (e.g., '/tmp/results.csv')\n"
                     else:
@@ -903,11 +952,21 @@ CRITICAL INSTRUCTIONS:
 3. For SQL queries, write actual SQL statements based on the user query
 4. For MongoDB queries, provide proper JSON objects with collection and pipeline fields
 5. For file operations, use realistic file paths like "/tmp/analysis_results.csv"
-6. NO PLACEHOLDERS - every parameter must have a concrete value
+6. CRITICAL: VISUALIZATION TOOLS ARE FORBIDDEN FROM HAVING EMPTY PARAMETERS
+   For ANY visualization.create_visualization tool, you MUST include these parameters:
+   - "data": "output_from_step_X" (MANDATORY - reference the step that retrieves data)
+   - "chart_type": "bar" or "line" or "pie" (MANDATORY - specify chart type)  
+   - "title": "descriptive title" (MANDATORY - provide meaningful title)
+   - "user_query": "the original user query" (MANDATORY - include the original query)
+   NEVER leave visualization parameters empty {{}} - this will cause execution failure!
+7. NO PLACEHOLDERS - every parameter must have a concrete value
 
 Examples of GOOD parameters:
 - For postgres.execute_query: {{"query": "SELECT * FROM sample_orders WHERE status = 'active' LIMIT 10"}}
 - For mongo.execute_query: {{"query": {{"collection": "sample_orders", "pipeline": [{{"$match": {{"status": "active"}}}}, {{"$limit": 10}}]}}}}
+- For visualization.create_visualization: {{"data": "output_from_step_1", "chart_type": "bar", "title": "Top 10 Best Selling Products", "user_query": "show me the top 10 best selling products with sales analysis from mongo"}}
+  WRONG visualization example: {{"parameters": {{}}}} - This will FAIL!
+  CORRECT visualization example: {{"parameters": {{"data": "output_from_step_1", "chart_type": "bar", "title": "Sales Data", "user_query": "original query"}}}}
 - For file export: {{"data": "output_from_step_1", "filepath": "/tmp/shopify_analysis.csv"}}
 
 Response Format (JSON only):
@@ -1201,6 +1260,36 @@ Write in a professional but accessible tone, as if explaining to a business stak
                 else:
                     logger.warning(f"🔧 DEBUG: No default generator for parameter '{param_name}' in {tool_id}")
         
+        # 🎨 CRITICAL: Special handling for visualization tools
+        if "visualization" in tool_id:
+            logger.info(f"🎨 PLAN_VALIDATION: Processing visualization tool {tool_id}")
+            
+            # Ensure data parameter exists and references previous step
+            if "data" not in enhanced_params or not enhanced_params["data"]:
+                if step_number > 1:
+                    enhanced_params["data"] = f"output_from_step_{step_number - 1}"
+                    logger.info(f"🎨 PLAN_VALIDATION: Added data parameter: {enhanced_params['data']}")
+                else:
+                    enhanced_params["data"] = "output_from_step_1"
+                    logger.info(f"🎨 PLAN_VALIDATION: Added fallback data parameter: {enhanced_params['data']}")
+            
+            # Ensure chart_type exists
+            if "chart_type" not in enhanced_params:
+                enhanced_params["chart_type"] = "bar"
+                logger.info(f"🎨 PLAN_VALIDATION: Added default chart_type: bar")
+            
+            # Ensure title exists
+            if "title" not in enhanced_params:
+                enhanced_params["title"] = "Data Visualization"
+                logger.info(f"🎨 PLAN_VALIDATION: Added default title: Data Visualization")
+            
+            # Ensure user_query exists
+            if "user_query" not in enhanced_params:
+                enhanced_params["user_query"] = "Data analysis request"
+                logger.info(f"🎨 PLAN_VALIDATION: Added default user_query")
+            
+            logger.info(f"🎨 PLAN_VALIDATION: Final visualization parameters: {enhanced_params}")
+        
         logger.info(f"🔧 DEBUG: Enhanced params for {tool_id}: {enhanced_params}")
         return enhanced_params
     
@@ -1248,6 +1337,11 @@ Write in a professional but accessible tone, as if explaining to a business stak
             if session_id and "visualization" in tool_id:
                 parameters["session_id"] = session_id
                 logger.info(f"🔧 SESSION_INJECTION: Injected session_id '{session_id}' into {tool_id} parameters")
+                # Add comprehensive logging for visualization tool creation
+                logger.info(f"🎨 VISUALIZATION_PLAN: Creating tool call for visualization")
+                logger.info(f"🎨 VISUALIZATION_PLAN: Parameters: {parameters}")
+                logger.info(f"🎨 VISUALIZATION_PLAN: Session ID: {session_id}")
+                logger.info(f"🎨 VISUALIZATION_PLAN: Step description: {step.get('description', 'No description')}")
             
             tool_call = ToolCall(
                 call_id=f"call_{int(time.time())}_{step['step_number']}",

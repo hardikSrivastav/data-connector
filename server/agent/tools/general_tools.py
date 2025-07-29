@@ -843,18 +843,24 @@ class VisualizationTools:
                     import os
                     from datetime import datetime
                     
-                    # Generate filename if not provided
+                    # Generate filename if not provided - use session_id as primary identifier
                     if not output_filename:
-                        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-                        safe_chart_type = selected_chart_type.replace(" ", "_").lower()
-                        output_filename = f"chart_config_{safe_chart_type}_{timestamp}.json"
+                        if session_id:
+                            # Use session_id as primary identifier for proper query isolation
+                            safe_chart_type = selected_chart_type.replace(" ", "_").lower()
+                            output_filename = f"chart_config_{session_id}_{safe_chart_type}.json"
+                        else:
+                            # Fallback to timestamp if no session_id (shouldn't happen in normal flow)
+                            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                            safe_chart_type = selected_chart_type.replace(" ", "_").lower()
+                            output_filename = f"chart_config_{safe_chart_type}_{timestamp}.json"
                     
                     # Ensure the filename has .json extension
                     if not output_filename.endswith('.json'):
                         output_filename += '.json'
                     
-                    # Create charts directory if it doesn't exist
-                    charts_dir = "charts"
+                    # Create charts directory if it doesn't exist - use absolute path in project
+                    charts_dir = os.path.join(os.getcwd(), "charts")
                     os.makedirs(charts_dir, exist_ok=True)
                     
                     # Full path for the output file
