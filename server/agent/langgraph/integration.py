@@ -103,7 +103,10 @@ class LangGraphIntegrationOrchestrator:
         session_id: str,
         databases_available: Optional[List[str]] = None,
         force_langgraph: bool = False,
-        stream_callback: Optional[AsyncIterator] = None
+        stream_callback: Optional[AsyncIterator] = None,
+        user_id: Optional[str] = None,
+        page_id: Optional[str] = None,
+        workspace_id: Optional[str] = None
     ) -> Dict[str, Any]:
         """
         Process a database query using optimal routing between traditional and LangGraph workflows.
@@ -114,6 +117,9 @@ class LangGraphIntegrationOrchestrator:
             databases_available: Available database types
             force_langgraph: Force use of LangGraph workflow
             stream_callback: Optional streaming callback
+            user_id: Authenticated user ID for database storage
+            page_id: Page ID where results will be displayed
+            workspace_id: Workspace ID for context
             
         Returns:
             Query results with execution metadata
@@ -146,7 +152,10 @@ class LangGraphIntegrationOrchestrator:
                     session_id,
                     databases_available,
                     routing_decision,
-                    stream_callback
+                    stream_callback,
+                    user_id,
+                    page_id,
+                    workspace_id
                 )
                 self.execution_stats["langgraph_executions"] += 1
                 
@@ -156,7 +165,10 @@ class LangGraphIntegrationOrchestrator:
                     session_id,
                     databases_available,
                     routing_decision,
-                    stream_callback
+                    stream_callback,
+                    user_id,
+                    page_id,
+                    workspace_id
                 )
                 self.execution_stats["hybrid_executions"] += 1
             
@@ -411,7 +423,10 @@ class LangGraphIntegrationOrchestrator:
         session_id: str,
         databases_available: List[str],
         routing_decision: Dict[str, Any],
-        stream_callback: Optional[AsyncIterator] = None
+        stream_callback: Optional[AsyncIterator] = None,
+        user_id: Optional[str] = None,
+        page_id: Optional[str] = None,
+        workspace_id: Optional[str] = None
     ) -> Dict[str, Any]:
         """Execute using hybrid workflow (LangGraph orchestration with traditional components)."""
         logger.info("Executing hybrid workflow")
@@ -430,6 +445,11 @@ class LangGraphIntegrationOrchestrator:
             
             # Set available databases
             graph_state["databases_identified"] = databases_available or []
+            
+            # Add user context to state for tool execution
+            graph_state["user_id"] = user_id
+            graph_state["page_id"] = page_id
+            graph_state["workspace_id"] = workspace_id
             
             # Step 1: Use LangGraph metadata collection
             metadata_node = MetadataCollectionNode()
@@ -788,7 +808,10 @@ class LangGraphIntegrationOrchestrator:
         session_id: str,
         databases_available: List[str],
         routing_decision: Dict[str, Any],
-        stream_callback: Optional[AsyncIterator] = None
+        stream_callback: Optional[AsyncIterator] = None,
+        user_id: Optional[str] = None,
+        page_id: Optional[str] = None,
+        workspace_id: Optional[str] = None
     ) -> Dict[str, Any]:
         """
         Execute the iterative LangGraph workflow with connected nodes.
@@ -801,6 +824,15 @@ class LangGraphIntegrationOrchestrator:
         start_time = time.time()
         
         try:
+            # ❌ CRITICAL LOGGING: Track user context in orchestrator state creation
+            logger.error(f"🔍 ORCHESTRATOR_DEBUG: ===========================================")
+            logger.error(f"🔍 ORCHESTRATOR_DEBUG: CREATING LANGGRAPH STATE")
+            logger.error(f"🔍 ORCHESTRATOR_DEBUG: session_id: {session_id}")
+            logger.error(f"🔍 ORCHESTRATOR_DEBUG: user_id param: {user_id}")
+            logger.error(f"🔍 ORCHESTRATOR_DEBUG: page_id param: {page_id}")
+            logger.error(f"🔍 ORCHESTRATOR_DEBUG: workspace_id param: {workspace_id}")
+            logger.error(f"🔍 ORCHESTRATOR_DEBUG: ===========================================")
+            
             # Initialize state for the iterative workflow
             state = {
                 "session_id": session_id,
@@ -809,8 +841,16 @@ class LangGraphIntegrationOrchestrator:
                 "databases_available": databases_available,
                 "routing_decision": routing_decision,
                 "workflow_type": "iterative_langgraph",
-                "start_time": start_time
+                "start_time": start_time,
+                "user_id": user_id,
+                "page_id": page_id,
+                "workspace_id": workspace_id
             }
+            
+            logger.error(f"🔍 ORCHESTRATOR_DEBUG: State created with keys: {list(state.keys())}")
+            logger.error(f"🔍 ORCHESTRATOR_DEBUG: State user_id: {state.get('user_id')}")
+            logger.error(f"🔍 ORCHESTRATOR_DEBUG: State page_id: {state.get('page_id')}")
+            logger.error(f"🔍 ORCHESTRATOR_DEBUG: State workspace_id: {state.get('workspace_id')}")
             
             # Phase 1: Classification
             logger.info("🔄 [ITERATIVE_WORKFLOW] Phase 1: Classification")

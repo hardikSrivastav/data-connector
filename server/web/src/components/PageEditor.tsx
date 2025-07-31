@@ -999,7 +999,10 @@ export const PageEditor = ({
         analyze: true,
         show_captured_data: true,  // ✅ Enable captured data display
         verbose: true,             // Also enable verbose output
-        show_outputs: true         // And comprehensive output breakdown
+        show_outputs: true,        // And comprehensive output breakdown
+        page_id: page.id,
+        workspace_id: workspace.id,
+        block_id: newBlockId    // Pass the new block ID created for this query
       }, {
         onStatus: (message) => {
           console.log(`📊 Status: ${message}`);
@@ -1251,7 +1254,6 @@ export const PageEditor = ({
             }]
           }));
 
-          // ✅ CRITICAL FIX: Preserve original event types for CanvasWorkspace to find them
           // Special handling for visualization events that CanvasWorkspace needs to detect
           if (['chart_config_json', 'hybrid_chart_config_json', 'visualization_created', 'visualization_complete'].includes(event.type)) {
             console.log(`🎨 PageEditor: ✅ ADDING VISUALIZATION EVENT TO REASONING CHAIN:`, {
@@ -1570,7 +1572,10 @@ export const PageEditor = ({
               // Try to re-execute the query to get the data
               const fallbackResponse = await agentClient.query({
                 question: query,
-                analyze: !!accumulatedData.analysis
+                analyze: !!accumulatedData.analysis,
+                page_id: page.id,
+                workspace_id: workspace.id,
+                block_id: newBlockId
               });
               
               console.log(`🔧 PageEditor: Fallback query response:`, {

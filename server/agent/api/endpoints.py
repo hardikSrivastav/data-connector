@@ -34,6 +34,9 @@ from ..langgraph.compat import GraphState
 # Import database availability service
 from ..services.database_availability import get_availability_service, DatabaseStatus
 
+# Import authentication function for user context
+from application.routes.storage import get_current_user_from_request
+
 # Set up logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
@@ -217,6 +220,9 @@ class VisualizationAnalysisRequest(BaseModel):
     dataset: Dict[str, Any]  # Simplified dataset representation
     user_intent: str
     preferences: Optional[Dict[str, Any]] = {}
+    page_id: str
+    workspace_id: str = "main"
+    block_id: Optional[str] = None
 
 class VisualizationAnalysisResponse(BaseModel):
     analysis: Dict[str, Any]
@@ -228,6 +234,9 @@ class ChartGenerationRequest(BaseModel):
     data: Dict[str, Any]
     customizations: Optional[Dict[str, Any]] = {}
     performance_requirements: Optional[Dict[str, Any]] = {}
+    page_id: str
+    workspace_id: str
+    block_id: Optional[str] = None
 
 class ChartGenerationResponse(BaseModel):
     config: Dict[str, Any]
@@ -2113,7 +2122,10 @@ async def get_database_summary():
 # ========== VISUALIZATION ENDPOINTS ==========
 
 @router.post("/visualization/analyze", response_model=VisualizationAnalysisResponse)
-async def analyze_for_visualization(request: VisualizationAnalysisRequest):
+async def analyze_for_visualization(
+    request: VisualizationAnalysisRequest,
+    http_request: Request
+):
     """
     Analyze dataset and suggest optimal visualizations - Using general tools
     """
@@ -2167,18 +2179,27 @@ async def analyze_for_visualization(request: VisualizationAnalysisRequest):
                 ]
                 df = pd.DataFrame(sample_data)
         
-        # Step 2: Use the visualization tool from general_tools
+        # Step 2: Extract current user for proper context
+        current_user = await get_current_user_from_request(http_request)
+        logger.info(f"📊 Analyzing visualization for user: {current_user}")
+        
+        # Step 3: Use the visualization tool from general_tools
         from ..tools.general_tools import VisualizationTools
         
         data_for_viz = df.to_dict('records')
         suggested_chart_type = _suggest_chart_type(df, request.user_intent)
         
-        # Create visualization using the general tool
+        # Create visualization using the general tool with proper context
         viz_result = await VisualizationTools.create_visualization(
             data=data_for_viz,
             chart_type=suggested_chart_type,
             title=f"Visualization for: {request.user_intent}",
             user_query=request.user_intent,
+            session_id=session_id,
+            user_id=current_user,
+            page_id=request.page_id,
+            workspace_id=request.workspace_id,
+            block_id=request.block_id,
             save_to_file=False  # Don't save file for analysis endpoint
         )
         
@@ -2220,7 +2241,10 @@ async def analyze_for_visualization(request: VisualizationAnalysisRequest):
         raise HTTPException(status_code=500, detail=f"Visualization analysis failed: {str(e)}")
 
 @router.post("/visualization/generate", response_model=ChartGenerationResponse)
-async def generate_chart_config(request: ChartGenerationRequest):
+async def generate_chart_config(
+    request: ChartGenerationRequest,
+    http_request: Request
+):
     """
     Generate optimized Plotly configuration - Using general tools
     """
@@ -2228,6 +2252,9 @@ async def generate_chart_config(request: ChartGenerationRequest):
     logger.info(f"📈 Generating {request.chart_type} chart configuration")
     
     try:
+        # Extract current user for proper context
+        current_user = await get_current_user_from_request(http_request)
+        logger.info(f"📈 Generating chart for user: {current_user}")
         # Import general tools
         from ..tools.general_tools import VisualizationTools
         import pandas as pd
@@ -2269,6 +2296,11 @@ async def generate_chart_config(request: ChartGenerationRequest):
             data=data_for_viz,
             chart_type=request.chart_type,
             title=request.customizations.get('title', f"{request.chart_type.title()} Chart"),
+            session_id=session_id,
+            user_id=current_user,
+            page_id=request.page_id,
+            workspace_id=request.workspace_id,
+            block_id=request.block_id,
             save_to_file=False  # Don't save file for API generation
         )
         
@@ -2296,6 +2328,9 @@ class VisualizationQueryRequest(BaseModel):
     chart_preferences: Optional[Dict[str, Any]] = {}
     auto_generate: bool = True
     performance_mode: bool = False
+    page_id: str
+    workspace_id: str
+    block_id: Optional[str] = None
 
 class VisualizationQueryResponse(BaseModel):
     success: bool
@@ -2364,12 +2399,17 @@ async def visualization_query(request: VisualizationQueryRequest, http_request: 
                 
                 suggested_chart_type = _suggest_chart_type(df, request.query)
                 
-                # Create visualization using the general tool
+                # Create visualization using the general tool with proper context
                 viz_result = await VisualizationTools.create_visualization(
                     data=chart_data,
                     chart_type=suggested_chart_type,
                     title=request.chart_preferences.get('title', f"Visualization for: {request.query}"),
                     user_query=request.query,
+                    session_id=session_id,
+                    user_id=current_user,
+                    page_id=request.page_id,
+                    workspace_id=request.workspace_id,
+                    block_id=request.block_id,
                     save_to_file=request.chart_preferences.get('save_to_file', False)
                 )
                 
@@ -2669,6 +2709,9 @@ class LangGraphQueryRequest(BaseModel):
     save_session: bool = True
     stream_output: bool = True
     include_aggregated_data: bool = False  # NEW: Control inline data return
+    page_id: Optional[str] = None
+    workspace_id: Optional[str] = None
+    block_id: Optional[str] = None
 
 class LangGraphQueryResponse(BaseModel):
     success: bool
@@ -2810,12 +2853,33 @@ async def langgraph_stream(request: LangGraphQueryRequest, http_request: Request
                 status="executing"
             )
             
+            logger.error(f"🔍 API_DEBUG: ===========================================")
+            logger.error(f"🔍 API_DEBUG: LANGGRAPH API USER CONTEXT ANALYSIS")
+            logger.error(f"🔍 API_DEBUG: current_user extracted: {current_user}")
+            logger.error(f"🔍 API_DEBUG: session_id: {session_id}")
+            logger.error(f"🔍 API_DEBUG: request object attributes: {dir(request)}")
+            logger.error(f"🔍 API_DEBUG: request.question: {request.question}")
+            
+            # Check for page_id and workspace_id in request
+            request_page_id = getattr(request, 'page_id', None)
+            request_workspace_id = getattr(request, 'workspace_id', None)
+            request_block_id = getattr(request, 'block_id', None)
+            
+            logger.error(f"🔍 API_DEBUG: request.page_id: {request_page_id}")
+            logger.error(f"🔍 API_DEBUG: request.workspace_id: {request_workspace_id}")
+            logger.error(f"🔍 API_DEBUG: request.block_id: {request_block_id}")
+            logger.error(f"🔍 API_DEBUG: ===========================================")
+            
             # Process query with real-time monitoring - let LangGraph determine optimal routing and databases (EXACT CLI LOGIC)
+            # ✅ FIXED: Pass user context to orchestrator
             result = await orchestrator.process_query(
                 question=request.question,
                 session_id=session_id,
                 databases_available=None,  # Let it auto-detect (same as CLI)
-                force_langgraph=request.force_langgraph
+                force_langgraph=request.force_langgraph,
+                user_id=current_user,
+                page_id=request_page_id,
+                workspace_id=request_workspace_id
             )
             
             # ✅ COMPREHENSIVE DEFENSIVE: Handle ExecutionResult objects and ensure all results are dictionaries
@@ -2890,7 +2954,6 @@ async def langgraph_stream(request: LangGraphQueryRequest, http_request: Request
             try:
                 output_integrator = get_output_integrator()
                 
-                # CRITICAL: Extract the actual session ID used by the workflow execution (EXACT CLI LOGIC)
                 # The workflow may have created internal sessions we need to track
                 actual_session_id = result.get("session_id", session_id)
                 if actual_session_id != session_id:
@@ -3277,7 +3340,6 @@ async def langgraph_stream(request: LangGraphQueryRequest, http_request: Request
                             message="Detailed reasoning chain complete"
                             )
                     
-                    # ✅ CRITICAL ENHANCEMENT: Verify and log captured SQL queries and tool execution data
                     yield create_stream_event("data_verification", session_id,
                         message="Verifying captured SQL queries and tool execution data..."
                     )

@@ -698,7 +698,11 @@ class VisualizationTools:
         user_query: Optional[str] = None,
         session_id: Optional[str] = None,
         save_to_file: bool = True,
-        output_filename: Optional[str] = None
+        output_filename: Optional[str] = None,
+        user_id: Optional[str] = None,
+        page_id: Optional[str] = None,
+        workspace_id: Optional[str] = None,
+        block_id: Optional[str] = None
     ) -> Dict[str, Any]:
         """
         Create intelligent visualizations based on data analysis.
@@ -715,10 +719,28 @@ class VisualizationTools:
             session_id: Optional session ID for associating saved chart files with specific query sessions
             save_to_file: Whether to save the chart config to a JSON file (default: True)
             output_filename: Optional filename for the saved JSON file (auto-generated if not provided)
+            user_id: Optional authenticated user ID for database storage
+            page_id: Optional page ID where the chart will be displayed
+            workspace_id: Optional workspace ID for chart association
+            block_id: Optional block ID for chart association
             
         Returns:
             Visualization configuration and metadata
         """
+        # ❌ CRITICAL LOGGING: Track user context received by VisualizationTools
+        logger.error(f"🔍 VISUALIZATION_TOOLS_DEBUG: ===========================================")
+        logger.error(f"🔍 VISUALIZATION_TOOLS_DEBUG: CREATE_VISUALIZATION CALLED")
+        logger.error(f"🔍 VISUALIZATION_TOOLS_DEBUG: Data points: {len(data)}")
+        logger.error(f"🔍 VISUALIZATION_TOOLS_DEBUG: user_id param: {user_id}")
+        logger.error(f"🔍 VISUALIZATION_TOOLS_DEBUG: page_id param: {page_id}")
+        logger.error(f"🔍 VISUALIZATION_TOOLS_DEBUG: workspace_id param: {workspace_id}")
+        logger.error(f"🔍 VISUALIZATION_TOOLS_DEBUG: block_id param: {block_id}")
+        logger.error(f"🔍 VISUALIZATION_TOOLS_DEBUG: session_id param: {session_id}")
+        logger.error(f"🔍 VISUALIZATION_TOOLS_DEBUG: user_query param: {user_query}")
+        logger.error(f"🔍 VISUALIZATION_TOOLS_DEBUG: chart_type param: {chart_type}")
+        logger.error(f"🔍 VISUALIZATION_TOOLS_DEBUG: title param: {title}")
+        logger.error(f"🔍 VISUALIZATION_TOOLS_DEBUG: ===========================================")
+        
         logger.info(f"Creating visualization for {len(data)} data points")
         logger.info(f"Requested chart type: {chart_type}")
         logger.info(f"User query context: {user_query}")
@@ -842,7 +864,88 @@ class VisualizationTools:
                     import json
                     import os
                     from datetime import datetime
+                    import uuid
                     
+                    # Try to save to database first (preferred method)
+                    try:
+                        # Generate unique chart ID
+                        chart_id = str(uuid.uuid4())
+                        
+                        # Prepare chart data for database
+                        chart_metadata = {
+                            "generated_at": datetime.now().isoformat(),
+                            "data_points": len(df),
+                            "user_query": user_query or "Data visualization requested",
+                            "session_id": session_id,
+                            "tool_version": "1.0.0"
+                        }
+                        
+                        # Validate required context parameters
+                        if not user_id:
+                            logger.warning("user_id not provided - chart will not be saved to database")
+                            visualization_result["database_saved"] = False
+                            visualization_result["database_error"] = "Missing user_id - authentication required"
+                            return visualization_result
+                        
+                        if not page_id:
+                            logger.warning("page_id not provided - using session_id as fallback")
+                            page_id = session_id or f"unknown_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+                        
+                        if not workspace_id:
+                            logger.warning("workspace_id not provided - chart will not be saved to database")
+                            visualization_result["database_saved"] = False
+                            visualization_result["database_error"] = "Missing workspace_id - required for proper chart storage"
+                            return visualization_result
+                        
+                        # Import and use the database storage
+                        from sqlalchemy import create_engine
+                        from sqlalchemy.orm import sessionmaker
+                        import os
+                        
+                        # Get database connection (same as storage.py)
+                        DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://notion_user:notion_password@localhost:5432/notion_clone")
+                        engine = create_engine(DATABASE_URL)
+                        SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+                        
+                        # Import the ChartDB model
+                        from application.routes.storage import ChartDB
+                        
+                        db = SessionLocal()
+                        try:
+                            # Create chart record
+                            db_chart = ChartDB(
+                                id=chart_id,
+                                workspace_id=workspace_id,
+                                page_id=page_id,
+                                original_page_id=page_id,  # Set as same as page_id for now
+                                block_id=block_id,
+                                user_id=user_id,
+                                original_query=user_query or "Data visualization requested",
+                                chart_type=selected_chart_type,
+                                chart_config=visualization_result["chart_config"],
+                                chart_metadata=chart_metadata,
+                                raw_data=data
+                            )
+                            
+                            db.add(db_chart)
+                            db.commit()
+                            db.refresh(db_chart)
+                            
+                            # Add database info to result
+                            visualization_result["database_saved"] = True
+                            visualization_result["chart_id"] = chart_id
+                            
+                            logger.info(f"Chart saved to database with ID: {chart_id}")
+                            
+                        finally:
+                            db.close()
+                            
+                    except Exception as db_error:
+                        logger.warning(f"Failed to save chart to database, falling back to file: {db_error}")
+                        visualization_result["database_saved"] = False
+                        visualization_result["database_error"] = str(db_error)
+                    
+                    # Also save to file for backward compatibility
                     # Generate filename if not provided - use session_id as primary identifier
                     if not output_filename:
                         if session_id:
@@ -891,11 +994,12 @@ class VisualizationTools:
                     visualization_result["file_path"] = file_path
                     visualization_result["file_size_kb"] = round(os.path.getsize(file_path) / 1024, 2)
                     
-                    logger.info(f"Chart config saved to: {file_path}")
+                    logger.info(f"Chart config also saved to file: {file_path}")
                     
                 except Exception as save_error:
-                    logger.warning(f"Failed to save chart config to file: {save_error}")
+                    logger.warning(f"Failed to save chart config: {save_error}")
                     visualization_result["file_saved"] = False
+                    visualization_result["database_saved"] = False
                     visualization_result["save_error"] = str(save_error)
             else:
                 visualization_result["file_saved"] = False

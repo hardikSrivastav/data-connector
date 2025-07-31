@@ -225,8 +225,11 @@ MongoDB Query:"""
         try:
             results = list(collection.aggregate(pipeline))
             
-            # Convert ObjectId and other BSON types to string representations
-            return json.loads(json_util.dumps(results))
+            # Convert ObjectId and other BSON types to simple Python types for compatibility
+            converted_results = json.loads(json_util.dumps(results))
+            
+            # Further convert Extended JSON format to simple types for visualization compatibility
+            return self._simplify_extended_json(converted_results)
             
         except Exception as e:
             logger.error(f"Error executing MongoDB query: {e}")
@@ -284,6 +287,59 @@ MongoDB Query:"""
             List of dictionaries with query results
         """
         return await self.execute(query)
+    
+    def _simplify_extended_json(self, data):
+        """
+        Convert MongoDB Extended JSON format to simple Python types for visualization compatibility.
+        
+        Converts:
+        - {'$oid': 'xxx'} → 'xxx' (ObjectId to string)
+        - {'$date': 'xxx'} → 'xxx' (ISODate to string)  
+        - {'$numberLong': 'xxx'} → int(xxx) (NumberLong to int)
+        - {'$numberDecimal': 'xxx'} → float(xxx) (NumberDecimal to float)
+        - Other complex nested structures recursively
+        
+        Args:
+            data: Data structure that may contain Extended JSON objects
+            
+        Returns:
+            Data structure with simple Python types
+        """
+        if isinstance(data, dict):
+            # Handle Extended JSON format objects
+            if len(data) == 1:
+                key, value = next(iter(data.items()))
+                
+                # Convert common BSON Extended JSON formats to simple types
+                if key == '$oid':
+                    return str(value)  # ObjectId → string
+                elif key == '$date':
+                    return str(value)  # ISODate → string
+                elif key == '$numberLong':
+                    return int(value)  # NumberLong → int
+                elif key == '$numberDecimal':
+                    return float(value)  # NumberDecimal → float
+                elif key == '$numberDouble':
+                    return float(value)  # NumberDouble → float
+                elif key == '$numberInt':
+                    return int(value)  # NumberInt → int
+                elif key == '$binary':
+                    return str(value)  # Binary → string representation
+                elif key == '$regex':
+                    return str(value)  # Regex → string
+                elif key == '$timestamp':
+                    return str(value)  # Timestamp → string
+            
+            # Recursively process regular dictionaries
+            return {key: self._simplify_extended_json(value) for key, value in data.items()}
+            
+        elif isinstance(data, list):
+            # Recursively process lists
+            return [self._simplify_extended_json(item) for item in data]
+            
+        else:
+            # Return primitive types as-is
+            return data
     
     async def introspect_schema(self) -> List[Dict[str, str]]:
         """

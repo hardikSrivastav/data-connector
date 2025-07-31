@@ -128,20 +128,70 @@ export const CanvasWorkspace = ({
   const loadSpecificChart = async () => {
     try {
       setIsLoadingCharts(true);
-      const sessionId = 'b57a4f8a-cd0b-4827-9'; // The session from our test file
-      console.log(`🧪 Dev: Loading specific chart for session: ${sessionId}`);
-      await fetchChartsForSession(sessionId);
+      console.log(`🧪 Dev: Loading charts for current page: ${page.id}`);
+      // Try database first, then fall back to session-based
+      await fetchChartsForPage(page.id);
     } catch (error) {
       console.error('Error loading specific chart:', error);
     }
   };
 
-  // Function to fetch charts for a session
+  // Function to fetch charts for a page using database storage
+  const fetchChartsForPage = async (pageId: string) => {
+    if (!pageId) return;
+    
+    try {
+      setIsLoadingCharts(true);
+      console.log(`🔍 Fetching charts for page: ${pageId}`);
+      
+      // Try new database API first
+      const response = await fetch(`/api/storage/pages/${pageId}/charts`);
+      
+      if (response.ok) {
+        const charts = await response.json();
+        console.log(`✅ Found ${charts.length} charts via database for page ${pageId}`);
+        
+        // Convert database format to visualization format
+        const visualizations = charts.map((chart: any) => ({
+          chart_config: chart.chartConfig,
+          chart_summary: {
+            type: chart.chartType,
+            title: chart.chartConfig?.layout?.title || 'Chart',
+            data_points: chart.metadata?.data_points || 0
+          },
+          visualization_data: {
+            dataset_info: chart.metadata || {},
+            analysis_summary: { chart_type: chart.chartType },
+            performance_metrics: {}
+          },
+          metadata: {
+            ...chart.metadata,
+            chart_id: chart.id,
+            original_query: chart.originalQuery,
+            created_at: chart.createdAt
+          }
+        }));
+        
+        setVisualizations(visualizations);
+      } else {
+        console.log(`⚠️ Database API failed, trying legacy session-based approach`);
+        // Fallback to old session-based approach
+        await fetchChartsForSession(pageId);
+      }
+    } catch (error) {
+      console.error(`❌ Error fetching charts for page ${pageId}:`, error);
+      // Fallback to session-based approach
+      await fetchChartsForSession(pageId);
+    } finally {
+      setIsLoadingCharts(false);
+    }
+  };
+
+  // Legacy function to fetch charts for a session (fallback)
   const fetchChartsForSession = async (sessionId: string) => {
     if (!sessionId) return;
     
     try {
-      setIsLoadingCharts(true);
       console.log(`🔍 Fetching charts for session: ${sessionId}`);
       
       // Try API endpoint first
@@ -152,48 +202,12 @@ export const CanvasWorkspace = ({
         console.log(`✅ Found ${data.charts.length} charts via API for session ${sessionId}`);
         setVisualizations(data.charts);
       } else {
-        console.log(`⚠️ No charts found via API for session ${sessionId}, trying direct file access`);
-        
-        // Fallback: try to fetch charts directly from the charts directory
-        try {
-          const chartsResponse = await fetch(`/api/charts/${sessionId}`);
-          const chartsData = await chartsResponse.json();
-          
-          if (chartsResponse.ok && chartsData.charts && chartsData.charts.length > 0) {
-            console.log(`✅ Found ${chartsData.charts.length} charts via direct access for session ${sessionId}`);
-            setVisualizations(chartsData.charts);
-          } else {
-            // Final fallback: try to load all charts and filter by session
-            const allChartsResponse = await fetch('/api/charts');
-            const allChartsData = await allChartsResponse.json();
-            
-            if (allChartsResponse.ok && allChartsData.charts) {
-              const sessionCharts = allChartsData.charts.filter((chart: any) => 
-                chart.metadata?.session_id === sessionId || 
-                chart.chart_summary?.session_id === sessionId
-              );
-              
-              if (sessionCharts.length > 0) {
-                console.log(`✅ Found ${sessionCharts.length} charts via filtering for session ${sessionId}`);
-                setVisualizations(sessionCharts);
-              } else {
-                console.log(`⚠️ No charts found for session ${sessionId}`);
-                setVisualizations([]);
-              }
-            } else {
-              setVisualizations([]);
-            }
-          }
-        } catch (fallbackError) {
-          console.error(`❌ Error in chart fallback methods:`, fallbackError);
-          setVisualizations([]);
-        }
+        console.log(`⚠️ No charts found for session ${sessionId}`);
+        setVisualizations([]);
       }
     } catch (error) {
       console.error(`❌ Error fetching charts for session ${sessionId}:`, error);
       setVisualizations([]);
-    } finally {
-      setIsLoadingCharts(false);
     }
   };
 
@@ -672,10 +686,11 @@ export const CanvasWorkspace = ({
           
           streamingResponse = results;
           
-          // ✅ NEW: Fetch charts after query completion
+          // ✅ NEW: Fetch charts after query completion - try page-based first, then session-based
           if (results.session_id) {
             console.log(`🎨 Found session_id: ${results.session_id}, fetching charts...`);
-            fetchChartsForSession(results.session_id);
+            // Try to fetch charts for the current page first, then fall back to session-based
+            fetchChartsForPage(page.id);
           } else {
             console.warn('⚠️ No session_id found in query response, cannot fetch charts');
             console.log('🔍 Full results object:', results);

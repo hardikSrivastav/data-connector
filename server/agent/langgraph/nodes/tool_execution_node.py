@@ -363,13 +363,37 @@ class ToolExecutionNode:
         
         # Special validation for visualization tools
         if tool_id == "visualization.create_visualization":
+            # ❌ CRITICAL LOGGING: Track missing user context instead of creating fake data
+            logger.error(f"🔍 CONTEXT_DEBUG: ===========================================")
+            logger.error(f"🔍 CONTEXT_DEBUG: VISUALIZATION TOOL PARAMETER ANALYSIS")
+            logger.error(f"🔍 CONTEXT_DEBUG: Tool ID: {tool_id}")
+            logger.error(f"🔍 CONTEXT_DEBUG: Session ID passed to validator: {session_id}")
+            logger.error(f"🔍 CONTEXT_DEBUG: User Query passed to validator: {user_query}")
+            logger.error(f"🔍 CONTEXT_DEBUG: Original parameters received: {list(parameters.keys())}")
+            logger.error(f"🔍 CONTEXT_DEBUG: Required parameters from registry: {list(required_params.keys())}")
+            
+            # Check for missing context parameters
+            context_params = ["user_id", "page_id", "workspace_id", "block_id", "session_id"]
+            missing_context = []
+            for param in context_params:
+                if param not in validated_params:
+                    missing_context.append(param)
+                    logger.error(f"🚨 MISSING_CONTEXT: {param} not provided in parameters")
+                else:
+                    logger.info(f"✅ CONTEXT_FOUND: {param} = {validated_params[param]}")
+            
+            if missing_context:
+                logger.error(f"🚨 CRITICAL_ISSUE: Missing context parameters: {missing_context}")
+                logger.error(f"🚨 CRITICAL_ISSUE: This will cause charts to be saved with 'default_value' entries")
+                logger.error(f"🚨 CRITICAL_ISSUE: ROOT CAUSE: User context not injected properly in tool execution")
+                logger.error(f"🚨 CRITICAL_ISSUE: Check context injection in _create_tool_calls_from_plan method")
+            
+            # Data validation (keep existing logic)
             if "data" not in validated_params or not validated_params["data"]:
                 logger.error(f"🎨 VALIDATION_ERROR: Visualization tool missing required 'data' parameter")
-                # Add default data parameter if missing
                 validated_params["data"] = "output_from_step_1"  # Assume first step has data
                 logger.info(f"🎨 VALIDATION_FIX: Added default data parameter: output_from_step_1")
             
-            # Ensure other critical visualization parameters are present
             if "chart_type" not in validated_params:
                 validated_params["chart_type"] = "bar"  # Default to bar chart
                 logger.info(f"🎨 VALIDATION_FIX: Added default chart_type: bar")
@@ -378,6 +402,8 @@ class ToolExecutionNode:
                 validated_params["title"] = "Data Visualization"  # Default title
                 logger.info(f"🎨 VALIDATION_FIX: Added default title: Data Visualization")
             
+            logger.error(f"🔍 CONTEXT_DEBUG: Final validated parameters: {list(validated_params.keys())}")
+            logger.error(f"🔍 CONTEXT_DEBUG: ===========================================")
             logger.info(f"🎨 VALIDATION_SUCCESS: Visualization tool parameters validated: {list(validated_params.keys())}")
         
         return validated_params
@@ -410,12 +436,31 @@ class ToolExecutionNode:
             "selected_tools": [],
             "execution_plan": None,
             "errors": [],
+            # ✅ CRITICAL FIX: Extract user context from input_data to local state
+            "user_id": input_data.get("user_id"),
+            "page_id": input_data.get("page_id"), 
+            "workspace_id": input_data.get("workspace_id"),
+            "block_id": input_data.get("block_id"),
             "metadata": {
                 "start_time": time.time(),
                 "input_data": input_data,
                 "session_id": session_id
             }
         }
+        
+        # ❌ CRITICAL LOGGING: Debug user context extraction
+        logger.error(f"🔍 NODE_STATE_DEBUG: ===========================================")
+        logger.error(f"🔍 NODE_STATE_DEBUG: TOOL EXECUTION NODE STATE INITIALIZATION")
+        logger.error(f"🔍 NODE_STATE_DEBUG: input_data keys: {list(input_data.keys())}")
+        logger.error(f"🔍 NODE_STATE_DEBUG: user_id from input_data: {input_data.get('user_id')}")
+        logger.error(f"🔍 NODE_STATE_DEBUG: page_id from input_data: {input_data.get('page_id')}")
+        logger.error(f"🔍 NODE_STATE_DEBUG: workspace_id from input_data: {input_data.get('workspace_id')}")
+        logger.error(f"🔍 NODE_STATE_DEBUG: block_id from input_data: {input_data.get('block_id')}")
+        logger.error(f"🔍 NODE_STATE_DEBUG: state user_id: {state.get('user_id')}")
+        logger.error(f"🔍 NODE_STATE_DEBUG: state page_id: {state.get('page_id')}")
+        logger.error(f"🔍 NODE_STATE_DEBUG: state workspace_id: {state.get('workspace_id')}")
+        logger.error(f"🔍 NODE_STATE_DEBUG: state block_id: {state.get('block_id')}")
+        logger.error(f"🔍 NODE_STATE_DEBUG: ===========================================")
         
         try:
             # Step 1: Analyze query and select tools
@@ -630,6 +675,27 @@ class ToolExecutionNode:
         """
         logger.info(f"Executing tools for query: {state['user_query'][:50]}...")
         
+        # ❌ CRITICAL LOGGING: Check what user context is available in the state
+        logger.error(f"🔍 STATE_DEBUG: ===========================================")
+        logger.error(f"🔍 STATE_DEBUG: TOOL EXECUTION STATE ANALYSIS")
+        logger.error(f"🔍 STATE_DEBUG: Available state keys: {list(state.keys())}")
+        logger.error(f"🔍 STATE_DEBUG: user_query: {state.get('user_query', 'NOT_FOUND')}")
+        logger.error(f"🔍 STATE_DEBUG: session_id from metadata: {state.get('metadata', {}).get('session_id', 'NOT_FOUND')}")
+        
+        # Look for any user-related context in state
+        user_related_keys = [k for k in state.keys() if 'user' in k.lower() or 'auth' in k.lower() or 'context' in k.lower()]
+        if user_related_keys:
+            logger.error(f"🔍 STATE_DEBUG: Found user-related keys: {user_related_keys}")
+            for key in user_related_keys:
+                logger.error(f"🔍 STATE_DEBUG: {key} = {state.get(key)}")
+        else:
+            logger.error(f"🚨 STATE_DEBUG: NO USER-RELATED KEYS FOUND IN STATE")
+        
+        # Check metadata for additional context
+        metadata = state.get("metadata", {})
+        logger.error(f"🔍 STATE_DEBUG: metadata keys: {list(metadata.keys())}")
+        logger.error(f"🔍 STATE_DEBUG: ===========================================")
+        
         try:
             execution_plan = state.get("execution_plan", {})
             if not execution_plan or not execution_plan.get("steps"):
@@ -639,7 +705,7 @@ class ToolExecutionNode:
             
             # Create tool calls from execution plan
             session_id = state.get("metadata", {}).get("session_id")
-            tool_calls = self._create_tool_calls_from_plan(execution_plan, state["user_query"], session_id)
+            tool_calls = self._create_tool_calls_from_plan(execution_plan, state["user_query"], session_id, state)
             
             logger.info(f"🔧 DEBUG: Created {len(tool_calls)} tool calls from execution plan")
             for i, tool_call in enumerate(tool_calls):
@@ -1319,7 +1385,7 @@ Write in a professional but accessible tone, as if explaining to a business stak
             "execution_notes": "Intelligent fallback execution plan with proper parameters"
         }
     
-    def _create_tool_calls_from_plan(self, execution_plan: Dict, user_query: str, session_id: Optional[str] = None) -> List[ToolCall]:
+    def _create_tool_calls_from_plan(self, execution_plan: Dict, user_query: str, session_id: Optional[str] = None, state: Optional[Dict] = None) -> List[ToolCall]:
         """Create tool calls from execution plan."""
         tool_calls = []
         
@@ -1332,16 +1398,47 @@ Write in a professional but accessible tone, as if explaining to a business stak
             # Get base parameters
             parameters = step.get("parameters", {}).copy()
             
-            # ✅ INJECT SESSION_ID: Add session_id for tools that need it
+            # ✅ INJECT USER CONTEXT: Add all required context for visualization tools
             tool_id = step["tool_id"]
-            if session_id and "visualization" in tool_id:
-                parameters["session_id"] = session_id
-                logger.info(f"🔧 SESSION_INJECTION: Injected session_id '{session_id}' into {tool_id} parameters")
-                # Add comprehensive logging for visualization tool creation
-                logger.info(f"🎨 VISUALIZATION_PLAN: Creating tool call for visualization")
-                logger.info(f"🎨 VISUALIZATION_PLAN: Parameters: {parameters}")
-                logger.info(f"🎨 VISUALIZATION_PLAN: Session ID: {session_id}")
-                logger.info(f"🎨 VISUALIZATION_PLAN: Step description: {step.get('description', 'No description')}")
+            if "visualization" in tool_id:
+                # Extract user context from state (passed from API through LangGraph)
+                if state:
+                    user_id = state.get("user_id")
+                    page_id = state.get("page_id")
+                    workspace_id = state.get("workspace_id")
+                    block_id = state.get("block_id")
+                    
+                    logger.error(f"🔍 CONTEXT_INJECTION: ===========================================")
+                    logger.error(f"🔍 CONTEXT_INJECTION: EXTRACTING USER CONTEXT FROM STATE")
+                    logger.error(f"🔍 CONTEXT_INJECTION: State keys: {list(state.keys()) if state else 'None'}")
+                    logger.error(f"🔍 CONTEXT_INJECTION: user_id from state: {user_id}")
+                    logger.error(f"🔍 CONTEXT_INJECTION: page_id from state: {page_id}")
+                    logger.error(f"🔍 CONTEXT_INJECTION: workspace_id from state: {workspace_id}")
+                    logger.error(f"🔍 CONTEXT_INJECTION: block_id from state: {block_id}")
+                    
+                    # Inject user context into visualization tool parameters
+                    if session_id:
+                        parameters["session_id"] = session_id
+                    if user_id:
+                        parameters["user_id"] = user_id
+                    if page_id:
+                        parameters["page_id"] = page_id
+                    if workspace_id:
+                        parameters["workspace_id"] = workspace_id
+                    if block_id:
+                        parameters["block_id"] = block_id
+                    
+                    logger.error(f"🔍 CONTEXT_INJECTION: Final parameters after injection: {list(parameters.keys())}")
+                    logger.error(f"🔍 CONTEXT_INJECTION: ===========================================")
+                    
+                    logger.info(f"🎨 CONTEXT_SUCCESS: Injected user context into {tool_id}")
+                    logger.info(f"🎨 CONTEXT_SUCCESS: user_id={user_id}, page_id={page_id}, workspace_id={workspace_id}")
+                else:
+                    logger.error(f"🚨 CONTEXT_ERROR: State is None - cannot extract user context for {tool_id}")
+                    logger.error(f"🚨 CONTEXT_ERROR: Charts will be saved with 'default_value' placeholder")
+                
+                if session_id:
+                    logger.info(f"🔧 SESSION_INJECTION: Injected session_id '{session_id}' into {tool_id} parameters")
             
             tool_call = ToolCall(
                 call_id=f"call_{int(time.time())}_{step['step_number']}",

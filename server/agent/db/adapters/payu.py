@@ -8,6 +8,7 @@ import hashlib
 import json
 import logging
 import os
+import time
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Dict, List, Any, Optional
@@ -23,7 +24,7 @@ class PayUAdapter(DBAdapter):
     Adapter for PayU payment gateway platform
     
     This adapter handles hash-based authentication and provides comprehensive
-    payment, settlement, and refund data access.
+    payment, settlement, and refund data access with rate limiting.
     """
     
     def __init__(self, conn_uri: str, **kwargs):
@@ -45,6 +46,12 @@ class PayUAdapter(DBAdapter):
         
         # Session management
         self.session = None
+        
+        # ✅ FIX: Rate limiting to avoid HTTP 429 errors
+        self.last_request_time = 0
+        self.min_request_interval = 2.0  # Minimum 2 seconds between requests
+        self.max_retries = 3
+        self.retry_delay = 5.0  # Wait 5 seconds before retrying on rate limit
         
         # Credentials management
         self.credentials = None
@@ -269,15 +276,71 @@ class PayUAdapter(DBAdapter):
         """Initialize aiohttp session if not exists"""
         if not self.session:
             connector = aiohttp.TCPConnector(
-                limit=15,
-                limit_per_host=15,
+                limit=5,  # ✅ REDUCED: Lower connection limit to avoid rate limits
+                limit_per_host=3,  # ✅ REDUCED: Even lower per-host limit
                 keepalive_timeout=30
             )
             self.session = aiohttp.ClientSession(
                 connector=connector,
-                timeout=aiohttp.ClientTimeout(total=30)
+                timeout=aiohttp.ClientTimeout(total=60)  # ✅ INCREASED: Longer timeout for PayU
             )
         return self.session
+    
+    async def _rate_limited_request(self, method: str, url: str, **kwargs):
+        """
+        Make a rate-limited request to PayU API
+        
+        Args:
+            method: HTTP method (GET, POST, etc.)
+            url: Request URL
+            **kwargs: Additional request parameters
+            
+        Returns:
+            aiohttp response object
+        """
+        # ✅ RATE LIMITING: Ensure minimum interval between requests
+        current_time = time.time()
+        time_since_last = current_time - self.last_request_time
+        
+        if time_since_last < self.min_request_interval:
+            sleep_time = self.min_request_interval - time_since_last
+            logger.info(f"⏱️ PayU rate limiting: waiting {sleep_time:.1f}s before next request")
+            await asyncio.sleep(sleep_time)
+        
+        session = await self._get_session()
+        
+        # Retry logic for rate limits
+        for attempt in range(self.max_retries):
+            try:
+                logger.info(f"🔄 PayU API Request (attempt {attempt + 1}/{self.max_retries}): {method} {url}")
+                
+                async with session.request(method, url, **kwargs) as response:
+                    self.last_request_time = time.time()
+                    
+                    if response.status == 429:
+                        logger.warning(f"⚠️ PayU rate limit hit (HTTP 429), attempt {attempt + 1}/{self.max_retries}")
+                        
+                        if attempt < self.max_retries - 1:
+                            retry_delay = self.retry_delay * (attempt + 1)  # Exponential backoff
+                            logger.info(f"⏳ Waiting {retry_delay}s before retry...")
+                            await asyncio.sleep(retry_delay)
+                            continue
+                        else:
+                            logger.error("❌ PayU rate limit exceeded, max retries reached")
+                            return response
+                    
+                    return response
+                    
+            except Exception as e:
+                logger.error(f"❌ PayU request error on attempt {attempt + 1}: {e}")
+                if attempt < self.max_retries - 1:
+                    await asyncio.sleep(self.retry_delay)
+                    continue
+                else:
+                    raise
+        
+        # This shouldn't be reached, but just in case
+        raise Exception("Max retries exceeded")
     
     def _generate_hash(self, params: Dict) -> str:
         """Generate PayU hash for authentication"""
@@ -287,14 +350,22 @@ class PayUAdapter(DBAdapter):
         command = params.get('command')
         
         # Create hash string based on PayU documentation
-        # For verify_payment: key|command|var1|salt
-        # For other commands: key|command|salt (if no var1)
         var1 = params.get('var1', '')
+        var2 = params.get('var2', '')
         
-        if var1:
+        # ✅ FIX: Handle different hash patterns based on command and parameters
+        if command == 'get_transaction_details' and var1 and var2:
+            # For get_transaction_details with date range: key|var1|var2|salt (NO command in hash)
+            hash_string = f"{merchant_key}|{var1}|{var2}|{salt}"
+            logger.debug(f"PayU hash for get_transaction_details: {merchant_key}|{var1}|{var2}|***salt***")
+        elif var1 and not var2:
+            # For commands with single var1: key|command|var1|salt
             hash_string = f"{merchant_key}|{command}|{var1}|{salt}"
+            logger.debug(f"PayU hash with var1: {merchant_key}|{command}|{var1}|***salt***")
         else:
+            # For commands without variables: key|command|salt
             hash_string = f"{merchant_key}|{command}|{salt}"
+            logger.debug(f"PayU hash basic: {merchant_key}|{command}|***salt***")
             
         return hashlib.sha512(hash_string.encode()).hexdigest()
     
@@ -352,28 +423,42 @@ class PayUAdapter(DBAdapter):
     def _extract_query_params(self, nl_prompt: str, command: str) -> Dict:
         """Extract query parameters from natural language"""
         params = {
-            'command': command,
-            'var1': self.merchant_id
+            'command': command
         }
         
         # Extract date ranges
         prompt_lower = nl_prompt.lower()
+        start_date = None
+        end_date = None
         
         if 'last week' in prompt_lower:
-            params['from_date'] = (datetime.now() - timedelta(days=7)).strftime('%Y-%m-%d')
-            params['to_date'] = datetime.now().strftime('%Y-%m-%d')
+            start_date = (datetime.now() - timedelta(days=7)).strftime('%d-%m-%Y')
+            end_date = datetime.now().strftime('%d-%m-%Y')
         elif 'last month' in prompt_lower:
-            params['from_date'] = (datetime.now() - timedelta(days=30)).strftime('%Y-%m-%d')
-            params['to_date'] = datetime.now().strftime('%Y-%m-%d')
+            start_date = (datetime.now() - timedelta(days=30)).strftime('%d-%m-%Y')
+            end_date = datetime.now().strftime('%d-%m-%Y')
         elif 'today' in prompt_lower:
-            params['from_date'] = datetime.now().strftime('%Y-%m-%d')
-            params['to_date'] = datetime.now().strftime('%Y-%m-%d')
+            start_date = datetime.now().strftime('%d-%m-%Y')
+            end_date = datetime.now().strftime('%d-%m-%Y')
         elif 'yesterday' in prompt_lower:
             yesterday = datetime.now() - timedelta(days=1)
-            params['from_date'] = yesterday.strftime('%Y-%m-%d')
-            params['to_date'] = yesterday.strftime('%Y-%m-%d')
+            start_date = yesterday.strftime('%d-%m-%Y')
+            end_date = yesterday.strftime('%d-%m-%Y')
+        else:
+            # Default to last 7 days if no specific date range mentioned
+            start_date = (datetime.now() - timedelta(days=7)).strftime('%d-%m-%Y')
+            end_date = datetime.now().strftime('%d-%m-%Y')
         
-        # Extract status filters
+        # ✅ FIX: For get_transaction_details, PayU requires var1=start_date and var2=end_date
+        if command == 'get_transaction_details':
+            params['var1'] = start_date  # Start date in var1
+            params['var2'] = end_date    # End date in var2
+            logger.info(f"PayU get_transaction_details: var1={start_date}, var2={end_date}")
+        else:
+            # For other commands like verify_payment, use merchant_id in var1
+            params['var1'] = self.merchant_id or 'default_merchant'
+        
+        # Extract status filters (these might be additional parameters)
         if 'success' in prompt_lower or 'successful' in prompt_lower:
             params['status'] = 'success'
         elif 'failed' in prompt_lower or 'failure' in prompt_lower:
@@ -640,3 +725,85 @@ class PayUAdapter(DBAdapter):
         if self.session:
             await self.session.close()
             self.session = None 
+
+    async def get_transaction_details_with_date_range(self, start_date: str, end_date: str, status: Optional[str] = None) -> List[Dict]:
+        """
+        Get transaction details for a specific date range.
+        
+        This method demonstrates the correct PayU API usage as per their requirements.
+        
+        Args:
+            start_date: Start date in YYYY-MM-DD format
+            end_date: End date in YYYY-MM-DD format  
+            status: Optional status filter (success/failure/pending)
+            
+        Returns:
+            List of transaction dictionaries
+        """
+        try:
+            # Validate date format
+            from datetime import datetime
+            try:
+                datetime.strptime(start_date, '%d-%m-%Y')
+                datetime.strptime(end_date, '%d-%m-%Y')
+            except ValueError as e:
+                logger.error(f"Invalid date format. Expected DD-MM-YYYY, got start_date={start_date}, end_date={end_date}")
+                raise ValueError(f"Date format error: {e}")
+            
+            # Build parameters according to PayU requirements
+            params = {
+                'command': 'get_transaction_details',
+                'key': self.auth_config.get('merchant_key'),
+                'var1': start_date,  # ✅ REQUIRED: Start date in var1
+                'var2': end_date,    # ✅ REQUIRED: End date in var2
+            }
+            
+            # Add optional status filter if provided
+            if status:
+                params['status'] = status
+            
+            # Generate correct hash: key|var1|var2|salt (no command for get_transaction_details)
+            merchant_key = self.auth_config.get('merchant_key')
+            salt = self.auth_config.get('salt')
+            hash_string = f"{merchant_key}|{start_date}|{end_date}|{salt}"
+            params['hash'] = hashlib.sha512(hash_string.encode()).hexdigest()
+            
+            logger.info(f"PayU API Request - Command: get_transaction_details")
+            logger.info(f"PayU API Request - Date Range: {start_date} to {end_date}")
+            logger.info(f"PayU API Request - Hash String (without salt): key|{start_date}|{end_date}|***")
+            
+            # Execute the API call
+            session = await self._get_session()
+            url = f"{self.base_url}/merchant/postservice.php?form=2"
+            
+            async with session.post(
+                url=url,
+                data=params,
+                headers={'Content-Type': 'application/x-www-form-urlencoded'}
+            ) as response:
+                
+                response_text = await response.text()
+                logger.debug(f"PayU Response Status: {response.status}")
+                logger.debug(f"PayU Response Preview: {response_text[:500]}")
+                
+                if response.status == 200:
+                    try:
+                        data = await response.json()
+                        if data.get('status') == 1:
+                            return self._normalize_transactions(data)
+                        else:
+                            error_msg = data.get('msg', 'Unknown PayU error')
+                            logger.error(f"PayU API error: {error_msg}")
+                            return []
+                    except Exception as json_error:
+                        logger.error(f"Failed to parse PayU response: {json_error}")
+                        logger.error(f"Response text: {response_text}")
+                        return []
+                else:
+                    logger.error(f"PayU HTTP error: {response.status}")
+                    logger.error(f"Response: {response_text}")
+                    return []
+                    
+        except Exception as e:
+            logger.error(f"PayU get_transaction_details error: {e}")
+            return [] 

@@ -28,7 +28,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../.
 from agent.db.execute import test_conn
 from agent.llm.client import get_llm_client
 from agent.meta.ingest import SchemaSearcher, ensure_index_exists, build_and_save_index_for_db
-from agent.api.endpoints import sanitize_sql
+from agent.utils.sql_utils import sanitize_sql
 from agent.tools.tools import DataTools
 from agent.tools.state_manager import StateManager
 from agent.config.settings import Settings

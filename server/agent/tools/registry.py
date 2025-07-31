@@ -1257,7 +1257,11 @@ class ToolRegistry:
                     "user_query": "str",
                     "session_id": "str",  # NEW: Add session_id parameter for associating saved files
                     "save_to_file": "bool",
-                    "output_filename": "str"
+                    "output_filename": "str",
+                    "user_id": "str",  # NEW: Add user_id for database storage
+                    "page_id": "str",  # NEW: Add page_id for database storage
+                    "workspace_id": "str",  # NEW: Add workspace_id for database storage
+                    "block_id": "str"  # NEW: Add block_id for database storage
                 }
             }
         ])

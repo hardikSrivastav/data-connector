@@ -474,6 +474,23 @@ class ReasoningChain(BaseModel):
     updatedAt: datetime
     completedAt: Optional[datetime] = None
 
+# Chart Pydantic Models
+class Chart(BaseModel):
+    id: str
+    workspaceId: str
+    pageId: str  # Canvas page ID (where results are displayed)
+    originalPageId: Optional[str] = None  # Original page ID (where query was made)
+    blockId: Optional[str] = None
+    userId: str
+    originalQuery: str
+    chartType: str
+    chartConfig: Dict[str, Any]  # Full Plotly chart configuration
+    metadata: Dict[str, Any] = {}
+    rawData: Optional[Dict[str, Any]] = None
+    filePath: Optional[str] = None
+    createdAt: datetime
+    updatedAt: datetime
+
 # API request/response models
 class CreateCanvasRequest(BaseModel):
     blockId: str
@@ -1595,4 +1612,239 @@ async def delete_reasoning_chain(
     db.delete(db_reasoning_chain)
     db.commit()
     
-    return {"success": True, "message": f"Reasoning chain {session_id} deleted"} 
+    return {"success": True, "message": f"Reasoning chain {session_id} deleted"}
+
+# ========== CHART ENDPOINTS ==========
+
+@router.post("/charts", response_model=Chart)
+async def create_chart(
+    chart: Chart,
+    request: Request,
+    db: Session = Depends(get_db)
+):
+    """Create a new chart - called when visualization is generated"""
+    current_user = await get_current_user_from_request(request)
+    logger.info(f"📊 create_chart: user={current_user}, chart_id={chart.id}")
+    
+    try:
+        # Ensure user owns the workspace/page
+        db_page = db.query(PageDB).filter(
+            PageDB.id == chart.pageId
+        ).first()
+        
+        if not db_page:
+            raise HTTPException(status_code=404, detail="Page not found")
+            
+        # Handle pages with null owner_id (assign to current user for backward compatibility)
+        if db_page.owner_id is None:
+            logger.info(f"🔧 Assigning page {chart.pageId} to user {current_user}")
+            db_page.owner_id = current_user
+            db.commit()
+        elif db_page.owner_id != current_user:
+            raise HTTPException(status_code=404, detail="Page access denied")
+        
+        # Check if chart already exists (idempotent)
+        existing_chart = db.query(ChartDB).filter(ChartDB.id == chart.id).first()
+        if existing_chart:
+            logger.info(f"📊 Chart {chart.id} already exists, updating...")
+            # Update existing chart
+            existing_chart.original_query = chart.originalQuery
+            existing_chart.chart_type = chart.chartType
+            existing_chart.chart_config = chart.chartConfig
+            existing_chart.chart_metadata = chart.metadata
+            existing_chart.raw_data = chart.rawData
+            existing_chart.file_path = chart.filePath
+            existing_chart.updated_at = datetime.utcnow()
+            if chart.blockId:
+                existing_chart.block_id = chart.blockId
+            
+            db.commit()
+            db.refresh(existing_chart)
+            
+            return Chart(
+                id=existing_chart.id,
+                workspaceId=existing_chart.workspace_id,
+                pageId=existing_chart.page_id,
+                originalPageId=existing_chart.original_page_id,
+                blockId=existing_chart.block_id,
+                userId=existing_chart.user_id,
+                originalQuery=existing_chart.original_query,
+                chartType=existing_chart.chart_type,
+                chartConfig=existing_chart.chart_config,
+                metadata=existing_chart.chart_metadata,
+                rawData=existing_chart.raw_data,
+                filePath=existing_chart.file_path,
+                createdAt=existing_chart.created_at,
+                updatedAt=existing_chart.updated_at
+            )
+        
+        # Create new chart
+        db_chart = ChartDB(
+            id=chart.id,
+            workspace_id=chart.workspaceId,
+            page_id=chart.pageId,
+            original_page_id=chart.originalPageId,
+            block_id=chart.blockId,
+            user_id=current_user,
+            original_query=chart.originalQuery,
+            chart_type=chart.chartType,
+            chart_config=chart.chartConfig,
+            chart_metadata=chart.metadata,
+            raw_data=chart.rawData,
+            file_path=chart.filePath
+        )
+        
+        db.add(db_chart)
+        db.commit()
+        db.refresh(db_chart)
+        
+        logger.info(f"📊 Created chart: {chart.id}")
+        
+        return Chart(
+            id=db_chart.id,
+            workspaceId=db_chart.workspace_id,
+            pageId=db_chart.page_id,
+            originalPageId=db_chart.original_page_id,
+            blockId=db_chart.block_id,
+            userId=db_chart.user_id,
+            originalQuery=db_chart.original_query,
+            chartType=db_chart.chart_type,
+            chartConfig=db_chart.chart_config,
+            metadata=db_chart.chart_metadata,
+            rawData=db_chart.raw_data,
+            filePath=db_chart.file_path,
+            createdAt=db_chart.created_at,
+            updatedAt=db_chart.updated_at
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"📊 Error creating chart: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to create chart: {str(e)}")
+
+@router.get("/charts/{chart_id}", response_model=Chart)
+async def get_chart(
+    chart_id: str,
+    request: Request,
+    db: Session = Depends(get_db)
+):
+    """Get chart by ID"""
+    current_user = await get_current_user_from_request(request)
+    logger.info(f"📊 get_chart: user={current_user}, chart_id={chart_id}")
+    
+    db_chart = db.query(ChartDB).filter(
+        ChartDB.id == chart_id,
+        ChartDB.user_id == current_user
+    ).first()
+    
+    if not db_chart:
+        raise HTTPException(status_code=404, detail="Chart not found")
+    
+    return Chart(
+        id=db_chart.id,
+        workspaceId=db_chart.workspace_id,
+        pageId=db_chart.page_id,
+        originalPageId=db_chart.original_page_id,
+        blockId=db_chart.block_id,
+        userId=db_chart.user_id,
+        originalQuery=db_chart.original_query,
+        chartType=db_chart.chart_type,
+        chartConfig=db_chart.chart_config,
+        metadata=db_chart.chart_metadata,
+        rawData=db_chart.raw_data,
+        filePath=db_chart.file_path,
+        createdAt=db_chart.created_at,
+        updatedAt=db_chart.updated_at
+    )
+
+@router.get("/pages/{page_id}/charts", response_model=List[Chart])
+async def get_charts_for_page(
+    page_id: str,
+    request: Request,
+    db: Session = Depends(get_db),
+    limit: int = 50
+):
+    """Get all charts for a page - supports both Canvas pages and original pages"""
+    current_user = await get_current_user_from_request(request)
+    logger.info(f"📊 get_charts_for_page: user={current_user}, page_id={page_id}")
+    
+    # Verify user owns the page
+    db_page = db.query(PageDB).filter(
+        PageDB.id == page_id
+    ).first()
+    
+    if not db_page:
+        raise HTTPException(status_code=404, detail="Page not found")
+        
+    # Handle pages with null owner_id (assign to current user for backward compatibility)
+    if db_page.owner_id is None:
+        logger.info(f"🔧 Assigning page {page_id} to user {current_user}")
+        db_page.owner_id = current_user
+        db.commit()
+    elif db_page.owner_id != current_user:
+        raise HTTPException(status_code=404, detail="Page access denied")
+    
+    # Find charts where EITHER:
+    # - page_id matches (Canvas page where results are displayed)  
+    # - original_page_id matches (original page where query was made)
+    db_charts = db.query(ChartDB).filter(
+        or_(
+            ChartDB.page_id == page_id,           # Canvas page
+            ChartDB.original_page_id == page_id   # Original page
+        ),
+        ChartDB.user_id == current_user
+    ).order_by(ChartDB.created_at.desc()).limit(limit).all()
+    
+    logger.info(f"📊 Found {len(db_charts)} charts for page {page_id}")
+    
+    return [
+        Chart(
+            id=chart.id,
+            workspaceId=chart.workspace_id,
+            pageId=chart.page_id,
+            originalPageId=chart.original_page_id,
+            blockId=chart.block_id,
+            userId=chart.user_id,
+            originalQuery=chart.original_query,
+            chartType=chart.chart_type,
+            chartConfig=chart.chart_config,
+            metadata=chart.chart_metadata,
+            rawData=chart.raw_data,
+            filePath=chart.file_path,
+            createdAt=chart.created_at,
+            updatedAt=chart.updated_at
+        )
+        for chart in db_charts
+    ]
+
+@router.delete("/charts/{chart_id}")
+async def delete_chart(
+    chart_id: str,
+    request: Request,
+    db: Session = Depends(get_db)
+):
+    """Delete a chart"""
+    current_user = await get_current_user_from_request(request)
+    logger.info(f"📊 delete_chart: user={current_user}, chart_id={chart_id}")
+    
+    db_chart = db.query(ChartDB).filter(
+        ChartDB.id == chart_id,
+        ChartDB.user_id == current_user
+    ).first()
+    
+    if not db_chart:
+        raise HTTPException(status_code=404, detail="Chart not found")
+    
+    # Also delete the file if it exists
+    if db_chart.file_path and os.path.exists(db_chart.file_path):
+        try:
+            os.remove(db_chart.file_path)
+            logger.info(f"📊 Deleted chart file: {db_chart.file_path}")
+        except Exception as e:
+            logger.warning(f"📊 Could not delete chart file {db_chart.file_path}: {e}")
+    
+    db.delete(db_chart)
+    db.commit()
+    
+    return {"success": True, "message": f"Chart {chart_id} deleted"}
