@@ -858,94 +858,91 @@ class VisualizationTools:
                 "visualization_intent": f"Created {selected_chart_type} visualization for {len(df)} data points"
             }
             
-            # Step 5: Save chart config to JSON file if requested
+            # Step 5: Save chart to database (always)
+            try:
+                import json
+                import os
+                from datetime import datetime
+                import uuid
+                
+                # Generate unique chart ID
+                chart_id = str(uuid.uuid4())
+                
+                # Prepare chart data for database
+                chart_metadata = {
+                    "generated_at": datetime.now().isoformat(),
+                    "data_points": len(df),
+                    "user_query": user_query or "Data visualization requested",
+                    "session_id": session_id,
+                    "tool_version": "1.0.0"
+                }
+                
+                # Validate required context parameters
+                if not user_id:
+                    logger.warning("user_id not provided - chart will not be saved to database")
+                    visualization_result["database_saved"] = False
+                    visualization_result["database_error"] = "Missing user_id - authentication required"
+                elif not workspace_id:
+                    logger.warning("workspace_id not provided - chart will not be saved to database")
+                    visualization_result["database_saved"] = False
+                    visualization_result["database_error"] = "Missing workspace_id - required for proper chart storage"
+                else:
+                    # Set default page_id if not provided
+                    if not page_id:
+                        logger.warning("page_id not provided - using session_id as fallback")
+                        page_id = session_id or f"unknown_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+                    
+                    # Import and use the database storage
+                    from sqlalchemy import create_engine
+                    from sqlalchemy.orm import sessionmaker
+                    import os
+                    
+                    # Get database connection (same as storage.py)
+                    DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://notion_user:notion_password@localhost:5432/notion_clone")
+                    engine = create_engine(DATABASE_URL)
+                    SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+                    
+                    # Import the ChartDB model
+                    from application.routes.storage import ChartDB
+                    
+                    db = SessionLocal()
+                    try:
+                        # Create chart record
+                        db_chart = ChartDB(
+                            id=chart_id,
+                            workspace_id=workspace_id,
+                            page_id=page_id,
+                            original_page_id=page_id,  # Set as same as page_id for now
+                            block_id=block_id,
+                            user_id=user_id,
+                            original_query=user_query or "Data visualization requested",
+                            chart_type=selected_chart_type,
+                            chart_config=visualization_result["chart_config"],
+                            chart_metadata=chart_metadata,
+                            raw_data=data
+                        )
+                        
+                        db.add(db_chart)
+                        db.commit()
+                        db.refresh(db_chart)
+                        
+                        # Add database info to result
+                        visualization_result["database_saved"] = True
+                        visualization_result["chart_id"] = chart_id
+                        
+                        logger.info(f"Chart saved to database with ID: {chart_id}")
+                        
+                    finally:
+                        db.close()
+                        
+            except Exception as db_error:
+                logger.warning(f"Failed to save chart to database: {db_error}")
+                visualization_result["database_saved"] = False
+                visualization_result["database_error"] = str(db_error)
+            
+            # Step 6: Save chart config to JSON file if requested
             if save_to_file:
                 try:
-                    import json
-                    import os
-                    from datetime import datetime
-                    import uuid
-                    
-                    # Try to save to database first (preferred method)
-                    try:
-                        # Generate unique chart ID
-                        chart_id = str(uuid.uuid4())
-                        
-                        # Prepare chart data for database
-                        chart_metadata = {
-                            "generated_at": datetime.now().isoformat(),
-                            "data_points": len(df),
-                            "user_query": user_query or "Data visualization requested",
-                            "session_id": session_id,
-                            "tool_version": "1.0.0"
-                        }
-                        
-                        # Validate required context parameters
-                        if not user_id:
-                            logger.warning("user_id not provided - chart will not be saved to database")
-                            visualization_result["database_saved"] = False
-                            visualization_result["database_error"] = "Missing user_id - authentication required"
-                            return visualization_result
-                        
-                        if not page_id:
-                            logger.warning("page_id not provided - using session_id as fallback")
-                            page_id = session_id or f"unknown_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
-                        
-                        if not workspace_id:
-                            logger.warning("workspace_id not provided - chart will not be saved to database")
-                            visualization_result["database_saved"] = False
-                            visualization_result["database_error"] = "Missing workspace_id - required for proper chart storage"
-                            return visualization_result
-                        
-                        # Import and use the database storage
-                        from sqlalchemy import create_engine
-                        from sqlalchemy.orm import sessionmaker
-                        import os
-                        
-                        # Get database connection (same as storage.py)
-                        DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://notion_user:notion_password@localhost:5432/notion_clone")
-                        engine = create_engine(DATABASE_URL)
-                        SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
-                        
-                        # Import the ChartDB model
-                        from application.routes.storage import ChartDB
-                        
-                        db = SessionLocal()
-                        try:
-                            # Create chart record
-                            db_chart = ChartDB(
-                                id=chart_id,
-                                workspace_id=workspace_id,
-                                page_id=page_id,
-                                original_page_id=page_id,  # Set as same as page_id for now
-                                block_id=block_id,
-                                user_id=user_id,
-                                original_query=user_query or "Data visualization requested",
-                                chart_type=selected_chart_type,
-                                chart_config=visualization_result["chart_config"],
-                                chart_metadata=chart_metadata,
-                                raw_data=data
-                            )
-                            
-                            db.add(db_chart)
-                            db.commit()
-                            db.refresh(db_chart)
-                            
-                            # Add database info to result
-                            visualization_result["database_saved"] = True
-                            visualization_result["chart_id"] = chart_id
-                            
-                            logger.info(f"Chart saved to database with ID: {chart_id}")
-                            
-                        finally:
-                            db.close()
-                            
-                    except Exception as db_error:
-                        logger.warning(f"Failed to save chart to database, falling back to file: {db_error}")
-                        visualization_result["database_saved"] = False
-                        visualization_result["database_error"] = str(db_error)
-                    
-                    # Also save to file for backward compatibility
                     # Generate filename if not provided - use session_id as primary identifier
                     if not output_filename:
                         if session_id:

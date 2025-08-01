@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { Page, Workspace, Block, ReasoningChainData, ReasoningChainEvent } from '@/types';
-import { agentClient, VisualizationData } from '@/lib/AgentClient';
-import { AgentQueryResponse } from '@/lib/agent-client';
+import { VisualizationData } from '@/lib/AgentClient';
+import { agentClient, AgentQueryResponse } from '@/lib/agent-client';
 import { useStorageManager } from '@/hooks/useStorageManager';
 import { VisualizationRenderer } from './VisualizationRenderer';
 import { 
@@ -127,59 +127,143 @@ export const CanvasWorkspace = ({
   // Development function to load a specific chart file for testing
   const loadSpecificChart = async () => {
     try {
+      console.log(`🧪 loadSpecificChart: Starting test chart load`);
       setIsLoadingCharts(true);
-      console.log(`🧪 Dev: Loading charts for current page: ${page.id}`);
-      // Try database first, then fall back to session-based
-      await fetchChartsForPage(page.id);
+      
+      // Get the original page ID where the canvas block lives
+      console.log(`🧪 loadSpecificChart: Current page ID: ${page.id}`);
+      console.log(`🧪 loadSpecificChart: Looking for canvas block with canvasPageId === ${page.id}`);
+      
+      const originalCanvasBlock = workspace.pages.flatMap(p => p.blocks).find(block => 
+        block.type === 'canvas' && 
+        block.properties?.canvasPageId === page.id
+      );
+      
+      console.log(`🧪 loadSpecificChart: Found original canvas block:`, originalCanvasBlock ? {
+        id: originalCanvasBlock.id,
+        canvasPageId: originalCanvasBlock.properties?.canvasPageId
+      } : 'null');
+      
+      let originalPageId = null;
+      if (originalCanvasBlock) {
+        originalPageId = workspace.pages.find(p => p.blocks.some(b => b.id === originalCanvasBlock.id))?.id;
+        console.log(`🧪 loadSpecificChart: Original page ID from canvas block: ${originalPageId}`);
+      } else {
+        // If no canvas block found, this might be the original page itself
+        const hasCanvasBlocks = page.blocks.some(block => block.type === 'canvas');
+        console.log(`🧪 loadSpecificChart: Current page has canvas blocks: ${hasCanvasBlocks}`);
+        if (hasCanvasBlocks) {
+          originalPageId = page.id; // This is the original page
+          console.log(`🧪 loadSpecificChart: Using current page as original page: ${originalPageId}`);
+        }
+      }
+      
+      console.log(`🧪 loadSpecificChart: Final original page ID: ${originalPageId}`);
+      
+      // Try both page IDs to find charts
+      const pageIdsToTry = [];
+      if (originalPageId && originalPageId !== page.id) {
+        pageIdsToTry.push(originalPageId);
+      }
+      pageIdsToTry.push(page.id);
+      
+      console.log(`🧪 loadSpecificChart: Will try pages: ${pageIdsToTry.join(', ')}`);
+      
+      // Try each page ID until we find charts
+      for (const pageId of pageIdsToTry) {
+        console.log(`🧪 loadSpecificChart: Trying page: ${pageId}`);
+        try {
+          await fetchChartsForPage(pageId);
+          console.log(`🧪 loadSpecificChart: Successfully loaded charts from page: ${pageId}`);
+          // If we get here without error, charts were found
+          break;
+        } catch (error) {
+          console.log(`🧪 loadSpecificChart: No charts found on page ${pageId}, trying next...`);
+        }
+      }
     } catch (error) {
-      console.error('Error loading specific chart:', error);
+      console.error('🧪 loadSpecificChart: Error loading specific chart:', error);
     }
   };
 
   // Function to fetch charts for a page using database storage
   const fetchChartsForPage = async (pageId: string) => {
-    if (!pageId) return;
+    if (!pageId) {
+      console.log(`❌ fetchChartsForPage: No pageId provided`);
+      return;
+    }
     
     try {
       setIsLoadingCharts(true);
-      console.log(`🔍 Fetching charts for page: ${pageId}`);
+      console.log(`🔍 fetchChartsForPage: Starting fetch for page: ${pageId}`);
       
-      // Try new database API first
-      const response = await fetch(`/api/storage/pages/${pageId}/charts`);
+      // Try new database API first - use the correct API base URL
+      const apiBaseUrl = import.meta.env.VITE_API_BASE || 'http://localhost:8787';
+      const apiUrl = `${apiBaseUrl}/api/storage/pages/${pageId}/charts`;
+      console.log(`🔍 fetchChartsForPage: Making request to: ${apiUrl}`);
+      
+      const response = await fetch(apiUrl, {
+        credentials: 'include' // Include cookies for authentication
+      });
+      console.log(`🔍 fetchChartsForPage: Response status: ${response.status} ${response.statusText}`);
       
       if (response.ok) {
         const charts = await response.json();
-        console.log(`✅ Found ${charts.length} charts via database for page ${pageId}`);
+        console.log(`✅ fetchChartsForPage: Found ${charts.length} charts via database for page ${pageId}`);
+        console.log(`📊 fetchChartsForPage: Raw charts data:`, charts);
         
-        // Convert database format to visualization format
-        const visualizations = charts.map((chart: any) => ({
-          chart_config: chart.chartConfig,
-          chart_summary: {
-            type: chart.chartType,
-            title: chart.chartConfig?.layout?.title || 'Chart',
-            data_points: chart.metadata?.data_points || 0
-          },
-          visualization_data: {
-            dataset_info: chart.metadata || {},
-            analysis_summary: { chart_type: chart.chartType },
-            performance_metrics: {}
-          },
-          metadata: {
-            ...chart.metadata,
-            chart_id: chart.id,
-            original_query: chart.originalQuery,
-            created_at: chart.createdAt
-          }
-        }));
-        
-        setVisualizations(visualizations);
+        if (charts.length > 0) {
+          // Convert database format to visualization format
+          const visualizations = charts.map((chart: any, index: number) => {
+            console.log(`📊 fetchChartsForPage: Processing chart ${index + 1}:`, {
+              id: chart.id,
+              chartType: chart.chartType,
+              hasChartConfig: !!chart.chartConfig,
+              chartConfigKeys: chart.chartConfig ? Object.keys(chart.chartConfig) : [],
+              metadata: chart.metadata
+            });
+            
+            return {
+              chart_config: chart.chartConfig,
+              chart_summary: {
+                type: chart.chartType,
+                title: chart.chartConfig?.layout?.title || 'Chart',
+                data_points: chart.metadata?.data_points || 0
+              },
+              visualization_data: {
+                dataset_info: chart.metadata || {},
+                analysis_summary: { chart_type: chart.chartType },
+                performance_metrics: {}
+              },
+              metadata: {
+                ...chart.metadata,
+                chart_id: chart.id,
+                original_query: chart.originalQuery,
+                created_at: chart.createdAt
+              }
+            };
+          });
+          
+          console.log(`✅ fetchChartsForPage: Converted ${visualizations.length} charts to visualization format`);
+          console.log(`📊 fetchChartsForPage: Final visualizations:`, visualizations);
+          
+          setVisualizations(visualizations);
+        } else {
+          console.log(`⚠️ fetchChartsForPage: No charts found for page ${pageId}`);
+          setVisualizations([]);
+        }
       } else {
-        console.log(`⚠️ Database API failed, trying legacy session-based approach`);
+        console.log(`⚠️ fetchChartsForPage: Database API failed with status ${response.status}, trying legacy session-based approach`);
         // Fallback to old session-based approach
         await fetchChartsForSession(pageId);
       }
     } catch (error) {
-      console.error(`❌ Error fetching charts for page ${pageId}:`, error);
+      console.error(`❌ fetchChartsForPage: Error fetching charts for page ${pageId}:`, error);
+      console.error(`❌ fetchChartsForPage: Error details:`, {
+        message: error.message,
+        stack: error.stack,
+        pageId: pageId
+      });
       // Fallback to session-based approach
       await fetchChartsForSession(pageId);
     } finally {
@@ -194,8 +278,11 @@ export const CanvasWorkspace = ({
     try {
       console.log(`🔍 Fetching charts for session: ${sessionId}`);
       
-      // Try API endpoint first
-      const response = await fetch(`/api/agent/sessions/${sessionId}/charts`);
+      // Try API endpoint first - use the correct API base URL
+      const apiBaseUrl = import.meta.env.VITE_API_BASE || 'http://localhost:8787';
+      const response = await fetch(`${apiBaseUrl}/api/agent/sessions/${sessionId}/charts`, {
+        credentials: 'include' // Include cookies for authentication
+      });
       const data = await response.json();
       
       if (response.ok && data.charts && data.charts.length > 0) {
@@ -396,15 +483,42 @@ export const CanvasWorkspace = ({
       const incomplete: Array<{ blockId: string; data: ReasoningChainData }> = [];
       
       // Find the original CanvasBlock that references this workspace page
-      const originalCanvasBlock = workspace.pages.flatMap(p => p.blocks).find(block => 
+      console.log(`🔍 CanvasWorkspace: Looking for canvas block with canvasPageId === ${page.id}`);
+      console.log(`🔍 CanvasWorkspace: Available pages:`, workspace.pages.map(p => ({ id: p.id, title: p.title })));
+      
+      const allCanvasBlocks = workspace.pages.flatMap(p => p.blocks).filter(block => block.type === 'canvas');
+      console.log(`🔍 CanvasWorkspace: All canvas blocks found:`, allCanvasBlocks.map(b => ({
+        id: b.id,
+        canvasPageId: b.properties?.canvasPageId,
+        pageId: workspace.pages.find(p => p.blocks.some(block => block.id === b.id))?.id
+      })));
+      
+      const originalCanvasBlock = allCanvasBlocks.find(block => 
         block.type === 'canvas' && 
         block.properties?.canvasPageId === page.id
       );
       
+      console.log(`🔍 CanvasWorkspace: Found original canvas block:`, originalCanvasBlock ? {
+        id: originalCanvasBlock.id,
+        canvasPageId: originalCanvasBlock.properties?.canvasPageId,
+        hasCanvasData: !!originalCanvasBlock.properties?.canvasData
+      } : 'null');
+      
       // Get the original page ID (where the CanvasBlock lives)
-      const originalPageId = originalCanvasBlock 
-        ? workspace.pages.find(p => p.blocks.some(b => b.id === originalCanvasBlock.id))?.id
-        : null;
+      let originalPageId = null;
+      if (originalCanvasBlock) {
+        originalPageId = workspace.pages.find(p => p.blocks.some(b => b.id === originalCanvasBlock.id))?.id;
+        console.log(`🔍 CanvasWorkspace: Original page ID from canvas block: ${originalPageId}`);
+      } else {
+        // If no canvas block found, this might be the original page itself
+        // Check if this page has any canvas blocks
+        const hasCanvasBlocks = page.blocks.some(block => block.type === 'canvas');
+        console.log(`🔍 CanvasWorkspace: Current page has canvas blocks: ${hasCanvasBlocks}`);
+        if (hasCanvasBlocks) {
+          originalPageId = page.id; // This is the original page
+          console.log(`🔍 CanvasWorkspace: Using current page as original page: ${originalPageId}`);
+        }
+      }
       
       console.log(`🧠 CanvasWorkspace: Found original canvas block:`, {
         blockId: originalCanvasBlock?.id,
@@ -596,6 +710,16 @@ export const CanvasWorkspace = ({
         }
       });
       console.log(`🧠🧠🧠 END REASONING CHAINS LOADED 🧠🧠🧠\n`);
+      
+      // ✅ NEW: Load charts during initialization
+      // Try the original page first (where charts are most likely stored), then fall back to current page
+      console.log(`🎨 Initialization: Loading charts for original page: ${originalPageId || page.id}`);
+      console.log(`🎨 Initialization: Current page ID: ${page.id}`);
+      console.log(`🎨 Initialization: Original page ID: ${originalPageId}`);
+      
+      // Use original page ID if available, otherwise use current page ID
+      const pageIdToQuery = originalPageId || page.id;
+      fetchChartsForPage(pageIdToQuery);
     };
 
     // Debounce the initialization to prevent rapid successive calls
@@ -632,25 +756,32 @@ export const CanvasWorkspace = ({
         });
       }
       
-      // ✅ UPDATED: Use LangGraph streaming API without visualization event handling
-      console.log('🔍 DEBUGGING: About to call agentClient.langGraphStream with:', {
+      // Get the original page ID for proper chart storage
+      const originalCanvasBlock = workspace.pages.flatMap(p => p.blocks).find(block => 
+        block.type === 'canvas' && 
+        block.properties?.canvasPageId === page.id
+      );
+      const originalPageId = originalCanvasBlock 
+        ? workspace.pages.find(p => p.blocks.some(b => b.id === originalCanvasBlock.id))?.id
+        : null;
+      
+      // ✅ UPDATED: Use streaming query API with page context
+      console.log('🔍 DEBUGGING: About to call agentClient.queryStream with:', {
         question: finalQuery.trim(),
-        verbose: true,
-        show_outputs: true,
-        show_captured_data: true,
-        include_aggregated_data: true,
-        save_session: true
+        analyze: true,
+        page_id: page.id,
+        workspace_id: workspace.id,
+        block_id: originalCanvasBlock?.id
       });
       
       let streamingResponse: any = null;
       
-      await agentClient.langGraphStream({
+      await agentClient.queryStream({
         question: finalQuery.trim(),
-        verbose: true,
-        show_outputs: true,
-        show_captured_data: true,
-        include_aggregated_data: true,
-        save_session: true
+        analyze: true,
+        page_id: page.id, // Canvas workspace page ID (where results should be displayed)
+        workspace_id: workspace.id,
+        block_id: originalCanvasBlock?.id // Reference to the original canvas block
       }, {
         onStatus: (message) => {
           console.log('🌊 CanvasWorkspace: Streaming status:', message);
@@ -660,21 +791,11 @@ export const CanvasWorkspace = ({
             });
           }
         },
-        onChartConfigJson: (data) => {
-          console.log('🎨 CanvasWorkspace: Chart config JSON received:', data);
-        },
-        onFinalSynthesis: (data) => {
-          console.log('📋 CanvasWorkspace: Final synthesis:', data);
-          streamingResponse = {
-            rows: [],
-            sql: '',
-            analysis: data.response_text,
-            databases: [],
-            isCrossDatabase: false
-          };
+        onAnalysisGenerating: (message) => {
+          console.log('📋 CanvasWorkspace: Analysis generating:', message);
         },
         onComplete: (results) => {
-          console.log('🔍 DEBUGGING: agentClient.langGraphStream onComplete:', {
+          console.log('🔍 DEBUGGING: agentClient.queryStream onComplete:', {
             hasRows: !!results.rows,
             rowsLength: results.rows?.length || 0,
             hasAnalysis: !!results.analysis,
@@ -689,8 +810,30 @@ export const CanvasWorkspace = ({
           // ✅ NEW: Fetch charts after query completion - try page-based first, then session-based
           if (results.session_id) {
             console.log(`🎨 Found session_id: ${results.session_id}, fetching charts...`);
-            // Try to fetch charts for the current page first, then fall back to session-based
-            fetchChartsForPage(page.id);
+            
+            // Get the original page ID where the canvas block lives
+            const originalCanvasBlock = workspace.pages.flatMap(p => p.blocks).find(block => 
+              block.type === 'canvas' && 
+              block.properties?.canvasPageId === page.id
+            );
+            const originalPageId = originalCanvasBlock 
+              ? workspace.pages.find(p => p.blocks.some(b => b.id === originalCanvasBlock.id))?.id
+              : null;
+            
+            console.log(`🎨 Chart fetch strategy:`, {
+              canvasWorkspacePageId: page.id,
+              originalPageId: originalPageId,
+              willTryBoth: !!originalPageId
+            });
+            
+            // Try to fetch charts from both the canvas workspace page AND the original page
+            if (originalPageId && originalPageId !== page.id) {
+              console.log(`🎨 Trying original page first: ${originalPageId}`);
+              fetchChartsForPage(originalPageId);
+            } else {
+              console.log(`🎨 Trying canvas workspace page: ${page.id}`);
+              fetchChartsForPage(page.id);
+            }
           } else {
             console.warn('⚠️ No session_id found in query response, cannot fetch charts');
             console.log('🔍 Full results object:', results);

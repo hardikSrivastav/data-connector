@@ -1,6 +1,8 @@
-from fastapi import APIRouter, HTTPException, Depends
+from fastapi import APIRouter, HTTPException, Depends, Response, Request as FastAPIRequest
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
-from typing import List, Optional, Dict, Any
+from typing import List, Optional, Dict, Any, Union
 from datetime import datetime
 import json
 import os
@@ -18,6 +20,19 @@ router = APIRouter(prefix="/api/storage", tags=["storage"])
 
 # Set up logging
 logger = logging.getLogger(__name__)
+
+# Helper function to create CORS-enabled error responses
+def create_cors_error_response(status_code: int, detail: str) -> JSONResponse:
+    """Create an error response with CORS headers"""
+    response = JSONResponse(
+        status_code=status_code,
+        content={"detail": detail}
+    )
+    response.headers["Access-Control-Allow-Origin"] = "http://localhost:8080"
+    response.headers["Access-Control-Allow-Credentials"] = "true"
+    response.headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, DELETE, OPTIONS"
+    response.headers["Access-Control-Allow-Headers"] = "*"
+    return response
 
 # Add security scheme
 security = HTTPBearer(auto_error=False)
@@ -40,10 +55,13 @@ async def get_current_user_from_request(request: Request) -> str:
         logger.info(f"🔐 Storage: Authenticated user: {user_id} ({session_data.email})")
         return user_id
         
+    except ImportError as e:
+        logger.error(f"🔐 Storage: Authentication module import failed: {str(e)}")
+        raise HTTPException(status_code=503, detail=f"Authentication system unavailable: missing dependencies")
     except Exception as e:
         logger.error(f"🔐 Storage: Authentication failed: {str(e)}")
         # Re-raise the exception to ensure no fallback
-        raise
+        raise HTTPException(status_code=401, detail="Authentication required - valid Okta session needed")
 
 # Helper function to create user-specific workspace ID
 def get_user_workspace_id(user_id: str, workspace_id: str = "main") -> str:
@@ -486,7 +504,7 @@ class Chart(BaseModel):
     chartType: str
     chartConfig: Dict[str, Any]  # Full Plotly chart configuration
     metadata: Dict[str, Any] = {}
-    rawData: Optional[Dict[str, Any]] = None
+    rawData: Optional[Union[Dict[str, Any], List[Any]]] = None
     filePath: Optional[str] = None
     createdAt: datetime
     updatedAt: datetime
@@ -1758,16 +1776,41 @@ async def get_chart(
         updatedAt=db_chart.updated_at
     )
 
+@router.options("/pages/{page_id}/charts")
+async def options_charts_for_page(page_id: str, response: Response):
+    """Handle CORS preflight for charts endpoint"""
+    response.headers["Access-Control-Allow-Origin"] = "http://localhost:8080"
+    response.headers["Access-Control-Allow-Credentials"] = "true"
+    response.headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, DELETE, OPTIONS"
+    response.headers["Access-Control-Allow-Headers"] = "*"
+    return {}
+
 @router.get("/pages/{page_id}/charts", response_model=List[Chart])
 async def get_charts_for_page(
     page_id: str,
     request: Request,
+    response: Response,
     db: Session = Depends(get_db),
     limit: int = 50
 ):
     """Get all charts for a page - supports both Canvas pages and original pages"""
-    current_user = await get_current_user_from_request(request)
-    logger.info(f"📊 get_charts_for_page: user={current_user}, page_id={page_id}")
+    
+    # Add CORS headers explicitly - do this first to ensure they're always set
+    response.headers["Access-Control-Allow-Origin"] = "http://localhost:8080"
+    response.headers["Access-Control-Allow-Credentials"] = "true"
+    response.headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, DELETE, OPTIONS"
+    response.headers["Access-Control-Allow-Headers"] = "*"
+    
+    try:
+        current_user = await get_current_user_from_request(request)
+        logger.info(f"📊 get_charts_for_page: user={current_user}, page_id={page_id}")
+    except HTTPException as e:
+        # Return CORS-enabled error response
+        logger.error(f"📊 Authentication failed for charts endpoint: {e.detail}")
+        return create_cors_error_response(e.status_code, e.detail)
+    except Exception as e:
+        logger.error(f"📊 Unexpected error in authentication: {str(e)}")
+        return create_cors_error_response(500, f"Internal server error: {str(e)}")
     
     # Verify user owns the page
     db_page = db.query(PageDB).filter(
