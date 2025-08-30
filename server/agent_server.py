@@ -17,6 +17,12 @@ sys.path.insert(0, str(Path(__file__).parent))
 # Import agent router
 from agent.api.endpoints import router as agent_router
 from application.routes.storage import router as storage_router
+import asyncio
+import logging
+
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 def create_app() -> FastAPI:
     """Create FastAPI application with agent endpoints"""
@@ -50,6 +56,22 @@ def create_app() -> FastAPI:
     async def health_check():
         """Health check endpoint"""
         return {"status": "healthy", "service": "ceneca-agent"}
+
+    @app.on_event("startup")
+    async def initialize_schema_registry():
+        """Initialize schema registry on startup"""
+        try:
+            logger.info("🔍 Initializing schema registry on startup...")
+            
+            # Run initial introspection
+            from agent.db.registry.run_introspection import main as run_introspection_main
+            await run_introspection_main()
+            
+            logger.info("✅ Schema registry initialized successfully")
+        except Exception as e:
+            logger.error(f"❌ Failed to initialize schema registry: {e}")
+            # Don't crash the server, but log the error
+            logger.warning("⚠️ Server will continue without initial schema introspection")
 
     return app
 

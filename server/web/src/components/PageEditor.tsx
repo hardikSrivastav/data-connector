@@ -187,6 +187,16 @@ export const PageEditor = ({
     
     console.log(`🧠 Adding reasoning chain event for session ${sessionId}:`, event.type, event.message);
     
+    // ✅ SPECIAL DEBUG: Log complete events specifically
+    if (event.type === 'complete') {
+      console.log(`🏁 PageEditor: COMPLETE EVENT for session ${sessionId}:`, {
+        eventType: event.type,
+        message: event.message,
+        metadata: event.metadata,
+        timestamp: event.timestamp
+      });
+    }
+    
     setActiveReasoningChains(prev => {
       const current = prev.get(sessionId) || {
         events: [],
@@ -208,11 +218,33 @@ export const PageEditor = ({
         return prev; // Return unchanged map
       }
       
+      // ✅ DEBUG: Log progress calculation details
+      let newProgress;
+      if (event.type === 'complete') {
+        newProgress = 1.0;
+      } else if (event.metadata?.progress) {
+        newProgress = parseFloat(event.metadata.progress) / 100;
+      } else {
+        // ✅ FIX: Don't reduce progress once it reaches 100%
+        newProgress = current.progress >= 1.0 ? 1.0 : Math.min(current.progress + 0.05, 0.98);
+      }
+      
+      console.log(`🧠 ReasoningChain Progress Update:`, {
+        eventType: event.type,
+        sessionId: sessionId,
+        currentProgress: current.progress,
+        metadataProgress: event.metadata?.progress,
+        metadataProgressType: typeof event.metadata?.progress,
+        calculatedProgress: newProgress,
+        isComplete: event.type === 'complete',
+        eventMessage: event.message
+      });
+
       const updated: ReasoningChainData = {
         ...current,
         events: [...current.events, event],
         lastUpdated: new Date().toISOString(),
-        progress: event.type === 'complete' ? 1.0 : Math.min(current.progress + 0.1, 0.9),
+        progress: newProgress,
         currentStep: event.message,
         sessionId
       };
@@ -1009,7 +1041,7 @@ export const PageEditor = ({
           setStreamingState(prev => ({
             ...prev,
             status: message,
-            progress: Math.min(prev.progress + 0.1, 0.9),
+            progress: Math.min(prev.progress + 0.05, 0.95), // ✅ FIX: Smaller increments, higher cap
             history: [...prev.history, {
               type: 'status',
               message,
@@ -1021,6 +1053,36 @@ export const PageEditor = ({
             type: 'status',
             message,
             timestamp: new Date().toISOString()
+          });
+        },
+        
+        onProgress: (message, progress) => {
+          console.log(`📈 PageEditor Progress Callback:`, {
+            message: message,
+            progressRaw: progress,
+            progressType: typeof progress,
+            progressValue: parseFloat(progress.toString()),
+            progressDecimal: parseFloat(progress.toString()) / 100,
+            sessionId: sessionId
+          });
+          
+          const progressDecimal = parseFloat(progress.toString()) / 100; // Convert percentage to decimal, handle strings
+          setStreamingState(prev => ({
+            ...prev,
+            status: message,
+            progress: progressDecimal,
+            history: [...prev.history, {
+              type: 'progress',
+              message,
+              timestamp: new Date().toISOString()
+            }]
+          }));
+          
+          addReasoningChainEvent(sessionId, {
+            type: 'progress',
+            message,
+            timestamp: new Date().toISOString(),
+            metadata: { progress } // ✅ Include actual progress value in metadata
           });
         },
         
@@ -1354,9 +1416,12 @@ export const PageEditor = ({
           });
         },
         
-        onComplete: async (results, sessionId) => {
-          console.log(`🎯 PageEditor: Query completed with sessionId: ${sessionId}`);
+        onComplete: async (results, backendSessionId) => {
+          console.log(`🎯 PageEditor: Query completed with backend sessionId: ${backendSessionId}, frontend sessionId: ${sessionId}`);
           console.log(`🎯 PageEditor: Results:`, results);
+          
+          // ✅ FIX: Use the frontend sessionId for reasoning chain completion
+          const completionSessionId = sessionId; // Use frontend session ID, not backend
           
           // ✅ ENHANCED DEBUG: Log complete results structure including visualization data
           console.log(`🎯 PageEditor: ✅ COMPLETE RESULTS DEBUGGING:`);
@@ -1397,42 +1462,37 @@ export const PageEditor = ({
             console.log(`🎨 PageEditor: ✅ CHART JSON FILE PATH: ${results.chart_json_file_path}`);
           }
           
-          // Update reasoning chain as complete
-          if (sessionId && activeReasoningChains.has(sessionId)) {
-            const reasoningChain = activeReasoningChains.get(sessionId);
-            if (reasoningChain) {
-              reasoningChain.isComplete = true;
-              reasoningChain.status = 'completed';
-              reasoningChain.progress = 1.0;
-              reasoningChain.lastUpdated = new Date().toISOString();
-              
-              // ✅ ENHANCED: Add visualization data to reasoning chain
-              if (results?.visualization_data && results.visualization_data.length > 0) {
-                console.log(`🎨 PageEditor: Adding visualization data to reasoning chain`);
-                reasoningChain.events.push({
-                  type: 'visualization_data',
-                  message: `Found ${results.visualization_data.length} visualization events`,
-                  timestamp: new Date().toISOString(),
-                  metadata: {
-                    visualization_data: results.visualization_data,
-                    complete_chart_config: results.complete_chart_config,
-                    chart_json_file_path: results.chart_json_file_path
-                  }
-                } as any);
-              }
-              
-              // Save completed reasoning chain
-              try {
-                await storageManager.saveReasoningChain(reasoningChain);
-                await storageManager.completeReasoningChain(sessionId, true, newBlockId);
-                console.log(`✅ PageEditor: Reasoning chain marked as complete: ${sessionId}`);
-              } catch (error) {
-                console.error(`❌ PageEditor: Failed to complete reasoning chain: ${error}`);
-              }
+          // ✅ FIX: Use proper reasoning chain completion instead of direct mutation
+          if (completionSessionId && activeReasoningChains.has(completionSessionId)) {
+            // Add final completion event with visualization data if available
+            if (results?.visualization_data && results.visualization_data.length > 0) {
+              console.log(`🎨 PageEditor: Adding visualization data to reasoning chain`);
+              addReasoningChainEvent(completionSessionId, {
+                type: 'visualization_data',
+                message: `Found ${results.visualization_data.length} visualization events`,
+                timestamp: new Date().toISOString(),
+                metadata: {
+                  visualization_data: results.visualization_data,
+                  complete_chart_config: results.complete_chart_config,
+                  chart_json_file_path: results.chart_json_file_path
+                }
+              });
             }
             
-            // Clean up active reasoning chain
-            activeReasoningChains.delete(sessionId);
+            // Properly complete the reasoning chain using the state update mechanism
+            completeReasoningChain(completionSessionId, true, 'Query processing completed successfully', newBlockId);
+            
+            // Save completed reasoning chain
+            try {
+              const reasoningChain = activeReasoningChains.get(completionSessionId);
+              if (reasoningChain) {
+                await storageManager.saveReasoningChain(reasoningChain);
+                await storageManager.completeReasoningChain(completionSessionId, true, newBlockId);
+                console.log(`✅ PageEditor: Reasoning chain marked as complete: ${completionSessionId}`);
+              }
+            } catch (error) {
+              console.error(`❌ PageEditor: Failed to save reasoning chain: ${error}`);
+            }
           }
           
           // Extract canvas data from results using existing function

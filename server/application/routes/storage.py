@@ -1071,6 +1071,14 @@ async def reset_storage(db: Session = Depends(get_db)):
     db.commit()
     return {"message": "Storage reset successfully"}
 
+@router.delete("/reasoning-chains/clear")
+async def clear_reasoning_chains(db: Session = Depends(get_db)):
+    """Clear all reasoning chains from database"""
+    deleted_count = db.query(ReasoningChainDB).count()
+    db.query(ReasoningChainDB).delete()
+    db.commit()
+    return {"message": f"Cleared {deleted_count} reasoning chains successfully"}
+
 @router.get("/storage/debug")
 async def debug_storage(db: Session = Depends(get_db)):
     """Debug endpoint to see raw storage contents"""
