@@ -475,8 +475,17 @@ class SchemaWatcher:
         # Get data sources
         sources = list_data_sources()
         if not sources:
-            logger.warning("No data sources found in registry. Run introspection first.")
-            return
+            logger.warning("No data sources found in registry. Will retry in 60 seconds...")
+            logger.info("💡 To populate the registry immediately, run: docker exec ceneca-schema-watcher python -m agent.db.registry.run_introspection")
+            
+            # Wait and retry instead of exiting
+            while not sources:
+                await asyncio.sleep(60)  # Wait 1 minute
+                sources = list_data_sources()
+                if not sources:
+                    logger.info("🔄 Still no data sources found, retrying in 60 seconds...")
+                else:
+                    logger.info(f"✅ Found {len(sources)} data sources, starting schema monitoring...")
         
         # Set up database-specific watchers
         postgres_connections = {}
