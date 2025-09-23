@@ -916,7 +916,7 @@ async def run_introspection(
     logger.info("All introspection tasks completed")
 
 if __name__ == "__main__":
-    # Load configuration from config.yaml
+    # Load configuration from config.yaml using intelligent multi-instance parser
     config_path = os.path.join(str(Path.home()), ".data-connector", "config.yaml")
     data_sources = []
     
@@ -924,52 +924,43 @@ if __name__ == "__main__":
         try:
             with open(config_path, 'r') as f:
                 config = yaml.safe_load(f)
+            
+            # Use the intelligent multi-instance parser
+            from .multi_instance_parser import parse_multi_instance_config
+            config_parser = parse_multi_instance_config(config)
+            data_sources = config_parser.to_schema_registry_format()
+            
+            summary = config_parser.get_summary()
+            logger.info(f"Loaded {summary['total_instances']} data sources from config across {summary['database_types']} database types")
+            
+            if summary['multi_instance_types']:
+                logger.info(f"Multi-instance database types detected: {summary['multi_instance_types']}")
                 
-            # Create data source entries from config
-            if "postgres" in config and "uri" in config["postgres"]:
-                data_sources.append({
-                    "id": "postgres_main",
-                    "uri": config["postgres"]["uri"],
-                    "type": "postgres",
-                    "version": "1.0.0"
-                })
-                
-            if "mongodb" in config and "uri" in config["mongodb"]:
-                data_sources.append({
-                    "id": "mongodb_main",
-                    "uri": config["mongodb"]["uri"],
-                    "type": "mongodb",
-                    "version": "1.0.0"
-                })
-                
-            if "qdrant" in config and "uri" in config["qdrant"]:
-                data_sources.append({
-                    "id": "qdrant_main",
-                    "uri": config["qdrant"]["uri"],
-                    "type": "qdrant",
-                    "version": "1.0.0"
-                })
-                
-            if "slack" in config and "uri" in config["slack"]:
-                data_sources.append({
-                    "id": "slack_main",
-                    "uri": config["slack"]["uri"],
-                    "type": "slack",
-                    "version": "1.0.0"
-                })
-                
-            if "shopify" in config and "uri" in config["shopify"]:
-                data_sources.append({
-                    "id": "shopify_main",
-                    "uri": config["shopify"]["uri"],
-                    "type": "shopify",
-                    "version": "1.0.0"
-                })
-                
-            logger.info(f"Loaded {len(data_sources)} data sources from config")
         except Exception as e:
-            logger.error(f"Error loading config: {str(e)}")
-            # Use default data sources from below
+            logger.error(f"Error loading config with multi-instance parser: {str(e)}")
+            # Fall back to basic parsing if the new parser fails
+            try:
+                # Basic fallback parsing for critical database types
+                if "postgres" in config and "uri" in config["postgres"]:
+                    data_sources.append({
+                        "id": "postgres_main",
+                        "uri": config["postgres"]["uri"],
+                        "type": "postgres",
+                        "version": "1.0.0"
+                    })
+                    
+                if "mongodb" in config and "uri" in config["mongodb"]:
+                    data_sources.append({
+                        "id": "mongodb_main",
+                        "uri": config["mongodb"]["uri"],
+                        "type": "mongodb",
+                        "version": "1.0.0"
+                    })
+                    
+                logger.warning("Using fallback configuration parsing")
+            except Exception as fallback_error:
+                logger.error(f"Fallback parsing also failed: {str(fallback_error)}")
+                # Use default data sources from below
     
     # If no config file or loading failed, use these defaults
     if not data_sources:

@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
 """
 Configuration for data sources to be registered in the schema registry.
-This script gets connection information from the user's config.yaml file.
+This script gets connection information from the user's config.yaml file using
+an intelligent multi-instance parser that automatically detects and handles
+multiple database instances of the same type.
 """
 import sys
 from pathlib import Path
@@ -15,240 +17,123 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Import the config loader
+# Import the config loader and multi-instance parser
 try:
     from agent.config.config_loader import load_config, get_database_uri
+    from .multi_instance_parser import parse_multi_instance_config
 except ImportError:
-    logger.error("Failed to import config_loader. Make sure the module is available.")
-    # Define stub for when the module can't be imported
+    logger.error("Failed to import config_loader or multi_instance_parser. Make sure the modules are available.")
+    # Define stubs for when modules can't be imported
     def load_config(): return {}
     def get_database_uri(db_type): return None
+    def parse_multi_instance_config(config): 
+        class MockParser:
+            def to_schema_registry_format(self): return []
+            def get_summary(self): return {}
+        return MockParser()
 
 # Load YAML configuration
 yaml_config = load_config()
 logger.debug(f"Loaded YAML config")
 
+# Parse configuration using intelligent multi-instance parser
+config_parser = parse_multi_instance_config(yaml_config)
+logger.info(f"Configuration parsing summary: {config_parser.get_summary()}")
+
 def get_data_sources():
     """
-    Get data sources configuration from the user's config.yaml
+    Get data sources configuration from the user's config.yaml using intelligent
+    multi-instance parser that automatically detects single vs multiple instances.
     
     Returns:
         List of data source configurations for local development
     """
-    sources = []
+    # Use the intelligent parser to handle all database types automatically
+    sources = config_parser.to_schema_registry_format()
     
-    # PostgreSQL
-    if 'postgres' in yaml_config:
-        postgres_uri = yaml_config.get('postgres', {}).get('uri')
-        if postgres_uri:
-            sources.append({
-                "id": "postgres_main",
-                "uri": postgres_uri,
-                "type": "postgres",
-                "version": "1.0.0"
-            })
-    
-    # MongoDB
-    if 'mongodb' in yaml_config:
-        mongodb_uri = yaml_config.get('mongodb', {}).get('uri')
-        if mongodb_uri:
-            sources.append({
-                "id": "mongodb_main",
-                "uri": mongodb_uri,
-                "type": "mongodb",
-                "version": "1.0.0"
-            })
-    
-    # Qdrant
-    if 'qdrant' in yaml_config:
-        qdrant_uri = yaml_config.get('qdrant', {}).get('uri')
-        if qdrant_uri:
-            sources.append({
-                "id": "qdrant_main",
-                "uri": qdrant_uri,
-                "type": "qdrant",
-                "version": "1.0.0"
-            })
-    
-    # Slack
-    if 'slack' in yaml_config:
-        slack_uri = yaml_config.get('slack', {}).get('uri')
-        if slack_uri:
-            sources.append({
-                "id": "slack_main",
-                "uri": slack_uri,
-                "type": "slack", 
-                "version": "1.0.0"
-            })
-    
-    # Shopify
-    if 'shopify' in yaml_config:
-        shopify_uri = yaml_config.get('shopify', {}).get('uri')
-        if shopify_uri:
-            sources.append({
-                "id": "shopify_main",
-                "uri": shopify_uri,
-                "type": "shopify",
-                "version": "1.0.0"
-            })
-            
-    # Uniware
-    if 'uniware' in yaml_config:
-        uniware_uri = yaml_config.get('uniware', {}).get('uri')
-        if uniware_uri:
-            sources.append({
-                "id": "uniware_main",
-                "uri": uniware_uri,
-                "type": "uniware",
-                "version": "1.0.0"
-            })
-            
-    # PayU
-    if 'payu' in yaml_config:
-        payu_uri = yaml_config.get('payu', {}).get('uri')
-        if payu_uri:
-            sources.append({
-                "id": "payu_main",
-                "uri": payu_uri,
-                "type": "payu",
-                "version": "1.0.0"
-            })
-            
-    # Easebuzz
-    if 'easebuzz' in yaml_config:
-        easebuzz_uri = yaml_config.get('easebuzz', {}).get('uri')
-        if easebuzz_uri:
-            sources.append({
-                "id": "easebuzz_main",
-                "uri": easebuzz_uri,
-                "type": "easebuzz",
-                "version": "1.0.0"
-            })
-            
-    # Shiprocket
-    if 'shiprocket' in yaml_config:
-        shiprocket_uri = yaml_config.get('shiprocket', {}).get('uri')
-        if shiprocket_uri:
-            sources.append({
-                "id": "shiprocket_main",
-                "uri": shiprocket_uri,
-                "type": "shiprocket",
-                "version": "1.0.0"
-            })
+    # Log details about what was parsed
+    try:
+        summary = config_parser.get_summary()
+        logger.info(f"Parsed {summary['total_instances']} database instances across {summary['database_types']} types")
+        
+        if summary.get('multi_instance_types'):
+            logger.info(f"Multi-instance database types: {summary['multi_instance_types']}")
+        
+        if summary.get('single_instance_types'):
+            logger.info(f"Single-instance database types: {summary['single_instance_types']}")
+    except Exception as e:
+        logger.warning(f"Could not get parser summary: {e}")
     
     return sources
 
 def get_docker_data_sources():
     """
-    Get data sources configuration for Docker environment
+    Get data sources configuration for Docker environment.
+    
+    For Docker deployments, we typically use internal Docker network hostnames
+    and default configurations. This function provides backward compatibility
+    for existing Docker setups while still supporting multi-instance configurations.
     
     Returns:
         List of data source configurations for Docker
     """
-    # In Docker, we use internal Docker network hostnames
-    sources = []
+    # First, get the user's configured sources using the intelligent parser
+    user_sources = config_parser.to_schema_registry_format()
     
-    # PostgreSQL
+    # For Docker, we may want to override certain URIs with Docker-specific hostnames
+    # This maintains backward compatibility with existing Docker deployments
+    docker_sources = []
+    
+    # Add Docker-specific default sources if the database types are configured
     if 'postgres' in yaml_config:
-        sources.append({
-            "id": "postgres_main",
-            "uri": "postgresql://dataconnector:dataconnector@data-connector-postgres:5432/dataconnector",
-            "type": "postgres",
-            "version": "1.0.0"
-        })
+        docker_sources.extend([
+            {
+                "id": "postgres_main",
+                "uri": "postgresql://dataconnector:dataconnector@data-connector-postgres:5432/dataconnector",
+                "type": "postgres",
+                "version": "1.0.0"
+            },
+            {
+                "id": "postgres_slack",
+                "uri": "postgresql://slackoauth:slackoauth@slack-mcp-postgres:5432/slackoauth",
+                "type": "postgres",
+                "version": "1.0.0"
+            }
+        ])
     
-    # MongoDB
     if 'mongodb' in yaml_config:
-        sources.append({
+        docker_sources.append({
             "id": "mongodb_main",
             "uri": "mongodb://dataconnector:dataconnector@data-connector-mongodb:27017/dataconnector_mongo",
             "type": "mongodb",
             "version": "1.0.0"
         })
     
-    # Qdrant
     if 'qdrant' in yaml_config:
-        sources.append({
-            "id": "qdrant_main",
-            "uri": "http://data-connector-qdrant:6333",
-            "type": "qdrant",
-            "version": "1.0.0"
-        })
+        docker_sources.extend([
+            {
+                "id": "qdrant_main",
+                "uri": "http://data-connector-qdrant:6333",
+                "type": "qdrant",
+                "version": "1.0.0"
+            },
+            {
+                "id": "qdrant_slack",
+                "uri": "http://slack-message-qdrant:6333",
+                "type": "qdrant",
+                "version": "1.0.0"
+            }
+        ])
     
-    # Slack MCP Postgres
-    if 'postgres' in yaml_config:
-        sources.append({
-            "id": "postgres_slack",
-            "uri": "postgresql://slackoauth:slackoauth@slack-mcp-postgres:5432/slackoauth",
-            "type": "postgres",
-            "version": "1.0.0"
-        })
+    # For other database types (Shopify, PayU, etc.), use the user's configuration as-is
+    # since these are typically external services that don't need Docker hostname mapping
+    external_db_types = {'shopify', 'uniware', 'payu', 'easebuzz', 'shiprocket', 'ga4', 'slack'}
+    for source in user_sources:
+        if source.get('type') in external_db_types:
+            docker_sources.append(source)
     
-    # Slack Qdrant
-    if 'qdrant' in yaml_config:
-        sources.append({
-            "id": "qdrant_slack",
-            "uri": "http://slack-message-qdrant:6333",
-            "type": "qdrant",
-            "version": "1.0.0"
-        })
-    
-    # Shopify
-    if 'shopify' in yaml_config:
-        shopify_uri = yaml_config.get('shopify', {}).get('uri')
-        if shopify_uri:
-            sources.append({
-                "id": "shopify_main",
-                "uri": shopify_uri,
-                "type": "shopify",
-                "version": "1.0.0"
-            })
-            
-    # Uniware
-    if 'uniware' in yaml_config:
-        uniware_uri = yaml_config.get('uniware', {}).get('uri')
-        if uniware_uri:
-            sources.append({
-                "id": "uniware_main",
-                "uri": uniware_uri,
-                "type": "uniware",
-                "version": "1.0.0"
-            })
-            
-    # PayU
-    if 'payu' in yaml_config:
-        payu_uri = yaml_config.get('payu', {}).get('uri')
-        if payu_uri:
-            sources.append({
-                "id": "payu_main",
-                "uri": payu_uri,
-                "type": "payu",
-                "version": "1.0.0"
-            })
-            
-    # Easebuzz
-    if 'easebuzz' in yaml_config:
-        easebuzz_uri = yaml_config.get('easebuzz', {}).get('uri')
-        if easebuzz_uri:
-            sources.append({
-                "id": "easebuzz_main",
-                "uri": easebuzz_uri,
-                "type": "easebuzz",
-                "version": "1.0.0"
-            })
-            
-    # Shiprocket
-    if 'shiprocket' in yaml_config:
-        shiprocket_uri = yaml_config.get('shiprocket', {}).get('uri')
-        if shiprocket_uri:
-            sources.append({
-                "id": "shiprocket_main",
-                "uri": shiprocket_uri,
-                "type": "shiprocket",
-                "version": "1.0.0"
-            })
-    
-    return sources
+    logger.info(f"Generated {len(docker_sources)} Docker data sources")
+    return docker_sources
 
 # Dynamic generation of data sources from config
 DATA_SOURCES = get_data_sources()
