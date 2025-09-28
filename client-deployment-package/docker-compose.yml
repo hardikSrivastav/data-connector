@@ -1,0 +1,57 @@
+version: '3.8'
+
+services:
+  ceneca-agent:
+    image: hardiksriv/agent:latest
+    container_name: ceneca-agent
+    restart: unless-stopped
+    
+    ports:
+      - "8787:8787"  # Web interface
+    
+    volumes:
+      - ./client-config.yaml:/root/.data-connector/config.yaml:ro
+      - ./logs:/var/log:rw
+      - ceneca-data:/app/data
+    
+    environment:
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - PYTHONPATH=/app/server
+      - LOG_LEVEL=info
+    
+    # Network configuration for accessing MongoDB
+    extra_hosts:
+      - "mongodb-host:172.31.18.152"
+    
+    # Health check
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8787/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    
+    # Resource limits
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+          cpus: '1.0'
+        reservations:
+          memory: 1G
+          cpus: '0.5'
+    
+    # Logging configuration
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+volumes:
+  ceneca-data:
+    driver: local
+
+networks:
+  default:
+    name: ceneca-network
