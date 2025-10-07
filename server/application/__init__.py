@@ -91,30 +91,42 @@ def create_app():
     # Initialize authentication system on startup
     @app.on_event("startup")
     async def initialize_auth():
-        """Initialize authentication system in ENTERPRISE MODE"""
+        """Initialize authentication system"""
         try:
             from agent.auth import auth_manager
             
-            logger.info("🚀 Initializing authentication system (Enterprise Mode)...")
+            logger.info("🚀 Initializing authentication system...")
             
-            # Enterprise mode requires successful initialization
+            # Initialize auth - returns True if enabled, False if disabled
             auth_enabled = await auth_manager.initialize()
             
-            logger.info("🔐 SSO authentication enabled")
-            app.state.auth_enabled = True
-            app.state.auth_config = auth_manager.auth_config
-            
-            # Create and include auth router
-            auth_router = auth_manager.create_auth_router()
-            app.include_router(auth_router, prefix="/api/agent")
-            
-            logger.info("🔐 Authentication system fully initialized (Enterprise Mode)")
+            if auth_enabled:
+                logger.info("🔐 SSO authentication ENABLED - Enterprise mode")
+                app.state.auth_enabled = True
+                app.state.auth_config = auth_manager.auth_config
+                
+                # Create and include auth router
+                auth_router = auth_manager.create_auth_router()
+                app.include_router(auth_router, prefix="/api/agent")
+                
+                logger.info("🔐 Authentication system fully initialized (Enterprise Mode)")
+            else:
+                logger.warning("⚠️  SSO authentication DISABLED - Testing mode")
+                logger.warning("⚠️  This configuration is NOT recommended for production")
+                app.state.auth_enabled = False
+                app.state.auth_config = auth_manager.auth_config
+                
+                # Create minimal auth router (just health endpoint)
+                auth_router = auth_manager.create_auth_router()
+                app.include_router(auth_router, prefix="/api/agent")
+                
+                logger.warning("⚠️  Running without authentication - testing mode only")
                 
         except Exception as e:
-            logger.error(f"❌ ENTERPRISE MODE VIOLATION: Failed to initialize authentication: {e}")
-            logger.error("🚨 Enterprise deployment requires working SSO authentication")
-            # Don't continue without auth in enterprise mode
-            raise RuntimeError(f"Enterprise mode requires authentication: {e}")
+            logger.error(f"❌ Failed to initialize authentication: {e}")
+            logger.error(f"Error details: {str(e)}")
+            # In testing mode, we can continue without auth
+            raise RuntimeError(f"Failed to initialize authentication system: {e}")
             
         # Initialize database availability monitoring
         try:

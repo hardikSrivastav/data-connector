@@ -41,22 +41,24 @@ Before starting, ensure you have:
 
 ### Step 1: Get the Ceneca Enterprise Image
 ```bash
-# Option A: Pull from registry (if provided)
-docker pull ceneca/enterprise:latest
-
-# Option B: Load from provided file
-docker load < ceneca-enterprise.tar
+# Pull from Docker Hub
+docker pull hardiksriv/agent:latest
 ```
 
 ### Step 2: Configure Your Environment
 ```bash
 # Copy example configurations
 cp config/config.yaml.example config/config.yaml
+
+# For production (with SSO):
 cp config/auth-config.yaml.example config/auth-config.yaml
+
+# For testing WITHOUT SSO (⚠️  not recommended for production):
+cp config/auth-config-testing.yaml.example config/auth-config.yaml
 
 # Edit with your settings
 nano config/config.yaml      # Database connections
-nano config/auth-config.yaml # SSO configuration
+nano config/auth-config.yaml # SSO configuration (or leave disabled for testing)
 ```
 
 ### Step 3: Set Up SSL Certificates

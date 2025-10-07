@@ -47,7 +47,7 @@ class AuthManager:
             RuntimeError: If SSO is not properly configured for enterprise deployment
         """
         try:
-            logger.info("🔐 Initializing authentication system (Enterprise Mode)...")
+            logger.info("🔐 Initializing authentication system...")
             
             # Load authentication configuration
             self.auth_config = AuthConfig.load_from_file(config_path)
@@ -56,11 +56,10 @@ class AuthManager:
             logger.info(f"Authentication config loaded: SSO {'enabled' if self.auth_config.enabled else 'disabled'}")
             
             if not self.auth_config.enabled:
-                logger.error("🚨 ENTERPRISE MODE VIOLATION: SSO authentication is disabled")
-                raise RuntimeError(
-                    "Enterprise deployment requires SSO authentication. "
-                    "Enable SSO in auth-config.yaml or use development deployment."
-                )
+                logger.warning("⚠️  SSO authentication is DISABLED - Running in testing mode without authentication")
+                logger.warning("⚠️  This mode is NOT recommended for production use")
+                self._initialized = True
+                return False  # Auth system not enabled
             
             # Initialize session manager
             # Check if Redis should be used (in production)
@@ -115,7 +114,7 @@ class AuthManager:
             app: FastAPI application instance
             
         Returns:
-            AuthMiddleware instance
+            AuthMiddleware instance (or None if auth disabled)
             
         Raises:
             RuntimeError: If not properly initialized
@@ -123,9 +122,15 @@ class AuthManager:
         if not self._initialized:
             raise RuntimeError("AuthManager not initialized. Call initialize() first.")
         
-        if not self.auth_config or not self.auth_config.enabled:
-            raise RuntimeError("Enterprise mode requires enabled authentication")
+        if not self.auth_config:
+            raise RuntimeError("Auth config not loaded")
         
+        # If auth is disabled, don't create middleware (it will skip auth checks anyway)
+        if not self.auth_config.enabled:
+            logger.warning("Skipping middleware creation - SSO disabled (testing mode)")
+            return None
+        
+        # Full auth enabled
         if not self.session_manager or not self.oidc_handler:
             raise RuntimeError("Cannot create middleware - auth components not initialized")
         
@@ -143,7 +148,7 @@ class AuthManager:
         Create and return authentication router
         
         Returns:
-            FastAPI router with authentication endpoints
+            FastAPI router with authentication endpoints (or minimal router if auth disabled)
             
         Raises:
             RuntimeError: If not properly initialized
@@ -151,9 +156,20 @@ class AuthManager:
         if not self._initialized:
             raise RuntimeError("AuthManager not initialized. Call initialize() first.")
         
-        if not self.auth_config or not self.auth_config.enabled:
-            raise RuntimeError("Enterprise mode requires enabled authentication")
+        if not self.auth_config:
+            raise RuntimeError("Auth config not loaded")
         
+        # If auth is disabled, create minimal router
+        if not self.auth_config.enabled:
+            logger.warning("Creating minimal auth router - SSO disabled")
+            auth_router = create_auth_router(
+                auth_config=self.auth_config,
+                oidc_handler=None,
+                session_manager=None
+            )
+            return auth_router
+        
+        # Full auth enabled
         if not self.session_manager or not self.oidc_handler:
             raise RuntimeError("Cannot create auth router - auth components not initialized")
         

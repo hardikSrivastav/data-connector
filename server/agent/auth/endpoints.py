@@ -55,26 +55,35 @@ class AuthHealthResponse(BaseModel):
     message: Optional[str] = None
     mode: str = "enterprise"
 
-def create_auth_router(auth_config: AuthConfig, oidc_handler: OIDCHandler, session_manager: SessionManager) -> APIRouter:
+def create_auth_router(auth_config: AuthConfig, oidc_handler: Optional[OIDCHandler] = None, session_manager: Optional[SessionManager] = None) -> APIRouter:
     """
     Create authentication router with configured handlers
-    ENTERPRISE MODE: Requires properly configured SSO
     
     Args:
         auth_config: Authentication configuration
-        oidc_handler: OIDC authentication handler
-        session_manager: Session manager
+        oidc_handler: OIDC authentication handler (None if auth disabled)
+        session_manager: Session manager (None if auth disabled)
         
     Returns:
         Configured FastAPI router
-        
-    Raises:
-        ValueError: If SSO is not properly configured
     """
-    if not auth_config.enabled:
-        raise ValueError("Enterprise mode requires enabled SSO authentication")
-    
     router = APIRouter(tags=["authentication"])
+    
+    # If SSO is disabled, return minimal router with just health endpoint
+    if not auth_config.enabled:
+        logger.warning("Creating auth router with SSO disabled - testing mode")
+        
+        @router.get("/auth/health", response_model=AuthHealthResponse)
+        async def auth_health():
+            """Check authentication system health"""
+            return AuthHealthResponse(
+                status="disabled",
+                sso_enabled=False,
+                message="SSO authentication is disabled - running in testing mode",
+                mode="testing"
+            )
+        
+        return router
     
     @router.post("/auth/login", response_model=LoginResponse)
     async def initiate_login(request: Request):
