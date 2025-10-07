@@ -40,10 +40,20 @@ security = HTTPBearer(auto_error=False)
 # Authentication dependency
 async def get_current_user_from_request(request: Request) -> str:
     """
-    Extract current user from request using STRICT enterprise authentication
+    Extract current user from request
     
-    NO FALLBACKS - Must have valid Okta session (same as agent server)
+    If auth is disabled (testing mode), returns a test user.
+    If auth is enabled, requires valid Okta session.
     """
+    # Check if auth is enabled
+    auth_enabled = getattr(request.app.state, 'auth_enabled', True)
+    
+    if not auth_enabled:
+        # Testing mode - return a test user
+        logger.debug("🔐 Storage: Auth disabled - using test user")
+        return "test_user_dev"
+    
+    # Auth is enabled - use strict authentication
     try:
         # Import the enterprise auth system
         from agent.auth.request_auth import get_current_user_strict

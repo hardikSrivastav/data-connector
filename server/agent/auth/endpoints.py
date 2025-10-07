@@ -49,9 +49,9 @@ class AuthHealthResponse(BaseModel):
     """Authentication system health"""
     status: str
     sso_enabled: bool
-    provider: str
-    session_manager: Dict[str, Any]
-    oidc_handler: Dict[str, Any]
+    provider: Optional[str] = None
+    session_manager: Optional[Dict[str, Any]] = None
+    oidc_handler: Optional[Dict[str, Any]] = None
     message: Optional[str] = None
     mode: str = "enterprise"
 
@@ -82,6 +82,15 @@ def create_auth_router(auth_config: AuthConfig, oidc_handler: Optional[OIDCHandl
                 message="SSO authentication is disabled - running in testing mode",
                 mode="testing"
             )
+        
+        @router.get("/auth/user")
+        async def get_user():
+            """Get current user (returns None when auth disabled)"""
+            return {
+                "authenticated": False,
+                "user": None,
+                "message": "Authentication is disabled - running in testing mode"
+            }
         
         return router
     
