@@ -62,6 +62,8 @@ nano config/auth-config.yaml # SSO configuration (or leave disabled for testing)
 ```
 
 ### Step 3: Set Up SSL Certificates
+
+**For Production (SSL enabled):**
 ```bash
 # Place your certificates in the certs/ directory
 cp /path/to/your/certificate.crt certs/
@@ -71,10 +73,30 @@ cp /path/to/your/private.key certs/
 ./scripts/generate-self-signed.sh yourcompany.com
 ```
 
-### Step 4: Deploy Ceneca
+**For Testing WITHOUT SSL (⚠️  not recommended for production):**
 ```bash
-# Start the deployment
+# No certificates needed - skip this step
+# Set SSL_ENABLED=false when starting (see Step 4)
+```
+
+### Step 4: Deploy Ceneca
+
+**Production deployment (with SSL):**
+```bash
+# Default mode - SSL enabled
 docker-compose up -d
+
+# Or explicitly:
+SSL_ENABLED=true docker-compose up -d
+
+# Check status
+docker-compose ps
+```
+
+**Testing deployment (without SSL):**
+```bash
+# Start without SSL (HTTP only)
+SSL_ENABLED=false docker-compose up -d
 
 # Check status
 docker-compose ps
@@ -91,11 +113,40 @@ docker-compose ps
 
 ## What Happens When You Deploy
 
-1. **Ceneca starts on port 443** (HTTPS)
+**With SSL enabled (production):**
+1. **Ceneca starts on ports 80 & 443** (HTTP redirects to HTTPS)
 2. **Frontend loads** at `https://ceneca.yourcompany.com/`
 3. **API endpoints** available at `https://ceneca.yourcompany.com/api/`
-4. **Authentication** redirects to your SSO provider
+4. **Authentication** redirects to your SSO provider (if enabled)
 5. **Database connections** established using your config
+
+**With SSL disabled (testing only):**
+1. **Ceneca starts on port 80** (HTTP only)
+2. **Frontend loads** at `http://localhost/` or `http://your-ip/`
+3. **API endpoints** available at `http://localhost/api/`
+4. **No SSL encryption** - all traffic is unencrypted
+5. **Database connections** established using your config
+
+## Quick Testing Mode (No SSL, No OAuth)
+
+Want to quickly test Ceneca without SSL certificates or SSO setup?
+
+```bash
+# 1. Copy testing auth config
+cp config/auth-config-testing.yaml.example config/auth-config.yaml
+
+# 2. Copy database config
+cp config/config.yaml.example config/config.yaml
+nano config/config.yaml  # Add your database credentials
+
+# 3. Start without SSL
+SSL_ENABLED=false docker-compose up -d
+
+# 4. Access at: http://localhost
+# No SSL certificates needed, no SSO login required!
+```
+
+**⚠️  WARNING**: This mode is for local testing ONLY. Never use in production!
 
 ## Next Steps
 

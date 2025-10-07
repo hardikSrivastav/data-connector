@@ -49,40 +49,58 @@ export CENECA_MODE=${CENECA_MODE:-enterprise}
 export CENECA_CONFIG_PATH=${CENECA_CONFIG_PATH:-/app/config/config.yaml}
 export CENECA_AUTH_CONFIG_PATH=${CENECA_AUTH_CONFIG_PATH:-/app/config/auth-config.yaml}
 export CENECA_DOMAIN=${CENECA_DOMAIN:-ceneca.yourcompany.com}
+export SSL_ENABLED=${SSL_ENABLED:-true}
 export SSL_CERT_PATH=${SSL_CERT_PATH:-/app/certs/certificate.crt}
 export SSL_KEY_PATH=${SSL_KEY_PATH:-/app/certs/private.key}
 
 log "Starting Ceneca Enterprise v1.0"
 log "Domain: $CENECA_DOMAIN"
 log "Mode: $CENECA_MODE"
+log "SSL Enabled: $SSL_ENABLED"
 
 # Validate required configuration files
 log "Validating configuration files..."
 check_file "$CENECA_CONFIG_PATH"
 check_file "$CENECA_AUTH_CONFIG_PATH"
 
-# Validate SSL certificates
-log "Validating SSL certificates..."
-check_file "$SSL_CERT_PATH"
-check_file "$SSL_KEY_PATH"
+# Conditional SSL validation and nginx config selection
+if [ "$SSL_ENABLED" = "true" ]; then
+    log "SSL ENABLED - Validating certificates..."
+    check_file "$SSL_CERT_PATH"
+    check_file "$SSL_KEY_PATH"
 
-# Validate certificate and key match
-if ! openssl x509 -noout -modulus -in "$SSL_CERT_PATH" | openssl md5 | cut -d' ' -f2 > /tmp/cert.md5; then
-    log "ERROR: Invalid SSL certificate"
-    exit 1
+    # Validate certificate and key match
+    if ! openssl x509 -noout -modulus -in "$SSL_CERT_PATH" | openssl md5 | cut -d' ' -f2 > /tmp/cert.md5; then
+        log "ERROR: Invalid SSL certificate"
+        exit 1
+    fi
+
+    if ! openssl rsa -noout -modulus -in "$SSL_KEY_PATH" | openssl md5 | cut -d' ' -f2 > /tmp/key.md5; then
+        log "ERROR: Invalid SSL private key"
+        exit 1
+    fi
+
+    if ! diff -q /tmp/cert.md5 /tmp/key.md5 > /dev/null; then
+        log "ERROR: SSL certificate and private key do not match"
+        exit 1
+    fi
+
+    log "SSL certificates validated successfully"
+    
+    # Use HTTPS nginx configuration
+    log "Using HTTPS nginx configuration"
+    cp /app/config/nginx-https.conf /etc/nginx/nginx.conf
+else
+    log "⚠️  ⚠️  ⚠️  SSL IS DISABLED ⚠️  ⚠️  ⚠️"
+    log "⚠️  All traffic will be UNENCRYPTED"
+    log "⚠️  This mode is for LOCAL TESTING ONLY"
+    log "⚠️  NEVER use this in production environments"
+    log "⚠️  ⚠️  ⚠️  ⚠️  ⚠️  ⚠️  ⚠️  ⚠️  ⚠️  ⚠️"
+    
+    # Use HTTP-only nginx configuration
+    log "Using HTTP-only nginx configuration"
+    cp /app/config/nginx-http.conf /etc/nginx/nginx.conf
 fi
-
-if ! openssl rsa -noout -modulus -in "$SSL_KEY_PATH" | openssl md5 | cut -d' ' -f2 > /tmp/key.md5; then
-    log "ERROR: Invalid SSL private key"
-    exit 1
-fi
-
-if ! diff -q /tmp/cert.md5 /tmp/key.md5 > /dev/null; then
-    log "ERROR: SSL certificate and private key do not match"
-    exit 1
-fi
-
-log "SSL certificates validated successfully"
 
 # Create required directories
 log "Creating required directories..."

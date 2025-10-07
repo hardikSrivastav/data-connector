@@ -34,6 +34,7 @@ services:
       - CENECA_DOMAIN=${CENECA_DOMAIN:-ceneca.yourcompany.com}
       
       # SSL configuration
+      - SSL_ENABLED=${SSL_ENABLED:-true}  # Set to false for testing without SSL
       - SSL_CERT_PATH=/app/certs/certificate.crt
       - SSL_KEY_PATH=/app/certs/private.key
       
@@ -44,7 +45,7 @@ services:
       - LOG_LEVEL=${LOG_LEVEL:-info}
       
     healthcheck:
-      test: ["CMD", "curl", "-f", "https://localhost/api/health"]
+      test: ["CMD", "curl", "-f", "http://localhost/health"]
       interval: 30s
       timeout: 10s
       retries: 3

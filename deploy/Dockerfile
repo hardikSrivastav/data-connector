@@ -64,8 +64,9 @@ COPY --from=frontend-build /app/frontend/dist ./static
 # Create directories
 RUN mkdir -p /app/config /app/data /app/logs /app/certs /app/cache
 
-# Copy nginx configuration template
-COPY deploy/config/nginx.conf /etc/nginx/nginx.conf
+# Copy nginx configurations (both HTTP and HTTPS versions)
+COPY deploy/config/nginx-https.conf /app/config/nginx-https.conf
+COPY deploy/config/nginx-http.conf /app/config/nginx-http.conf
 
 # Copy supervisor configuration
 COPY deploy/config/supervisord.conf /etc/supervisor/conf.d/supervisord.conf
