@@ -1,133 +1,134 @@
-# Ceneca Enterprise Configuration
+# Ceneca Configuration
 # Copy this file to config.yaml and customize for your environment
 
-# Default database configuration
-default_database: postgres
+# Default database to use for queries if not specified
+default_database: mongodb
 
-# PostgreSQL Configuration
-postgres:
-  host: your-postgres-host.company.com
-  port: 5432
-  database: your_database_name
-  user: ceneca_user
-  password: your_secure_password
-  ssl_mode: require  # Use 'require' for production
-
-# MongoDB Configuration (optional)
+# MongoDB Configuration
+# You can define multiple MongoDB instances with different names
 mongodb:
-  host: your-mongo-host.company.com
-  port: 27017
-  database: ceneca_mongo
-  user: ceneca_mongo_user
-  password: your_mongo_password
-  # Alternatively, use a full URI:
-  # uri: mongodb://user:pass@host:port/database?authSource=admin
+  # Main MongoDB instance
+  main:
+    uri: "mongodb://your-host:27017/your_database"
+    database: "your_database"
+    pool_size: 10
+    connect_timeout_ms: 5000
+  
+  # Additional MongoDB instances (optional)
+  # Uncomment and configure as needed:
+  #
+  # secondary:
+  #   uri: "mongodb://your-host:27017/secondary_database"
+  #   database: "secondary_database"
+  #   pool_size: 10
+  #   connect_timeout_ms: 5000
 
-# Qdrant Vector Database (optional)
-qdrant:
-  host: your-qdrant-host.company.com
-  port: 6333
-  grpc_port: 6334
-  api_key: your_qdrant_api_key  # Optional
-  collection: corporate_knowledge
-  prefer_grpc: false
+# PostgreSQL Configuration (optional)
+# Uncomment if you want to connect to PostgreSQL:
+#
+# postgres:
+#   main:
+#     host: your-postgres-host.company.com
+#     port: 5432
+#     database: your_database_name
+#     user: your_user
+#     password: your_secure_password
+#     ssl_mode: require  # Use 'require' for production
 
-# Slack Integration (optional)
-slack:
-  mcp_url: http://your-slack-mcp-server:8500
-  history_days: 30
-  update_frequency: 6  # hours
-
-# Shopify Integration (optional)
-shopify:
-  app_url: https://your-shopify-app.company.com
-  api_version: "2025-04"
-  client_id: your_shopify_app_id
-  client_secret: your_shopify_app_secret
-  redirect_uri: https://ceneca.company.com/auth/shopify/callback
-  webhook_secret: your_webhook_secret
-
-# Google Analytics 4 (optional)
-ga4:
-  key_file: /app/config/ga4-service-account.json
-  property_id: 123456789
-  scopes:
-    - https://www.googleapis.com/auth/analytics.readonly
-  token_cache_db: /app/data/ga4_tokens.db
-
-# Vector Database Embeddings
-vector_db:
-  embedding:
-    provider: openai  # or 'custom'
-    model: text-embedding-ada-002
-    dimensions: 1536
-    api_key: your_openai_api_key
-    # For custom providers:
-    # endpoint: https://your-embedding-api.company.com/embed
-    # response_field: embedding
+# MySQL Configuration (optional)
+# Uncomment if you want to connect to MySQL:
+#
+# mysql:
+#   main:
+#     host: your-mysql-host.company.com
+#     port: 3306
+#     database: your_database_name
+#     user: your_user
+#     password: your_secure_password
 
 # LLM Configuration
 llm:
-  # For cloud LLM services
-  api_url: https://api.openai.com/v1
-  api_key: your_llm_api_key
-  model_name: gpt-4
-
-  # For Anthropic Claude
-  anthropic:
-    api_url: https://api.anthropic.com
-    api_key: your_anthropic_key
-    model_name: claude-3-opus-20240229
+  provider: "openai"      # Options: openai, anthropic, bedrock
+  model: "gpt-4"          # Model to use
+  api_key: "your_api_key" # Your LLM API key
+  max_tokens: 2000        # Maximum tokens per request
+  temperature: 0.7        # Sampling temperature (0.0-1.0)
 
 # AWS Bedrock Configuration (optional)
-aws:
-  access_key_id: your_aws_access_key
-  secret_access_key: your_aws_secret_key
-  region: us-east-1
-  session_token: your_session_token  # Optional
+# Uncomment if using AWS Bedrock for LLM:
+#
+# aws:
+#   access_key_id: your_aws_access_key
+#   secret_access_key: your_aws_secret_key
+#   region: us-east-1
+#
+# bedrock:
+#   enabled: true
+#   model_id: anthropic.claude-3-sonnet-20240229-v1:0
+#   runtime_region: us-east-1
+#   max_tokens: 4000
+#   temperature: 0.1
 
-bedrock:
+# Anthropic Configuration (optional)
+# Uncomment if using Anthropic directly:
+#
+# anthropic:
+#   api_key: your_anthropic_api_key
+#   model: claude-3-opus-20240229
+#   max_tokens: 4000
+
+# Logging Configuration
+logging:
+  level: "info"           # Options: debug, info, warning, error
+  format: "json"          # Options: json, text
+  destination: "file"     # Options: file, stdout
+  file_path: "/var/log/ceneca-agent.log"
+
+# Web Interface Configuration
+web:
   enabled: true
-  model_id: anthropic.claude-3-sonnet-20240229-v1:0
-  runtime_region: us-east-1
-  max_tokens: 4000
-  temperature: 0.1
-  top_p: 0.9
+  port: 8787
+  host: "0.0.0.0"
+  cors:
+    enabled: true
+    allowed_origins: ["*"]  # Restrict this in production
 
-# Trivial LLM for fast operations (grammar, formatting, etc.)
-trivial_llm:
-  enabled: true
-  provider: xai  # grok
-  api_key: your_grok_api_key
-  base_url: https://api.x.ai/v1
-  model: grok-3-mini
-  max_tokens: 500
-  temperature: 0.1
-  timeout: 3.0
-  max_retries: 1
+# Security Settings
+security:
+  request_timeout_seconds: 60
+  max_request_size_mb: 10
 
-# Redis Cache (optional - improves performance)
-redis:
-  host: your-redis-host.company.com
-  port: 6379
-  password: your_redis_password  # Optional
-  db: 0
-  enabled: true
-  ttl: 3600  # Cache TTL in seconds
-
-# Performance Settings
+# Performance Settings (optional)
 performance:
   max_analysis_steps: 10
   max_rows_direct: 100000
   default_sample_size: 1000
   max_query_timeout: 60
 
-# Logging
-logging:
-  level: info  # debug, info, warning, error
-  
+# Redis Cache (optional - improves performance)
+# Uncomment if you want to use Redis for caching:
+#
+# redis:
+#   host: your-redis-host.company.com
+#   port: 6379
+#   password: your_redis_password  # Optional
+#   db: 0
+#   enabled: true
+#   ttl: 3600  # Cache TTL in seconds
+
+# Vector Database (optional - for semantic search)
+# Uncomment if you want to use Qdrant:
+#
+# qdrant:
+#   host: your-qdrant-host.company.com
+#   port: 6333
+#   grpc_port: 6334
+#   api_key: your_qdrant_api_key  # Optional
+#   collection: corporate_knowledge
+#   prefer_grpc: false
+
 # Enterprise Settings
 enterprise:
   deployment_name: "Ceneca at YourCompany"
   contact_email: admin@yourcompany.com
-  support_url: https://support.yourcompany.com/ceneca 
+  support_url: https://support.yourcompany.com/ceneca
