@@ -88,6 +88,15 @@ class Orchestrator:
         
         self.db_type = db_type
     
+    def get_adapter(self) -> DBAdapter:
+        """
+        Get the underlying database adapter.
+        
+        Returns:
+            The database adapter instance
+        """
+        return self.adapter
+    
     async def llm_to_query(self, nl_prompt: str, **kwargs) -> Any:
         """
         Convert natural language to a database-specific query.

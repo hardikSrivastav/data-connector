@@ -149,6 +149,30 @@ services:
       timeout: 5s
       retries: 5
 
+  # Schema Watcher Service
+  schema-watcher:
+    build: 
+      context: ./server
+      dockerfile: Dockerfile
+    volumes:
+      - ./server:/app
+      - ~/.data-connector:/root/.data-connector
+      - schema-registry-data:/app/agent/db/registry/data
+    environment:
+      - RUNNING_IN_DOCKER=true
+      - SCHEMA_REGISTRY_PATH=/app/agent/db/registry/data/schema_registry.db
+      - SCHEMA_WATCHER_INTERVAL=1800  # 30 minutes
+      - PYTHONPATH=/app
+    container_name: ceneca-schema-watcher
+    restart: unless-stopped
+    networks:
+      - connector-network
+    depends_on:
+      - postgres
+      - mongodb
+      - qdrant
+    command: ["python", "-m", "agent.db.registry.schema_watcher", "--interval", "1800"]
+
 networks:
   connector-network:
     driver: bridge

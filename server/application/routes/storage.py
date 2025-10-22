@@ -1,6 +1,8 @@
-from fastapi import APIRouter, HTTPException, Depends
+from fastapi import APIRouter, HTTPException, Depends, Response, Request as FastAPIRequest
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
-from typing import List, Optional, Dict, Any
+from typing import List, Optional, Dict, Any, Union
 from datetime import datetime
 import json
 import os
@@ -19,16 +21,39 @@ router = APIRouter(prefix="/api/storage", tags=["storage"])
 # Set up logging
 logger = logging.getLogger(__name__)
 
+# Helper function to create CORS-enabled error responses
+def create_cors_error_response(status_code: int, detail: str) -> JSONResponse:
+    """Create an error response with CORS headers"""
+    response = JSONResponse(
+        status_code=status_code,
+        content={"detail": detail}
+    )
+    response.headers["Access-Control-Allow-Origin"] = "http://localhost:8080"
+    response.headers["Access-Control-Allow-Credentials"] = "true"
+    response.headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, DELETE, OPTIONS"
+    response.headers["Access-Control-Allow-Headers"] = "*"
+    return response
+
 # Add security scheme
 security = HTTPBearer(auto_error=False)
 
 # Authentication dependency
 async def get_current_user_from_request(request: Request) -> str:
     """
-    Extract current user from request using STRICT enterprise authentication
+    Extract current user from request
     
-    NO FALLBACKS - Must have valid Okta session (same as agent server)
+    If auth is disabled (testing mode), returns a test user.
+    If auth is enabled, requires valid Okta session.
     """
+    # Check if auth is enabled
+    auth_enabled = getattr(request.app.state, 'auth_enabled', True)
+    
+    if not auth_enabled:
+        # Testing mode - return a test user
+        logger.debug("🔐 Storage: Auth disabled - using test user")
+        return "test_user_dev"
+    
+    # Auth is enabled - use strict authentication
     try:
         # Import the enterprise auth system
         from agent.auth.request_auth import get_current_user_strict
@@ -40,10 +65,13 @@ async def get_current_user_from_request(request: Request) -> str:
         logger.info(f"🔐 Storage: Authenticated user: {user_id} ({session_data.email})")
         return user_id
         
+    except ImportError as e:
+        logger.error(f"🔐 Storage: Authentication module import failed: {str(e)}")
+        raise HTTPException(status_code=503, detail=f"Authentication system unavailable: missing dependencies")
     except Exception as e:
         logger.error(f"🔐 Storage: Authentication failed: {str(e)}")
         # Re-raise the exception to ensure no fallback
-        raise
+        raise HTTPException(status_code=401, detail="Authentication required - valid Okta session needed")
 
 # Helper function to create user-specific workspace ID
 def get_user_workspace_id(user_id: str, workspace_id: str = "main") -> str:
@@ -312,6 +340,36 @@ class UserPreferencesDB(Base):
         Index('idx_user_preferences_updated_at', 'updated_at'),
     )
 
+# Chart Storage for persistent visualization data
+class ChartDB(Base):
+    __tablename__ = "charts"
+    
+    id = Column(String, primary_key=True)  # Unique chart ID
+    workspace_id = Column(String, nullable=False)
+    page_id = Column(String, nullable=False)  # Canvas page ID (where results are displayed)
+    original_page_id = Column(String, nullable=True)  # Original page ID (where query was made)
+    block_id = Column(String, nullable=True)  # Optional link to block
+    user_id = Column(String, nullable=False)  # User isolation
+    original_query = Column(Text, nullable=False)  # The query that generated this chart
+    chart_type = Column(String, nullable=False)  # heatmap, bar, scatter, etc.
+    chart_config = Column(JSONB, nullable=False)  # Full Plotly chart configuration
+    chart_metadata = Column(JSONB, default=dict)  # Session info, timing, data summary, etc.
+    raw_data = Column(JSONB, nullable=True)  # Optional raw data used to generate chart
+    file_path = Column(String, nullable=True)  # Optional reference to file on disk
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    
+    # Indexes for performance and querying
+    __table_args__ = (
+        Index('idx_charts_workspace_id', 'workspace_id'),
+        Index('idx_charts_page_id', 'page_id'),
+        Index('idx_charts_original_page_id', 'original_page_id'),
+        Index('idx_charts_block_id', 'block_id'),
+        Index('idx_charts_user_id', 'user_id'),
+        Index('idx_charts_chart_type', 'chart_type'),
+        Index('idx_charts_created_at', 'created_at'),
+    )
+
 # Create tables
 Base.metadata.create_all(bind=engine)
 
@@ -443,6 +501,23 @@ class ReasoningChain(BaseModel):
     createdAt: datetime
     updatedAt: datetime
     completedAt: Optional[datetime] = None
+
+# Chart Pydantic Models
+class Chart(BaseModel):
+    id: str
+    workspaceId: str
+    pageId: str  # Canvas page ID (where results are displayed)
+    originalPageId: Optional[str] = None  # Original page ID (where query was made)
+    blockId: Optional[str] = None
+    userId: str
+    originalQuery: str
+    chartType: str
+    chartConfig: Dict[str, Any]  # Full Plotly chart configuration
+    metadata: Dict[str, Any] = {}
+    rawData: Optional[Union[Dict[str, Any], List[Any]]] = None
+    filePath: Optional[str] = None
+    createdAt: datetime
+    updatedAt: datetime
 
 # API request/response models
 class CreateCanvasRequest(BaseModel):
@@ -1006,6 +1081,14 @@ async def reset_storage(db: Session = Depends(get_db)):
     db.commit()
     return {"message": "Storage reset successfully"}
 
+@router.delete("/reasoning-chains/clear")
+async def clear_reasoning_chains(db: Session = Depends(get_db)):
+    """Clear all reasoning chains from database"""
+    deleted_count = db.query(ReasoningChainDB).count()
+    db.query(ReasoningChainDB).delete()
+    db.commit()
+    return {"message": f"Cleared {deleted_count} reasoning chains successfully"}
+
 @router.get("/storage/debug")
 async def debug_storage(db: Session = Depends(get_db)):
     """Debug endpoint to see raw storage contents"""
@@ -1565,4 +1648,264 @@ async def delete_reasoning_chain(
     db.delete(db_reasoning_chain)
     db.commit()
     
-    return {"success": True, "message": f"Reasoning chain {session_id} deleted"} 
+    return {"success": True, "message": f"Reasoning chain {session_id} deleted"}
+
+# ========== CHART ENDPOINTS ==========
+
+@router.post("/charts", response_model=Chart)
+async def create_chart(
+    chart: Chart,
+    request: Request,
+    db: Session = Depends(get_db)
+):
+    """Create a new chart - called when visualization is generated"""
+    current_user = await get_current_user_from_request(request)
+    logger.info(f"📊 create_chart: user={current_user}, chart_id={chart.id}")
+    
+    try:
+        # Ensure user owns the workspace/page
+        db_page = db.query(PageDB).filter(
+            PageDB.id == chart.pageId
+        ).first()
+        
+        if not db_page:
+            raise HTTPException(status_code=404, detail="Page not found")
+            
+        # Handle pages with null owner_id (assign to current user for backward compatibility)
+        if db_page.owner_id is None:
+            logger.info(f"🔧 Assigning page {chart.pageId} to user {current_user}")
+            db_page.owner_id = current_user
+            db.commit()
+        elif db_page.owner_id != current_user:
+            raise HTTPException(status_code=404, detail="Page access denied")
+        
+        # Check if chart already exists (idempotent)
+        existing_chart = db.query(ChartDB).filter(ChartDB.id == chart.id).first()
+        if existing_chart:
+            logger.info(f"📊 Chart {chart.id} already exists, updating...")
+            # Update existing chart
+            existing_chart.original_query = chart.originalQuery
+            existing_chart.chart_type = chart.chartType
+            existing_chart.chart_config = chart.chartConfig
+            existing_chart.chart_metadata = chart.metadata
+            existing_chart.raw_data = chart.rawData
+            existing_chart.file_path = chart.filePath
+            existing_chart.updated_at = datetime.utcnow()
+            if chart.blockId:
+                existing_chart.block_id = chart.blockId
+            
+            db.commit()
+            db.refresh(existing_chart)
+            
+            return Chart(
+                id=existing_chart.id,
+                workspaceId=existing_chart.workspace_id,
+                pageId=existing_chart.page_id,
+                originalPageId=existing_chart.original_page_id,
+                blockId=existing_chart.block_id,
+                userId=existing_chart.user_id,
+                originalQuery=existing_chart.original_query,
+                chartType=existing_chart.chart_type,
+                chartConfig=existing_chart.chart_config,
+                metadata=existing_chart.chart_metadata,
+                rawData=existing_chart.raw_data,
+                filePath=existing_chart.file_path,
+                createdAt=existing_chart.created_at,
+                updatedAt=existing_chart.updated_at
+            )
+        
+        # Create new chart
+        db_chart = ChartDB(
+            id=chart.id,
+            workspace_id=chart.workspaceId,
+            page_id=chart.pageId,
+            original_page_id=chart.originalPageId,
+            block_id=chart.blockId,
+            user_id=current_user,
+            original_query=chart.originalQuery,
+            chart_type=chart.chartType,
+            chart_config=chart.chartConfig,
+            chart_metadata=chart.metadata,
+            raw_data=chart.rawData,
+            file_path=chart.filePath
+        )
+        
+        db.add(db_chart)
+        db.commit()
+        db.refresh(db_chart)
+        
+        logger.info(f"📊 Created chart: {chart.id}")
+        
+        return Chart(
+            id=db_chart.id,
+            workspaceId=db_chart.workspace_id,
+            pageId=db_chart.page_id,
+            originalPageId=db_chart.original_page_id,
+            blockId=db_chart.block_id,
+            userId=db_chart.user_id,
+            originalQuery=db_chart.original_query,
+            chartType=db_chart.chart_type,
+            chartConfig=db_chart.chart_config,
+            metadata=db_chart.chart_metadata,
+            rawData=db_chart.raw_data,
+            filePath=db_chart.file_path,
+            createdAt=db_chart.created_at,
+            updatedAt=db_chart.updated_at
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"📊 Error creating chart: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to create chart: {str(e)}")
+
+@router.get("/charts/{chart_id}", response_model=Chart)
+async def get_chart(
+    chart_id: str,
+    request: Request,
+    db: Session = Depends(get_db)
+):
+    """Get chart by ID"""
+    current_user = await get_current_user_from_request(request)
+    logger.info(f"📊 get_chart: user={current_user}, chart_id={chart_id}")
+    
+    db_chart = db.query(ChartDB).filter(
+        ChartDB.id == chart_id,
+        ChartDB.user_id == current_user
+    ).first()
+    
+    if not db_chart:
+        raise HTTPException(status_code=404, detail="Chart not found")
+    
+    return Chart(
+        id=db_chart.id,
+        workspaceId=db_chart.workspace_id,
+        pageId=db_chart.page_id,
+        originalPageId=db_chart.original_page_id,
+        blockId=db_chart.block_id,
+        userId=db_chart.user_id,
+        originalQuery=db_chart.original_query,
+        chartType=db_chart.chart_type,
+        chartConfig=db_chart.chart_config,
+        metadata=db_chart.chart_metadata,
+        rawData=db_chart.raw_data,
+        filePath=db_chart.file_path,
+        createdAt=db_chart.created_at,
+        updatedAt=db_chart.updated_at
+    )
+
+@router.options("/pages/{page_id}/charts")
+async def options_charts_for_page(page_id: str, response: Response):
+    """Handle CORS preflight for charts endpoint"""
+    response.headers["Access-Control-Allow-Origin"] = "http://localhost:8080"
+    response.headers["Access-Control-Allow-Credentials"] = "true"
+    response.headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, DELETE, OPTIONS"
+    response.headers["Access-Control-Allow-Headers"] = "*"
+    return {}
+
+@router.get("/pages/{page_id}/charts", response_model=List[Chart])
+async def get_charts_for_page(
+    page_id: str,
+    request: Request,
+    response: Response,
+    db: Session = Depends(get_db),
+    limit: int = 50
+):
+    """Get all charts for a page - supports both Canvas pages and original pages"""
+    
+    # Add CORS headers explicitly - do this first to ensure they're always set
+    response.headers["Access-Control-Allow-Origin"] = "http://localhost:8080"
+    response.headers["Access-Control-Allow-Credentials"] = "true"
+    response.headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, DELETE, OPTIONS"
+    response.headers["Access-Control-Allow-Headers"] = "*"
+    
+    try:
+        current_user = await get_current_user_from_request(request)
+        logger.info(f"📊 get_charts_for_page: user={current_user}, page_id={page_id}")
+    except HTTPException as e:
+        # Return CORS-enabled error response
+        logger.error(f"📊 Authentication failed for charts endpoint: {e.detail}")
+        return create_cors_error_response(e.status_code, e.detail)
+    except Exception as e:
+        logger.error(f"📊 Unexpected error in authentication: {str(e)}")
+        return create_cors_error_response(500, f"Internal server error: {str(e)}")
+    
+    # Verify user owns the page
+    db_page = db.query(PageDB).filter(
+        PageDB.id == page_id
+    ).first()
+    
+    if not db_page:
+        raise HTTPException(status_code=404, detail="Page not found")
+        
+    # Handle pages with null owner_id (assign to current user for backward compatibility)
+    if db_page.owner_id is None:
+        logger.info(f"🔧 Assigning page {page_id} to user {current_user}")
+        db_page.owner_id = current_user
+        db.commit()
+    elif db_page.owner_id != current_user:
+        raise HTTPException(status_code=404, detail="Page access denied")
+    
+    # Find charts where EITHER:
+    # - page_id matches (Canvas page where results are displayed)  
+    # - original_page_id matches (original page where query was made)
+    db_charts = db.query(ChartDB).filter(
+        or_(
+            ChartDB.page_id == page_id,           # Canvas page
+            ChartDB.original_page_id == page_id   # Original page
+        ),
+        ChartDB.user_id == current_user
+    ).order_by(ChartDB.created_at.desc()).limit(limit).all()
+    
+    logger.info(f"📊 Found {len(db_charts)} charts for page {page_id}")
+    
+    return [
+        Chart(
+            id=chart.id,
+            workspaceId=chart.workspace_id,
+            pageId=chart.page_id,
+            originalPageId=chart.original_page_id,
+            blockId=chart.block_id,
+            userId=chart.user_id,
+            originalQuery=chart.original_query,
+            chartType=chart.chart_type,
+            chartConfig=chart.chart_config,
+            metadata=chart.chart_metadata,
+            rawData=chart.raw_data,
+            filePath=chart.file_path,
+            createdAt=chart.created_at,
+            updatedAt=chart.updated_at
+        )
+        for chart in db_charts
+    ]
+
+@router.delete("/charts/{chart_id}")
+async def delete_chart(
+    chart_id: str,
+    request: Request,
+    db: Session = Depends(get_db)
+):
+    """Delete a chart"""
+    current_user = await get_current_user_from_request(request)
+    logger.info(f"📊 delete_chart: user={current_user}, chart_id={chart_id}")
+    
+    db_chart = db.query(ChartDB).filter(
+        ChartDB.id == chart_id,
+        ChartDB.user_id == current_user
+    ).first()
+    
+    if not db_chart:
+        raise HTTPException(status_code=404, detail="Chart not found")
+    
+    # Also delete the file if it exists
+    if db_chart.file_path and os.path.exists(db_chart.file_path):
+        try:
+            os.remove(db_chart.file_path)
+            logger.info(f"📊 Deleted chart file: {db_chart.file_path}")
+        except Exception as e:
+            logger.warning(f"📊 Could not delete chart file {db_chart.file_path}: {e}")
+    
+    db.delete(db_chart)
+    db.commit()
+    
+    return {"success": True, "message": f"Chart {chart_id} deleted"}

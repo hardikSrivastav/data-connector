@@ -47,34 +47,67 @@ class SchemaRegistryClient:
         if not source:
             return None
             
-        # Extract the connection info from the config
-        import os
-        import yaml
-        from pathlib import Path
+        # Get connection URI from settings based on database type
+        connection_uri = self._get_connection_uri_for_source(source)
         
-        # Get config path from environment or use default
-        config_path = os.environ.get(
-            "DATA_CONNECTOR_CONFIG",
-            str(Path.home() / ".data-connector" / "config.yaml")
-        )
+        # Add connection details to the source
+        source["connection_uri"] = connection_uri
+        source["connection_details"] = {
+            "has_connection": connection_uri is not None,
+            "source_type": source.get("type", "unknown")
+        }
+            
+        return source
+    
+    def _get_connection_uri_for_source(self, source: Dict[str, Any]) -> Optional[str]:
+        """
+        Get connection URI for a source based on its type and configuration
         
+        Args:
+            source: Source configuration
+            
+        Returns:
+            Connection URI if available
+        """
         try:
-            with open(config_path, 'r') as f:
-                config = yaml.safe_load(f)
+            from ...config.settings import Settings
+            settings = Settings()
+            
+            db_type = source.get("type", "").lower()
+            
+            # Map database types to connection URIs from settings
+            if db_type in ["postgres", "postgresql"]:
+                return settings.connection_uri
+            elif db_type == "mongodb":
+                return getattr(settings, 'MONGODB_URI', None) or "mongodb://localhost:27017/ceneca"
+            elif db_type == "qdrant":
+                return getattr(settings, 'QDRANT_URL', None) or "http://localhost:6333"
+            elif db_type == "slack":
+                # Slack uses token-based authentication
+                slack_token = getattr(settings, 'SLACK_BOT_TOKEN', None)
+                if slack_token:
+                    return f"slack://token:{slack_token}"
+                return None
+            elif db_type == "shopify":
+                # Shopify uses API key authentication
+                shopify_key = getattr(settings, 'SHOPIFY_API_KEY', None)
+                shopify_secret = getattr(settings, 'SHOPIFY_API_SECRET', None)
+                if shopify_key and shopify_secret:
+                    return f"shopify://{shopify_key}:{shopify_secret}"
+                return None
+            elif db_type == "ga4":
+                # GA4 uses service account authentication
+                ga4_credentials = getattr(settings, 'GA4_CREDENTIALS_PATH', None)
+                if ga4_credentials:
+                    return f"ga4://credentials:{ga4_credentials}"
+                return None
+            else:
+                logger.warning(f"Unknown database type for connection URI: {db_type}")
+                return None
                 
-            # Get connection info from config
-            source_type = source.get("type", "")
-            connection_info = config.get(source_type, {})
-            
-            # Add the connection info to the source
-            source["connection_info"] = connection_info
-            
-            return source
-            
         except Exception as e:
-            logger.error(f"Error getting connection info for source {source_id}: {e}")
-            # Return basic source info without connection details
-            return source
+            logger.error(f"Error getting connection URI for source type {source.get('type')}: {e}")
+            return None
     
     def get_data_source(self, source_id: str) -> Optional[Dict[str, Any]]:
         """
@@ -501,6 +534,55 @@ class SchemaRegistryClient:
         except Exception as e:
             logger.error(f"Error validating Qdrant collection '{collection_name}' for source '{source_id}': {e}")
             return False
+    
+    def get_source_details(self, source_id: str) -> Optional[Dict[str, Any]]:
+        """
+        Get detailed information about a data source including connection details.
+        
+        Args:
+            source_id: The data source ID
+            
+        Returns:
+            Detailed source information including connection details, or None if not found
+        """
+        source = self.get_source_by_id(source_id)
+        if not source:
+            return None
+            
+        # Import settings to get connection URIs
+        try:
+            from ...config.settings import Settings
+            settings = Settings()
+            
+            # Map source types to settings properties
+            db_type = source.get("type", "").lower()
+            connection_uri = None
+            
+            if db_type in ["postgres", "postgresql"]:
+                connection_uri = settings.db_dsn
+            elif db_type in ["mongo", "mongodb"]:
+                connection_uri = settings.MONGODB_URI
+            elif db_type == "qdrant":
+                connection_uri = settings.QDRANT_URI
+            elif db_type == "slack":
+                connection_uri = settings.SLACK_URI
+            elif db_type == "shopify":
+                connection_uri = settings.SHOPIFY_URI
+            elif db_type == "ga4":
+                if settings.GA4_KEY_FILE and settings.GA4_PROPERTY_ID:
+                    connection_uri = f"ga4://{settings.GA4_PROPERTY_ID}"
+            
+            # Add connection URI to source details
+            if connection_uri:
+                source["connection_uri"] = connection_uri
+                logger.info(f"Added connection URI for {source_id} ({db_type}): {connection_uri[:50]}...")
+            else:
+                logger.warning(f"No connection URI available for {source_id} ({db_type})")
+                
+        except Exception as e:
+            logger.error(f"Error getting connection details for {source_id}: {e}")
+            
+        return source
 
 
 # Singleton instance for easy import

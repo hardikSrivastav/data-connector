@@ -1,0 +1,100 @@
+@import url('https://fonts.googleapis.com/css2?family=Libre+Baskerville:ital,wght@0,400;0,700;1,400&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --background: 0 0% 100%;
+    --foreground: 222.2 84% 4.9%;
+    --card: 0 0% 100%;
+    --card-foreground: 222.2 84% 4.9%;
+    --popover: 0 0% 100%;
+    --popover-foreground: 222.2 84% 4.9%;
+    --primary: 263 70% 50%;
+    --primary-foreground: 210 40% 98%;
+    --secondary: 210 40% 98%;
+    --secondary-foreground: 222.2 84% 4.9%;
+    --muted: 210 40% 98%;
+    --muted-foreground: 215.4 16.3% 46.9%;
+    --accent: 210 40% 98%;
+    --accent-foreground: 222.2 84% 4.9%;
+    --destructive: 0 84.2% 60.2%;
+    --destructive-foreground: 210 40% 98%;
+    --border: 214.3 31.8% 91.4%;
+    --input: 214.3 31.8% 91.4%;
+    --ring: 263 70% 50%;
+    --navbar-background: 255 255 255 / 0.85;
+    --radius: 0.5rem;
+  }
+
+  html {
+    font-family: 'Libre Baskerville', serif;
+  }
+  
+  body {
+    @apply bg-background text-foreground;
+    font-family: 'Libre Baskerville', serif;
+  }
+
+  h1, h2, h3, h4, h5, h6 {
+    font-family: 'Libre Baskerville', serif;
+  }
+
+  code, pre, .font-mono {
+    font-family: 'Courier New', monospace;
+  }
+}
+
+@layer utilities {
+  .font-baskerville {
+    font-family: 'Libre Baskerville', serif;
+  }
+  
+  .font-mono {
+    font-family: 'Courier New', monospace;
+  }
+  
+  .text-balance {
+    text-wrap: balance;
+  }
+}
+
+@layer components {
+  .btn {
+    @apply px-6 py-3 rounded-lg font-medium transition-colors duration-200 inline-flex items-center justify-center font-baskerville;
+  }
+  
+  .btn-primary {
+    @apply bg-zinc-900 text-white hover:bg-[#7b35b8] focus:ring-2 focus:ring-primary focus:ring-offset-2 transition-colors duration-300;
+  }
+  
+  .btn-secondary {
+    @apply border border-border bg-background hover:bg-accent hover:text-accent-foreground focus:ring-2 focus:ring-primary focus:ring-offset-2;
+  }
+  
+  .btn-outline {
+    @apply border border-border bg-background hover:bg-accent hover:text-accent-foreground focus:ring-2 focus:ring-primary focus:ring-offset-2;
+  }
+  
+  .input {
+    @apply px-4 py-3 border border-input rounded-lg bg-background text-foreground focus:ring-2 focus:ring-primary focus:border-primary transition-colors duration-200 font-baskerville;
+  }
+  
+  .card {
+    @apply bg-card text-card-foreground rounded-xl border border-border p-8 hover:border-primary/30 transition-colors duration-200;
+  }
+  
+  .code-editor {
+    @apply border border-border rounded-lg overflow-hidden bg-white;
+  }
+
+  .gradient-text {
+    @apply bg-clip-text text-transparent bg-gradient-to-r from-[#9d4edd] to-[#ff006e];
+  }
+
+  .navbar-glass {
+    @apply bg-white/85 backdrop-blur-xl border-b border-border;
+  }
+}

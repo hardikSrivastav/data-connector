@@ -1,0 +1,75 @@
+# Ceneca Agent Configuration - Customized for Client
+# This configuration automatically detects and handles your multiple MongoDB instances
+
+# Default database to use for queries if not specified
+default_database: mongodb
+
+# MongoDB configurations - Multiple instances automatically detected
+mongodb:
+  # Main MongoDB - financial data
+  main:
+    uri: "mongodb://172.31.18.152:27017/financial_data"
+    database: "financial_data"
+    pool_size: 10
+    connect_timeout_ms: 5000
+  
+  # CMOTS MongoDB - discvr finance
+  cmots:
+    uri: "mongodb://172.31.18.152:27017/discvr_finance"  
+    database: "discvr_finance"
+    pool_size: 10
+    connect_timeout_ms: 5000
+    
+  # Backend MongoDB - finance cards
+  backend:
+    uri: "mongodb://172.31.18.152:27017/finance_cards"
+    database: "finance_cards" 
+    pool_size: 10
+    connect_timeout_ms: 5000
+
+# LLM configuration
+llm:
+  provider: "openai"  # Options: openai, anthropic, local
+  model: "gpt-4"      # Model to use
+  max_tokens: 2000    # Maximum tokens per request
+  temperature: 0.7    # Sampling temperature
+
+# Logging configuration
+logging:
+  level: "info"       # Options: debug, info, warning, error
+  format: "json"      # Options: json, text
+  destination: "file" # Options: file, stdout
+  file_path: "/var/log/ceneca-agent.log"  # Only used if destination is "file"
+
+# Web interface configuration
+web:
+  enabled: true
+  port: 8787
+  host: "0.0.0.0"
+  cors:
+    enabled: true
+    allowed_origins: ["*"]
+
+# Security settings
+security:
+  request_timeout_seconds: 60
+  max_request_size_mb: 10
+
+# Performance settings optimized for your setup
+performance:
+  max_analysis_steps: 10
+  max_rows_direct: 100000
+  default_sample_size: 1000
+  max_query_timeout: 60
+
+# Multi-database orchestration settings
+cross_database:
+  enabled: true
+  max_concurrent_queries: 3
+  join_timeout_seconds: 30
+  
+# Enterprise settings
+enterprise:
+  deployment_name: "Ceneca at Client"
+  contact_email: "admin@client.com"
+  support_url: "https://support.client.com/ceneca"

@@ -1,5 +1,5 @@
 from pydantic_settings import BaseSettings
-from pydantic import Field, validator
+from pydantic import Field, field_validator, validator
 import os
 from typing import List, Optional, Dict, Any, Union
 import json
@@ -83,14 +83,16 @@ class Settings(BaseSettings):
     DEFAULT_EMBEDDING_MODEL: str = "all-MiniLM-L6-v2"  # Sentence transformers model
     EMBEDDING_BATCH_SIZE: int = 50
     
-    @validator("SECRET_KEY", pre=True)
+    @field_validator("SECRET_KEY", mode="before")
+    @classmethod
     def validate_secret_key(cls, v):
         """Generate a random secret key if none is provided"""
         if not v:
             return secrets.token_hex(32)
         return v
     
-    @validator("CORS_ORIGINS", pre=True)
+    @field_validator("CORS_ORIGINS", mode="before")
+    @classmethod
     def parse_cors_origins(cls, v):
         """Parse CORS_ORIGINS from string if needed"""
         if isinstance(v, str):
@@ -100,7 +102,8 @@ class Settings(BaseSettings):
                 return [origin.strip() for origin in v.split(",")]
         return v
     
-    @validator("SLACK_BOT_SCOPES", "SLACK_USER_SCOPES", pre=True)
+    @field_validator("SLACK_BOT_SCOPES", "SLACK_USER_SCOPES", mode="before")
+    @classmethod
     def parse_slack_scopes(cls, v):
         """Parse SLACK_SCOPES from string if needed"""
         if isinstance(v, str):
@@ -110,11 +113,13 @@ class Settings(BaseSettings):
                 return [scope.strip() for scope in v.split(",")]
         return v
     
-    class Config:
-        env_prefix = "MCP_"
-        env_file = ".env"
-        env_file_encoding = "utf-8"
-        case_sensitive = True
+    model_config = {
+        "env_prefix": "MCP_",
+        "env_file": ".env",
+        "env_file_encoding": "utf-8",
+        "case_sensitive": True,
+        "extra": "ignore"  # Ignore extra environment variables
+    }
 
 
 # Create global settings instance

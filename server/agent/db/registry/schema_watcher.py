@@ -475,8 +475,17 @@ class SchemaWatcher:
         # Get data sources
         sources = list_data_sources()
         if not sources:
-            logger.warning("No data sources found in registry. Run introspection first.")
-            return
+            logger.warning("No data sources found in registry. Will retry in 60 seconds...")
+            logger.info("💡 To populate the registry immediately, run: docker exec ceneca-schema-watcher python -m agent.db.registry.run_introspection")
+            
+            # Wait and retry instead of exiting
+            while not sources:
+                await asyncio.sleep(60)  # Wait 1 minute
+                sources = list_data_sources()
+                if not sources:
+                    logger.info("🔄 Still no data sources found, retrying in 60 seconds...")
+                else:
+                    logger.info(f"✅ Found {len(sources)} data sources, starting schema monitoring...")
         
         # Set up database-specific watchers
         postgres_connections = {}
@@ -542,13 +551,18 @@ class SchemaWatcher:
 async def main():
     """Main function to start the schema watcher"""
     import argparse
+    import os
     
     parser = argparse.ArgumentParser(description="Database Schema Watcher")
+    
+    # Get default interval from environment or use 3600 (1 hour)
+    default_interval = int(os.environ.get("SCHEMA_WATCHER_INTERVAL", "3600"))
+    
     parser.add_argument(
         "--interval", 
         type=int, 
-        default=3600,
-        help="Interval in seconds for checking schema changes (default: 3600)"
+        default=default_interval,
+        help=f"Interval in seconds for checking schema changes (default: {default_interval})"
     )
     parser.add_argument(
         "--one-time", 
@@ -558,19 +572,29 @@ async def main():
     
     args = parser.parse_args()
     
+    # Log startup information
+    logger.info("🔍 Starting Ceneca Schema Watcher")
+    logger.info(f"📊 Check interval: {args.interval} seconds ({args.interval/60:.1f} minutes)")
+    
+    # Check if running in Docker
+    in_docker = os.environ.get('RUNNING_IN_DOCKER', '').lower() == 'true'
+    if in_docker:
+        logger.info("🐳 Running in Docker environment")
+    
     watcher = SchemaWatcher()
     
     if args.one_time:
         # Run a one-time check
+        logger.info("🔍 Running one-time schema check...")
         changes, sources = await watcher.detect_schema_changes()
         if changes:
             await watcher.update_registry(list(sources))
-            logger.info("Schema registry updated")
+            logger.info("✅ Schema registry updated")
         else:
-            logger.info("No schema changes detected")
+            logger.info("ℹ️ No schema changes detected")
     else:
         # Continuous watching
-        logger.info(f"Starting schema watcher (check interval: {args.interval}s)")
+        logger.info(f"🚀 Starting continuous schema watcher (check interval: {args.interval}s)")
         await watcher.watch_for_changes(args.interval)
 
 

@@ -6,7 +6,7 @@ and handles dynamic registration based on config.yaml.
 """
 
 import logging
-from typing import Dict, List, Any, Optional, Set
+from typing import Dict, List, Any, Optional, Set, Union
 from .base import Operation
 
 # Configure logging

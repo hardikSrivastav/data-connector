@@ -1,0 +1,53 @@
+services:
+  ceneca-agent:
+    image: ceneca/agent:latest  # Pre-built image from registry
+    container_name: ceneca-agent
+    volumes:
+      - ./config.yaml:/root/.data-connector/config.yaml
+      - ./auth-config.yaml:/root/.data-connector/auth-config.yaml
+    environment:
+      - AGENT_PORT=8787
+      - LLM_API_KEY={{ LLM_API_KEY_VALUE }}
+      - AUTH_ENABLED=true
+    restart: unless-stopped
+    networks:
+      - ceneca-network
+      # Uncomment and modify to join your existing networks
+      # - client_database_network
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    # Optional: Add host mappings if needed for DNS resolution
+    extra_hosts:
+      - "{{ POSTGRES_HOST }}:{{ POSTGRES_HOST_IP }}"
+      - "{{ MONGODB_HOST }}:{{ MONGODB_HOST_IP }}"
+      - "{{ QDRANT_HOST }}:{{ QDRANT_HOST_IP }}"
+
+  nginx:
+    image: nginx:latest
+    container_name: ceneca-nginx
+    ports:
+      - "443:443"  # HTTPS
+      - "80:80"    # HTTP (for redirects)
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/conf.d/default.conf
+      - ./nginx/ssl:/etc/nginx/ssl
+    depends_on:
+      - ceneca-agent
+    networks:
+      - ceneca-network
+    restart: unless-stopped
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+networks:
+  ceneca-network:
+    driver: bridge
+  # Uncomment and modify to reference your existing networks
+  # client_database_network:
+  #   external: true 

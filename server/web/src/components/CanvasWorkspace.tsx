@@ -1,7 +1,9 @@
 import { useState, useEffect } from 'react';
-import { Page, Workspace, Block, ReasoningChainData } from '@/types';
+import { Page, Workspace, Block, ReasoningChainData, ReasoningChainEvent } from '@/types';
+import { VisualizationData } from '@/lib/AgentClient';
 import { agentClient, AgentQueryResponse } from '@/lib/agent-client';
 import { useStorageManager } from '@/hooks/useStorageManager';
+import { VisualizationRenderer } from './VisualizationRenderer';
 import { 
   BarChart3, 
   GitBranch, 
@@ -9,24 +11,26 @@ import {
   Database, 
   TrendingUp, 
   Eye, 
-  ChevronRight,
-  ChevronDown,
   Play,
   RotateCcw,
-  Filter,
-  Search,
   Download,
   Share,
   Settings,
   Plus,
-  AlertTriangle
+  AlertTriangle,
+  Layout,
+  Type,
+  Table,
+  BarChart2,
+  Code,
+  Quote,
+  Minus,
+  Hash
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
 import { cn } from '@/lib/utils';
-import ReactMarkdown from 'react-markdown';
-import { TableDisplay } from './TableDisplay';
 import { ReasoningChain } from './ReasoningChain';
+import { BlockEditor } from './BlockEditor';
 
 interface CanvasWorkspaceProps {
   page: Page;
@@ -37,6 +41,62 @@ interface CanvasWorkspaceProps {
   onUpdateBlock?: (blockId: string, updates: Partial<Block>) => void;
   onDeleteBlock?: (blockId: string) => void;
 }
+
+// Helper function to determine if a reasoning chain belongs to a specific canvas
+const isChainRelevantToCanvas = (
+  chain: ReasoningChainData, 
+  canvasBlock: Block | undefined, 
+  canvasPageId: string
+): boolean => {
+  if (!canvasBlock) return false;
+  
+  // Get canvas data for comparison
+  const canvasData = canvasBlock.properties?.canvasData;
+  
+  // Method 1: Direct blockId match to canvas block
+  if (chain.blockId === canvasBlock.id) {
+    console.log(`Reasoning chain matched by blockId: ${chain.blockId} === ${canvasBlock.id}`);
+    return true;
+  }
+  
+  // Method 2: SessionId/threadId match
+  if (chain.sessionId && canvasData?.threadId && chain.sessionId === canvasData.threadId) {
+    console.log(`Reasoning chain matched by sessionId: ${chain.sessionId} === ${canvasData.threadId}`);
+    return true;
+  }
+  
+  // Method 3: Original query match (exact match)
+  if (chain.originalQuery && canvasData?.originalQuery && chain.originalQuery === canvasData.originalQuery) {
+    console.log(`Reasoning chain matched by originalQuery: "${chain.originalQuery}" === "${canvasData.originalQuery}"`);
+    return true;
+  }
+  
+  // Method 4: Check if chain's pageId matches this canvas workspace page
+  if ((chain as any).pageId === canvasPageId) {
+    console.log(`Reasoning chain matched by pageId: ${(chain as any).pageId} === ${canvasPageId}`);
+    return true;
+  }
+  
+  // Method 5: Check if chain's originalPageId matches canvas workspace page
+  if ((chain as any).originalPageId === canvasPageId) {
+    console.log(`Reasoning chain matched by originalPageId: ${(chain as any).originalPageId} === ${canvasPageId}`);
+    return true;
+  }
+  
+  console.log(`Reasoning chain NOT relevant:`, {
+    chainBlockId: chain.blockId,
+    canvasBlockId: canvasBlock.id,
+    chainSessionId: chain.sessionId,
+    canvasThreadId: canvasData?.threadId,
+    chainQuery: chain.originalQuery?.substring(0, 50),
+    canvasQuery: canvasData?.originalQuery?.substring(0, 50),
+    chainPageId: (chain as any).pageId,
+    chainOriginalPageId: (chain as any).originalPageId,
+    canvasPageId
+  });
+  
+  return false;
+};
 
 export const CanvasWorkspace = ({ 
   page, 
@@ -52,14 +112,255 @@ export const CanvasWorkspace = ({
     apiBaseUrl: import.meta.env.VITE_API_BASE || 'http://localhost:8787'
   });
   
-  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
-  const [searchQuery, setSearchQuery] = useState('');
-  const [selectedView, setSelectedView] = useState<'analysis' | 'data' | 'history' | 'reasoning'>('analysis');
+  // Remove sidebar state since sidebar is removed
+  const [selectedView, setSelectedView] = useState<'analysis' | 'data' | 'history' | 'reasoning' | 'visualizations'>('analysis');
   const [isQueryRunning, setIsQueryRunning] = useState(false);
   const [reasoningChains, setReasoningChains] = useState<Map<string, ReasoningChainData>>(new Map());
   const [incompleteChains, setIncompleteChains] = useState<Array<{ blockId: string; data: ReasoningChainData }>>();
   const [reasoningChainsLoaded, setReasoningChainsLoaded] = useState<Set<string>>(new Set());
   const [isLoadingReasoningChains, setIsLoadingReasoningChains] = useState(false);
+  const [focusedBlockId, setFocusedBlockId] = useState<string | null>(null);
+  const [showAddBlockMenu, setShowAddBlockMenu] = useState(false);
+  const [visualizations, setVisualizations] = useState<VisualizationData[]>([]);
+  const [isLoadingCharts, setIsLoadingCharts] = useState<boolean>(false);
+
+  // Development function to load a specific chart file for testing
+  const loadSpecificChart = async () => {
+    try {
+      console.log(`🧪 loadSpecificChart: Starting test chart load`);
+      setIsLoadingCharts(true);
+      
+      // Get the original page ID where the canvas block lives
+      console.log(`🧪 loadSpecificChart: Current page ID: ${page.id}`);
+      console.log(`🧪 loadSpecificChart: Looking for canvas block with canvasPageId === ${page.id}`);
+      
+      const originalCanvasBlock = workspace.pages.flatMap(p => p.blocks).find(block => 
+        block.type === 'canvas' && 
+        block.properties?.canvasPageId === page.id
+      );
+      
+      console.log(`🧪 loadSpecificChart: Found original canvas block:`, originalCanvasBlock ? {
+        id: originalCanvasBlock.id,
+        canvasPageId: originalCanvasBlock.properties?.canvasPageId
+      } : 'null');
+      
+      let originalPageId = null;
+      if (originalCanvasBlock) {
+        originalPageId = workspace.pages.find(p => p.blocks.some(b => b.id === originalCanvasBlock.id))?.id;
+        console.log(`🧪 loadSpecificChart: Original page ID from canvas block: ${originalPageId}`);
+      } else {
+        // If no canvas block found, this might be the original page itself
+        const hasCanvasBlocks = page.blocks.some(block => block.type === 'canvas');
+        console.log(`🧪 loadSpecificChart: Current page has canvas blocks: ${hasCanvasBlocks}`);
+        if (hasCanvasBlocks) {
+          originalPageId = page.id; // This is the original page
+          console.log(`🧪 loadSpecificChart: Using current page as original page: ${originalPageId}`);
+        }
+      }
+      
+      console.log(`🧪 loadSpecificChart: Final original page ID: ${originalPageId}`);
+      
+      // Try both page IDs to find charts
+      const pageIdsToTry = [];
+      if (originalPageId && originalPageId !== page.id) {
+        pageIdsToTry.push(originalPageId);
+      }
+      pageIdsToTry.push(page.id);
+      
+      console.log(`🧪 loadSpecificChart: Will try pages: ${pageIdsToTry.join(', ')}`);
+      
+      // Try each page ID until we find charts
+      for (const pageId of pageIdsToTry) {
+        console.log(`🧪 loadSpecificChart: Trying page: ${pageId}`);
+        try {
+          await fetchChartsForPage(pageId);
+          console.log(`🧪 loadSpecificChart: Successfully loaded charts from page: ${pageId}`);
+          // If we get here without error, charts were found
+          break;
+        } catch (error) {
+          console.log(`🧪 loadSpecificChart: No charts found on page ${pageId}, trying next...`);
+        }
+      }
+    } catch (error) {
+      console.error('🧪 loadSpecificChart: Error loading specific chart:', error);
+    }
+  };
+
+  // Function to fetch charts for a page using database storage
+  const fetchChartsForPage = async (pageId: string) => {
+    if (!pageId) {
+      console.log(`❌ fetchChartsForPage: No pageId provided`);
+      return;
+    }
+    
+    try {
+      setIsLoadingCharts(true);
+      console.log(`🔍 fetchChartsForPage: Starting fetch for page: ${pageId}`);
+      
+      // Try new database API first - use the correct API base URL
+      const apiBaseUrl = import.meta.env.VITE_API_BASE || 'http://localhost:8787';
+      const apiUrl = `${apiBaseUrl}/api/storage/pages/${pageId}/charts`;
+      console.log(`🔍 fetchChartsForPage: Making request to: ${apiUrl}`);
+      
+      const response = await fetch(apiUrl, {
+        credentials: 'include' // Include cookies for authentication
+      });
+      console.log(`🔍 fetchChartsForPage: Response status: ${response.status} ${response.statusText}`);
+      
+      if (response.ok) {
+        const charts = await response.json();
+        console.log(`✅ fetchChartsForPage: Found ${charts.length} charts via database for page ${pageId}`);
+        console.log(`📊 fetchChartsForPage: Raw charts data:`, charts);
+        
+        if (charts.length > 0) {
+          // Convert database format to visualization format
+          const visualizations = charts.map((chart: any, index: number) => {
+            console.log(`📊 fetchChartsForPage: Processing chart ${index + 1}:`, {
+              id: chart.id,
+              chartType: chart.chartType,
+              hasChartConfig: !!chart.chartConfig,
+              chartConfigKeys: chart.chartConfig ? Object.keys(chart.chartConfig) : [],
+              metadata: chart.metadata
+            });
+            
+            return {
+              chart_config: chart.chartConfig,
+              chart_summary: {
+                type: chart.chartType,
+                title: chart.chartConfig?.layout?.title || 'Chart',
+                data_points: chart.metadata?.data_points || 0
+              },
+              visualization_data: {
+                dataset_info: chart.metadata || {},
+                analysis_summary: { chart_type: chart.chartType },
+                performance_metrics: {}
+              },
+              metadata: {
+                ...chart.metadata,
+                chart_id: chart.id,
+                original_query: chart.originalQuery,
+                created_at: chart.createdAt
+              }
+            };
+          });
+          
+          console.log(`✅ fetchChartsForPage: Converted ${visualizations.length} charts to visualization format`);
+          console.log(`📊 fetchChartsForPage: Final visualizations:`, visualizations);
+          
+          setVisualizations(visualizations);
+        } else {
+          console.log(`⚠️ fetchChartsForPage: No charts found for page ${pageId}`);
+          setVisualizations([]);
+        }
+      } else {
+        console.log(`⚠️ fetchChartsForPage: Database API failed with status ${response.status}, trying legacy session-based approach`);
+        // Fallback to old session-based approach
+        await fetchChartsForSession(pageId);
+      }
+    } catch (error) {
+      console.error(`❌ fetchChartsForPage: Error fetching charts for page ${pageId}:`, error);
+      console.error(`❌ fetchChartsForPage: Error details:`, {
+        message: error.message,
+        stack: error.stack,
+        pageId: pageId
+      });
+      // Fallback to session-based approach
+      await fetchChartsForSession(pageId);
+    } finally {
+      setIsLoadingCharts(false);
+    }
+  };
+
+  // Legacy function to fetch charts for a session (fallback)
+  const fetchChartsForSession = async (sessionId: string) => {
+    if (!sessionId) return;
+    
+    try {
+      console.log(`🔍 Fetching charts for session: ${sessionId}`);
+      
+      // Try API endpoint first - use the correct API base URL
+      const apiBaseUrl = import.meta.env.VITE_API_BASE || 'http://localhost:8787';
+      const response = await fetch(`${apiBaseUrl}/api/agent/sessions/${sessionId}/charts`, {
+        credentials: 'include' // Include cookies for authentication
+      });
+      const data = await response.json();
+      
+      if (response.ok && data.charts && data.charts.length > 0) {
+        console.log(`✅ Found ${data.charts.length} charts via API for session ${sessionId}`);
+        setVisualizations(data.charts);
+      } else {
+        console.log(`⚠️ No charts found for session ${sessionId}`);
+        setVisualizations([]);
+      }
+    } catch (error) {
+      console.error(`❌ Error fetching charts for session ${sessionId}:`, error);
+      setVisualizations([]);
+    }
+  };
+
+  // Helper function to filter blocks by view type for DISPLAY ONLY (not functionality restriction)
+  const getBlocksForView = (view: string) => {
+    const sortedBlocks = [...page.blocks].sort((a, b) => (a.order || 0) - (b.order || 0));
+    
+    switch (view) {
+      case 'analysis':
+        // Show text content, headings, quotes, and analysis-related blocks
+        return sortedBlocks.filter(block => 
+          ['heading1', 'heading2', 'heading3', 'text', 'quote', 'divider', 'code'].includes(block.type)
+        );
+      case 'data':
+        // Show tables, stats, charts, and data-related blocks
+        return sortedBlocks.filter(block => 
+          ['table', 'stats', 'chart', 'graph', 'code', 'divider'].includes(block.type)
+        );
+      case 'history':
+        // Show all blocks in chronological order
+        return sortedBlocks;
+      case 'reasoning':
+        // Show ONLY blocks that actually have reasoning chains or AI-related content
+        return sortedBlocks.filter(block => 
+          block.properties?.reasoningChain || 
+          block.properties?.canvasData?.reasoningChain
+        );
+      case 'visualizations':
+        // Show visualization-related content
+        return sortedBlocks.filter(block => 
+          ['chart', 'graph', 'stats', 'code'].includes(block.type)
+        );
+      default:
+        return sortedBlocks;
+    }
+  };
+
+
+  // All block types are always available - no view restrictions
+  const getAllAvailableBlockTypes = (): Array<{ type: Block['type']; label: string; icon: any }> => {
+    return [
+      { type: 'text' as const, label: 'Text', icon: Type },
+      { type: 'heading1' as const, label: 'Heading 1', icon: Hash },
+      { type: 'heading2' as const, label: 'Heading 2', icon: Hash },
+      { type: 'heading3' as const, label: 'Heading 3', icon: Hash },
+      { type: 'quote' as const, label: 'Quote', icon: Quote },
+      { type: 'code' as const, label: 'Code', icon: Code },
+      { type: 'table' as const, label: 'Table', icon: Table },
+      { type: 'stats' as const, label: 'Stats', icon: BarChart2 },
+      { type: 'divider' as const, label: 'Divider', icon: Minus }
+    ];
+  };
+
+  // Helper function to handle block focus
+  const handleBlockFocus = (blockId: string) => {
+    setFocusedBlockId(blockId);
+  };
+
+  // Standard block creation - no view restrictions
+  const handleAddBlock = (type: Block['type']) => {
+    if (onAddBlock) {
+      const newBlockId = onAddBlock(undefined, type);
+      setFocusedBlockId(newBlockId);
+      setShowAddBlockMenu(false);
+    }
+  };
 
   // Enhanced initialization to populate with canvas data and load reasoning chains
   useEffect(() => {
@@ -182,20 +483,49 @@ export const CanvasWorkspace = ({
       const incomplete: Array<{ blockId: string; data: ReasoningChainData }> = [];
       
       // Find the original CanvasBlock that references this workspace page
-      const originalCanvasBlock = workspace.pages.flatMap(p => p.blocks).find(block => 
+      console.log(`🔍 CanvasWorkspace: Looking for canvas block with canvasPageId === ${page.id}`);
+      console.log(`🔍 CanvasWorkspace: Available pages:`, workspace.pages.map(p => ({ id: p.id, title: p.title })));
+      
+      const allCanvasBlocks = workspace.pages.flatMap(p => p.blocks).filter(block => block.type === 'canvas');
+      console.log(`🔍 CanvasWorkspace: All canvas blocks found:`, allCanvasBlocks.map(b => ({
+        id: b.id,
+        canvasPageId: b.properties?.canvasPageId,
+        pageId: workspace.pages.find(p => p.blocks.some(block => block.id === b.id))?.id
+      })));
+      
+      const originalCanvasBlock = allCanvasBlocks.find(block => 
         block.type === 'canvas' && 
         block.properties?.canvasPageId === page.id
       );
       
+      console.log(`🔍 CanvasWorkspace: Found original canvas block:`, originalCanvasBlock ? {
+        id: originalCanvasBlock.id,
+        canvasPageId: originalCanvasBlock.properties?.canvasPageId,
+        hasCanvasData: !!originalCanvasBlock.properties?.canvasData
+      } : 'null');
+      
       // Get the original page ID (where the CanvasBlock lives)
-      const originalPageId = originalCanvasBlock 
-        ? workspace.pages.find(p => p.blocks.some(b => b.id === originalCanvasBlock.id))?.id
-        : null;
+      let originalPageId = null;
+      if (originalCanvasBlock) {
+        originalPageId = workspace.pages.find(p => p.blocks.some(b => b.id === originalCanvasBlock.id))?.id;
+        console.log(`🔍 CanvasWorkspace: Original page ID from canvas block: ${originalPageId}`);
+      } else {
+        // If no canvas block found, this might be the original page itself
+        // Check if this page has any canvas blocks
+        const hasCanvasBlocks = page.blocks.some(block => block.type === 'canvas');
+        console.log(`🔍 CanvasWorkspace: Current page has canvas blocks: ${hasCanvasBlocks}`);
+        if (hasCanvasBlocks) {
+          originalPageId = page.id; // This is the original page
+          console.log(`🔍 CanvasWorkspace: Using current page as original page: ${originalPageId}`);
+        }
+      }
       
       console.log(`🧠 CanvasWorkspace: Found original canvas block:`, {
         blockId: originalCanvasBlock?.id,
         originalPageId,
-        currentPageId: page.id
+        currentPageId: page.id,
+        threadId: originalCanvasBlock?.properties?.canvasData?.threadId,
+        originalQuery: originalCanvasBlock?.properties?.canvasData?.originalQuery
       });
       
       // Load reasoning chains from both current page and original page
@@ -206,28 +536,57 @@ export const CanvasWorkspace = ({
       
       for (const pageId of pageIdsToCheck) {
         try {
-          console.log(`🧠 CanvasWorkspace: Loading reasoning chains from server for page ${pageId}`);
+          console.log(`🔍 DEBUGGING: Loading reasoning chains from server for page ${pageId}`);
           const serverReasoningChains = await storageManager.getReasoningChainsForPage(pageId);
-          console.log(`🧠 CanvasWorkspace: Found ${serverReasoningChains.length} reasoning chains from server for page ${pageId}`);
+          console.log(`🔍 DEBUGGING: Found ${serverReasoningChains.length} reasoning chains from server for page ${pageId}`);
+          console.log(`🔍 DEBUGGING: Raw server reasoning chains:`, serverReasoningChains);
           
           serverReasoningChains.forEach(chain => {
+            console.log(`🔍 DEBUGGING: Processing server chain:`, {
+              sessionId: chain.sessionId,
+              blockId: chain.blockId,
+              originalQuery: chain.originalQuery,
+              eventsCount: chain.events?.length || 0,
+              events: chain.events?.map(e => ({ type: e.type, message: e.message?.substring(0, 50) })) || [],
+              isComplete: chain.isComplete,
+              status: chain.status
+            });
+            
             if (chain.sessionId) {
               const chainKey = chain.blockId || chain.sessionId; // Use blockId if available, otherwise sessionId
               
               // Only add if not already loaded (avoid duplicates)
               if (!chains.has(chainKey)) {
-                chains.set(chainKey, chain);
-                console.log(`🧠 CanvasWorkspace: Loaded server reasoning chain ${chain.sessionId} from page ${pageId}, events: ${chain.events?.length || 0}, complete: ${chain.isComplete}`);
+                // Filter reasoning chains to only include ones related to this specific canvas
+                const isRelevantChain = isChainRelevantToCanvas(chain, originalCanvasBlock, page.id);
                 
-                // Check if this is an incomplete chain
-                if (!chain.isComplete && chain.status === 'streaming') {
-                  incomplete.push({ blockId: chainKey, data: chain });
+                console.log(`🔍 DEBUGGING: Chain relevance check:`, {
+                  chainKey,
+                  isRelevantChain,
+                  originalCanvasBlockId: originalCanvasBlock?.id,
+                  pageId: page.id
+                });
+                
+                if (isRelevantChain) {
+                  chains.set(chainKey, chain);
+                  console.log(`🔍 DEBUGGING: ✅ Added relevant reasoning chain ${chain.sessionId} from page ${pageId}, events: ${chain.events?.length || 0}, complete: ${chain.isComplete}`);
+                  
+                  // Check if this is an incomplete chain
+                  if (!chain.isComplete && chain.status === 'streaming') {
+                    incomplete.push({ blockId: chainKey, data: chain });
+                  }
+                } else {
+                  console.log(`🔍 DEBUGGING: ❌ Skipping irrelevant reasoning chain ${chain.sessionId} for this canvas`);
                 }
+              } else {
+                console.log(`🔍 DEBUGGING: ⚠️  Chain ${chainKey} already loaded, skipping duplicate`);
               }
+            } else {
+              console.log(`🔍 DEBUGGING: ⚠️  Chain has no sessionId, skipping:`, chain);
             }
           });
         } catch (error) {
-          console.error(`❌ CanvasWorkspace: Failed to load reasoning chains from server for page ${pageId}:`, error);
+          console.error(`🔍 DEBUGGING: ❌ Failed to load reasoning chains from server for page ${pageId}:`, error);
         }
       }
       
@@ -239,13 +598,16 @@ export const CanvasWorkspace = ({
           const reasoningData = block.properties.reasoningChain as ReasoningChainData;
           console.log(`🧠 CanvasWorkspace: Found legacy reasoning chain in current page block ${block.id}, events: ${reasoningData.events?.length || 0}, complete: ${reasoningData.isComplete}`);
           
-          // Only add if not already loaded from server
+          // Only add if not already loaded from server and is relevant to this canvas
           if (!chains.has(block.id)) {
-            chains.set(block.id, reasoningData);
-            
-            // Check if this is an incomplete chain
-            if (!reasoningData.isComplete && reasoningData.status === 'streaming') {
-              incomplete.push({ blockId: block.id, data: reasoningData });
+            const isRelevant = isChainRelevantToCanvas(reasoningData, originalCanvasBlock, page.id);
+            if (isRelevant) {
+              chains.set(block.id, reasoningData);
+              
+              // Check if this is an incomplete chain
+              if (!reasoningData.isComplete && reasoningData.status === 'streaming') {
+                incomplete.push({ blockId: block.id, data: reasoningData });
+              }
             }
           }
         }
@@ -255,7 +617,7 @@ export const CanvasWorkspace = ({
           const legacyReasoningData = block.properties.canvasData.reasoningChain;
           console.log(`🧠 CanvasWorkspace: Found legacy canvas reasoning chain for current page block ${block.id}`);
           
-          // Only add if not already loaded from server
+          // Only add if not already loaded from server and is relevant to this canvas
           if (!chains.has(block.id)) {
             // Convert legacy format to new format
             const convertedData: ReasoningChainData = {
@@ -268,7 +630,10 @@ export const CanvasWorkspace = ({
               progress: 1.0
             };
             
-            chains.set(block.id, convertedData);
+            const isRelevant = isChainRelevantToCanvas(convertedData, originalCanvasBlock, page.id);
+            if (isRelevant) {
+              chains.set(block.id, convertedData);
+            }
           }
         }
       });
@@ -301,11 +666,16 @@ export const CanvasWorkspace = ({
             return; // Skip invalid format
           }
           
-          chains.set(originalCanvasBlock.id, convertedData);
-          
-          // Check if this is an incomplete chain
-          if (!convertedData.isComplete && convertedData.status === 'streaming') {
-            incomplete.push({ blockId: originalCanvasBlock.id, data: convertedData });
+          // This should always be relevant since it's from the original canvas block itself
+          // But let's still check for consistency
+          const isRelevant = isChainRelevantToCanvas(convertedData, originalCanvasBlock, page.id);
+          if (isRelevant) {
+            chains.set(originalCanvasBlock.id, convertedData);
+            
+            // Check if this is an incomplete chain
+            if (!convertedData.isComplete && convertedData.status === 'streaming') {
+              incomplete.push({ blockId: originalCanvasBlock.id, data: convertedData });
+            }
           }
         }
       }
@@ -323,6 +693,33 @@ export const CanvasWorkspace = ({
       });
       
       setIsLoadingReasoningChains(false);
+      
+      console.log(`🧠🧠🧠 REASONING CHAINS LOADED 🧠🧠🧠`);
+      console.log(`  - Loaded ${chains.size} reasoning chains for page ${page.id}`);
+      console.log(`  - Chain sessions:`, Array.from(chains.keys()));
+      chains.forEach((chainData, blockId) => {
+        console.log(`    Chain ${blockId}:`);
+        console.log(`      - sessionId: ${chainData.sessionId}`);
+        console.log(`      - eventsCount: ${chainData.events?.length || 0}`);
+        console.log(`      - originalQuery: ${chainData.originalQuery}`);
+        console.log(`      - isComplete: ${chainData.isComplete}`);
+        if (chainData.events) {
+          const eventTypes = chainData.events.map(e => e.type);
+          console.log(`      - eventTypes: ${eventTypes.join(', ')}`);
+          // Note: Visualization events are no longer processed here - charts are fetched via REST API
+        }
+      });
+      console.log(`🧠🧠🧠 END REASONING CHAINS LOADED 🧠🧠🧠\n`);
+      
+      // ✅ NEW: Load charts during initialization
+      // Try the original page first (where charts are most likely stored), then fall back to current page
+      console.log(`🎨 Initialization: Loading charts for original page: ${originalPageId || page.id}`);
+      console.log(`🎨 Initialization: Current page ID: ${page.id}`);
+      console.log(`🎨 Initialization: Original page ID: ${originalPageId}`);
+      
+      // Use original page ID if available, otherwise use current page ID
+      const pageIdToQuery = originalPageId || page.id;
+      fetchChartsForPage(pageIdToQuery);
     };
 
     // Debounce the initialization to prevent rapid successive calls
@@ -332,43 +729,6 @@ export const CanvasWorkspace = ({
     
     return () => clearTimeout(debounceTimeout);
   }, [page.id, workspace.pages.length, onUpdatePage, reasoningChainsLoaded, isLoadingReasoningChains]); // Removed page.blocks.length dependency
-
-  // Get analysis data from page blocks
-  const getAnalysisData = () => {
-    const headingBlocks = page.blocks.filter(b => b.type.startsWith('heading'));
-    const textBlocks = page.blocks.filter(b => b.type === 'text');
-    const tableBlocks = page.blocks.filter(b => b.type === 'table');
-    const quoteBlocks = page.blocks.filter(b => b.type === 'quote');
-
-    // Get current analysis summary from text blocks
-    const currentAnalysis = textBlocks.length > 0 
-      ? textBlocks[textBlocks.length - 1].content
-      : 'No analysis available yet. Run a query to get started.';
-
-    // Get current data from table blocks
-    const currentTable = tableBlocks.length > 0 
-      ? tableBlocks[tableBlocks.length - 1]
-      : null;
-
-    // Generate stats from blocks
-    const stats = [
-      { label: 'TOTAL BLOCKS', value: page.blocks.length.toString() },
-      { label: 'ANALYSIS SECTIONS', value: headingBlocks.length.toString() },
-      { label: 'DATA TABLES', value: tableBlocks.length.toString() },
-      { label: 'KEY INSIGHTS', value: quoteBlocks.length.toString() },
-      { label: 'REASONING CHAINS', value: reasoningChains.size.toString() }
-    ];
-
-    return {
-      currentAnalysis,
-      currentTable,
-      stats,
-      hasData: tableBlocks.length > 0,
-      analysisHistory: textBlocks
-    };
-  };
-
-  const analysisData = getAnalysisData();
 
   // Enhanced query handler with reasoning chain recovery
   const handleRunNewQuery = async (queryText?: string) => {
@@ -396,11 +756,96 @@ export const CanvasWorkspace = ({
         });
       }
       
-      // Execute query via agent API (this will trigger reasoning chain persistence in PageEditor)
-      const response = await agentClient.query({
+      // Get the original page ID for proper chart storage
+      const originalCanvasBlock = workspace.pages.flatMap(p => p.blocks).find(block => 
+        block.type === 'canvas' && 
+        block.properties?.canvasPageId === page.id
+      );
+      const originalPageId = originalCanvasBlock 
+        ? workspace.pages.find(p => p.blocks.some(b => b.id === originalCanvasBlock.id))?.id
+        : null;
+      
+      // ✅ UPDATED: Use streaming query API with page context
+      console.log('🔍 DEBUGGING: About to call agentClient.queryStream with:', {
         question: finalQuery.trim(),
-        analyze: true
+        analyze: true,
+        page_id: page.id,
+        workspace_id: workspace.id,
+        block_id: originalCanvasBlock?.id
       });
+      
+      let streamingResponse: any = null;
+      
+      await agentClient.queryStream({
+        question: finalQuery.trim(),
+        analyze: true,
+        page_id: page.id, // Canvas workspace page ID (where results should be displayed)
+        workspace_id: workspace.id,
+        block_id: originalCanvasBlock?.id // Reference to the original canvas block
+      }, {
+        onStatus: (message) => {
+          console.log('🌊 CanvasWorkspace: Streaming status:', message);
+          if (loadingId && onUpdateBlock) {
+            onUpdateBlock(loadingId, {
+              content: `🔄 ${message}`
+            });
+          }
+        },
+        onAnalysisGenerating: (message) => {
+          console.log('📋 CanvasWorkspace: Analysis generating:', message);
+        },
+        onComplete: (results) => {
+          console.log('🔍 DEBUGGING: agentClient.queryStream onComplete:', {
+            hasRows: !!results.rows,
+            rowsLength: results.rows?.length || 0,
+            hasAnalysis: !!results.analysis,
+            hasSql: !!results.sql,
+            hasSessionId: !!results.session_id,
+            sessionId: results.session_id,
+            responseKeys: Object.keys(results)
+          });
+          
+          streamingResponse = results;
+          
+          // ✅ NEW: Fetch charts after query completion - try page-based first, then session-based
+          if (results.session_id) {
+            console.log(`🎨 Found session_id: ${results.session_id}, fetching charts...`);
+            
+            // Get the original page ID where the canvas block lives
+            const originalCanvasBlock = workspace.pages.flatMap(p => p.blocks).find(block => 
+              block.type === 'canvas' && 
+              block.properties?.canvasPageId === page.id
+            );
+            const originalPageId = originalCanvasBlock 
+              ? workspace.pages.find(p => p.blocks.some(b => b.id === originalCanvasBlock.id))?.id
+              : null;
+            
+            console.log(`🎨 Chart fetch strategy:`, {
+              canvasWorkspacePageId: page.id,
+              originalPageId: originalPageId,
+              willTryBoth: !!originalPageId
+            });
+            
+            // Try to fetch charts from both the canvas workspace page AND the original page
+            if (originalPageId && originalPageId !== page.id) {
+              console.log(`🎨 Trying original page first: ${originalPageId}`);
+              fetchChartsForPage(originalPageId);
+            } else {
+              console.log(`🎨 Trying canvas workspace page: ${page.id}`);
+              fetchChartsForPage(page.id);
+            }
+          } else {
+            console.warn('⚠️ No session_id found in query response, cannot fetch charts');
+            console.log('🔍 Full results object:', results);
+          }
+        },
+        onError: (error) => {
+          console.error('❌ CanvasWorkspace: Streaming error:', error);
+          throw new Error(error);
+        }
+      });
+      
+      const response = streamingResponse;
       
       console.log('✅ CanvasWorkspace: Query completed successfully');
       console.log('📊 CanvasWorkspace: Response data:', {
@@ -430,13 +875,44 @@ export const CanvasWorkspace = ({
       if (response.rows && response.rows.length > 0) {
         console.log('📊 CanvasWorkspace: Converting query results to table...');
         
-        // Convert response data, handling Decimal and other special types
+        // Convert response data, handling MongoDB objects, Decimal and other special types
         const convertValue = (value: any): string => {
           if (value === null || value === undefined) return '';
+          
+          // Handle Decimal objects
           if (typeof value === 'object' && value.constructor && value.constructor.name === 'Decimal') {
             return value.toString();
           }
+          
+          // Handle Date objects
           if (value instanceof Date) return value.toISOString();
+          
+          // Handle MongoDB ObjectId
+          if (typeof value === 'object' && value.constructor && value.constructor.name === 'ObjectId') {
+            return value.toString();
+          }
+          
+          // Handle arrays - show as JSON or comma-separated for simple arrays
+          if (Array.isArray(value)) {
+            if (value.length === 0) return '[]';
+            if (value.every(item => typeof item === 'string' || typeof item === 'number')) {
+              return value.join(', ');
+            }
+            return JSON.stringify(value);
+          }
+          
+          // Handle complex objects (MongoDB documents, nested objects)
+          if (typeof value === 'object' && value !== null) {
+            // For simple key-value objects, show as JSON
+            try {
+              return JSON.stringify(value);
+            } catch (e) {
+              // Fallback if JSON.stringify fails
+              return Object.prototype.toString.call(value);
+            }
+          }
+          
+          // Handle primitives (string, number, boolean)
           return String(value);
         };
         
@@ -503,109 +979,11 @@ export const CanvasWorkspace = ({
   };
 
   return (
-    <div className="flex h-screen bg-white dark:bg-gray-900">
-      {/* Sidebar - Analysis History */}
-      <div className={cn(
-        "border-r border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800 transition-all duration-200",
-        sidebarCollapsed ? "w-12" : "w-80"
-      )}>
-        {/* Sidebar Header */}
-        <div className="p-4 border-b border-gray-200 dark:border-gray-700">
-          <div className="flex items-center justify-between">
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={() => setSidebarCollapsed(!sidebarCollapsed)}
-              className="h-8 w-8 p-0"
-            >
-              {sidebarCollapsed ? <ChevronRight className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
-            </Button>
-            {!sidebarCollapsed && (
-              <div className="flex items-center gap-2">
-                <GitBranch className="h-4 w-4 text-gray-600 dark:text-gray-300" />
-                <span className="font-medium text-sm text-gray-900 dark:text-gray-100">Analysis History</span>
-              </div>
-            )}
-          </div>
-        </div>
-
-        {!sidebarCollapsed && (
-          <>
-            {/* Canvas Info */}
-            <div className="p-4 border-b border-gray-200 dark:border-gray-700">
-              <div className="flex items-center gap-2 mb-2">
-                <BarChart3 className="h-5 w-5 text-blue-600 dark:text-blue-400" />
-                <h2 className="font-semibold text-gray-900 dark:text-gray-100">{page.title}</h2>
-              </div>
-              <div className="text-xs text-gray-500 dark:text-gray-400 space-y-1">
-                <div>Status: <span className="font-medium text-green-600 dark:text-green-400">Ready</span></div>
-                <div>Blocks: {page.blocks.length}</div>
-                <div>Reasoning Chains: {reasoningChains.size}</div>
-                <div>Created: {new Date(page.createdAt).toLocaleDateString()}</div>
-              </div>
-              
-              {/* Incomplete queries alert */}
-              {incompleteChains && incompleteChains.length > 0 && (
-                <div className="mt-3 p-2 bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-700 rounded text-xs">
-                  <div className="flex items-center gap-1 text-yellow-800 dark:text-yellow-200">
-                    <AlertTriangle className="h-3 w-3" />
-                    {incompleteChains.length} incomplete queries found
-                  </div>
-                </div>
-              )}
-            </div>
-
-            {/* Search */}
-            <div className="p-4 border-b border-gray-200 dark:border-gray-700">
-              <div className="relative">
-                <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-gray-400 dark:text-gray-500" />
-                <Input
-                  placeholder="Search analysis..."
-                  value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
-                  className="pl-9 h-8 text-sm"
-                />
-              </div>
-            </div>
-
-            {/* Analysis Sections */}
-            <div className="flex-1 overflow-y-auto">
-              <div className="p-4">
-                <h3 className="text-sm font-medium text-gray-700 dark:text-gray-200 mb-3">Analysis Sections</h3>
-                <div className="space-y-2">
-                  {page.blocks
-                    .filter(block => block.type.startsWith('heading'))
-                    .map((block, index) => (
-                      <div
-                        key={block.id}
-                        className="p-3 rounded-lg border border-gray-200 dark:border-gray-700 hover:border-gray-300 dark:hover:border-gray-600 hover:bg-gray-50 dark:hover:bg-gray-700 cursor-pointer transition-colors"
-                    >
-                      <div className="flex items-center gap-2 mb-1">
-                          <div className="w-2 h-2 rounded-full bg-blue-500 dark:bg-blue-400" />
-                          <span className="text-sm font-medium text-gray-900 dark:text-gray-100">{block.content || `Section ${index + 1}`}</span>
-                      </div>
-                        <div className="text-xs text-gray-500 dark:text-gray-400">
-                          {new Date().toLocaleString()}
-                      </div>
-                      </div>
-                    ))}
-                  
-                  {page.blocks.filter(block => block.type.startsWith('heading')).length === 0 && (
-                    <div className="text-sm text-gray-500 dark:text-gray-400 text-center py-4">
-                      No analysis sections yet. Run a query to get started.
-                    </div>
-                  )}
-                </div>
-              </div>
-            </div>
-          </>
-        )}
-      </div>
-
-      {/* Main Content Area */}
+    <div className="flex h-screen w-full bg-white dark:bg-zinc-900">
+      {/* Main Content Area - Full Width */}
       <div className="flex-1 flex flex-col">
         {/* Header */}
-        <div className="border-b border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900">
+        <div className="border-b border-gray-200 dark:border-gray-700 bg-white dark:bg-zinc-900">
           <div className="flex items-center justify-between p-4">
             <div className="flex items-center gap-4">
               <Button
@@ -651,6 +1029,7 @@ export const CanvasWorkspace = ({
             {[
               { id: 'analysis', label: 'Analysis', icon: Eye },
               { id: 'data', label: 'Data', icon: Database },
+              { id: 'visualizations', label: 'Charts', icon: BarChart3 },
               { id: 'history', label: 'History', icon: Clock },
               { id: 'reasoning', label: 'AI Reasoning', icon: GitBranch }
             ].map(({ id, label, icon: Icon }) => (
@@ -666,11 +1045,15 @@ export const CanvasWorkspace = ({
               >
                 <Icon className="h-4 w-4" />
                 {label}
-                {id === 'reasoning' && incompleteChains && incompleteChains.length > 0 && (
-                  <span className="ml-1 px-1.5 py-0.5 text-xs bg-yellow-500 text-white rounded-full">
-                    {incompleteChains.length}
-                  </span>
-                )}
+                              {/* Show count of relevant blocks for each tab */}
+              <span className="ml-1 px-1.5 py-0.5 text-xs bg-gray-500 text-white rounded-full">
+                {id === 'visualizations' ? visualizations.length : getBlocksForView(id).length}
+              </span>
+              {id === 'reasoning' && incompleteChains && incompleteChains.length > 0 && (
+                <span className="ml-1 px-1.5 py-0.5 text-xs bg-yellow-500 text-white rounded-full">
+                  {incompleteChains.length}
+                </span>
+              )}
               </button>
             ))}
           </div>
@@ -678,166 +1061,240 @@ export const CanvasWorkspace = ({
 
         {/* Content */}
         <div className="flex-1 overflow-y-auto p-6">
-          {selectedView === 'analysis' && (
-            <div className="max-w-4xl mx-auto space-y-6">
-              {/* Current Analysis Summary */}
-              <div className="bg-blue-50 dark:bg-blue-900/30 border border-blue-200 dark:border-blue-700 rounded-lg p-6">
-                <div className="flex items-center gap-2 mb-4">
-                  <Eye className="h-5 w-5 text-blue-600 dark:text-blue-400" />
-                  <h2 className="text-lg font-semibold text-blue-900 dark:text-blue-100">Current Analysis</h2>
-                </div>
-                <div className="prose prose-sm max-w-none dark:prose-invert">
-                  <ReactMarkdown>{analysisData.currentAnalysis}</ReactMarkdown>
-                </div>
+          <div className="max-w-6xl mx-auto">
+            {/* View-specific header and add block controls */}
+            <div className="flex items-center justify-between mb-6">
+              <div>
+                <h2 className="text-lg font-semibold text-gray-900 dark:text-gray-100">
+                  {selectedView === 'analysis' && 'Analysis Workspace'}
+                  {selectedView === 'data' && 'Data Workspace'}
+                  {selectedView === 'visualizations' && 'Charts & Visualizations'}
+                  {selectedView === 'history' && 'Complete History'}
+                  {selectedView === 'reasoning' && 'AI Reasoning Workspace'}
+                </h2>
+                <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">
+                  {selectedView === 'analysis' && 'View and organize your analysis content'}
+                  {selectedView === 'data' && 'View tables, stats, and data visualizations'}
+                  {selectedView === 'visualizations' && 'View interactive charts and graphs generated from your queries'}
+                  {selectedView === 'history' && 'View all content chronologically'}
+                  {selectedView === 'reasoning' && 'View AI reasoning chains and thought processes'}
+                </p>
               </div>
-
-              {/* Key Statistics */}
-              <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
-                {analysisData.stats.map((stat, index) => (
-                  <div key={index} className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg p-4 text-center">
-                    <div className="text-xs text-gray-500 dark:text-gray-400 uppercase tracking-wide">{stat.label}</div>
-                    <div className="text-2xl font-bold text-gray-900 dark:text-gray-100 mt-1">{stat.value}</div>
+              
+              {/* Add Block Button */}
+              <div className="relative">
+                <Button 
+                  onClick={() => setShowAddBlockMenu(!showAddBlockMenu)}
+                  size="sm"
+                  className="gap-2"
+                >
+                  <Plus className="h-4 w-4" />
+                  Add Block
+                </Button>
+                
+                {/* Add Block Dropdown */}
+                {showAddBlockMenu && (
+                  <div className="absolute right-0 top-full mt-2 w-56 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg shadow-lg z-50">
+                    <div className="p-2">
+                      <div className="text-xs text-gray-500 dark:text-gray-400 uppercase tracking-wide mb-2 px-2">
+                        Add Block
+                      </div>
+                      {getAllAvailableBlockTypes().map(({ type, label, icon: Icon }) => (
+                        <button
+                          key={type}
+                          onClick={() => handleAddBlock(type)}
+                          className="w-full flex items-center gap-2 px-2 py-2 text-sm text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700 rounded"
+                        >
+                          <Icon className="h-4 w-4" />
+                          {label}
+                        </button>
+                      ))}
+                    </div>
                   </div>
-                ))}
+                )}
               </div>
+            </div>
 
-              {/* Quick Actions */}
-                <div className="bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg p-4">
+
+
+            {/* Blocks Content */}
+            <div className="space-y-4">
+              {(() => {
+                const blocksForView = getBlocksForView(selectedView);
+                
+                console.log(`🎯 Rendering ${selectedView} view:`, {
+                  selectedView,
+                  totalBlocks: page.blocks.length,
+                  filteredBlocks: blocksForView.length,
+                  blockTypes: blocksForView.map(b => b.type)
+                });
+                
+                // Special content for reasoning view
+                const reasoningContent = selectedView === 'reasoning' && (
+                  <>
+                    {/* Incomplete chains notification */}
+                    {incompleteChains && incompleteChains.length > 0 && (
+                      <div className="bg-yellow-50 dark:bg-yellow-900/30 border border-yellow-200 dark:border-yellow-700 rounded-lg p-4 mb-6">
+                        <div className="flex items-center gap-2 mb-2">
+                          <AlertTriangle className="h-5 w-5 text-yellow-600 dark:text-yellow-400" />
+                          <h3 className="font-medium text-yellow-900 dark:text-yellow-100">Incomplete Queries Found</h3>
+                        </div>
+                        <p className="text-sm text-yellow-800 dark:text-yellow-200 mb-3">
+                          {incompleteChains.length} query{incompleteChains.length !== 1 ? 'ies were' : ' was'} interrupted. You can resume or retry them.
+                        </p>
+                      </div>
+                    )}
+
+                    {/* Reasoning chains display */}
+                    {Array.from(reasoningChains.entries()).length > 0 && (
+                      <div className="space-y-4 mb-8">
+                        <h3 className="text-md font-medium text-gray-900 dark:text-gray-100">
+                          AI Reasoning Chains ({reasoningChains.size})
+                        </h3>
+                        {Array.from(reasoningChains.entries()).map(([blockId, reasoningData]) => (
+                          <ReasoningChain
+                            key={blockId}
+                            reasoningData={reasoningData}
+                            title={`Block ${blockId.substring(0, 8)} - AI Reasoning`}
+                            collapsed={false}
+                            showRecoveryOptions={!reasoningData.isComplete}
+                            onResumeQuery={handleResumeQuery}
+                            onRetryQuery={handleRetryQuery}
+                          />
+                        ))}
+                      </div>
+                    )}
+                  </>
+                );
+
+                // Special content for visualizations view
+                const visualizationsContent = selectedView === 'visualizations' && (
+                  <>
+                    {isLoadingCharts ? (
+                      <div className="flex items-center justify-center py-12">
+                        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
+                        <span className="ml-2 text-gray-600 dark:text-gray-400">Loading charts...</span>
+                      </div>
+                    ) : visualizations.length > 0 ? (
+                      <div className="space-y-6 mb-8">
+                        <h3 className="text-md font-medium text-gray-900 dark:text-gray-100">
+                          Generated Visualizations ({visualizations.length})
+                        </h3>
+                        {visualizations.map((vizData, index) => (
+                          <VisualizationRenderer
+                            key={index}
+                            data={vizData}
+                            className="mb-6"
+                          />
+                        ))}
+                      </div>
+                    ) : (
+                      <div className="text-center py-12">
+                        <BarChart3 className="h-12 w-12 text-gray-400 dark:text-gray-500 mx-auto mb-4" />
+                        <h3 className="text-lg font-medium text-gray-900 dark:text-gray-100 mb-2">
+                          No visualizations yet
+                        </h3>
+                        <p className="text-gray-500 dark:text-gray-400 mb-6">
+                          Run queries that generate charts and graphs to see visualizations here
+                        </p>
+                        <div className="flex gap-2 justify-center">
+                          <Button onClick={() => setSelectedView('analysis')}>
+                            <Play className="h-4 w-4 mr-2" />
+                            Go to Analysis
+                          </Button>
+                          <Button onClick={loadSpecificChart} variant="outline">
+                            <BarChart3 className="h-4 w-4 mr-2" />
+                            Load Test Chart
+                          </Button>
+                        </div>
+                      </div>
+                    )}
+                  </>
+                );
+
+                // Show reasoning content first if in reasoning view, visualizations content in visualizations view
+                const contentToRender = [
+                  ...(reasoningContent ? [<div key="reasoning-content">{reasoningContent}</div>] : []),
+                  ...(visualizationsContent ? [<div key="visualizations-content">{visualizationsContent}</div>] : []),
+                  ...blocksForView.map((block) => (
+                    <div key={block.id} className="group">
+                      <BlockEditor
+                        block={block}
+                        onUpdate={(updates) => onUpdateBlock?.(block.id, updates)}
+                        onAddBlock={(type) => onAddBlock?.(block.id, type)}
+                        onDeleteBlock={() => onDeleteBlock?.(block.id)}
+                        onFocus={() => handleBlockFocus(block.id)}
+                        isFocused={focusedBlockId === block.id}
+                        onMoveUp={() => {
+                          // TODO: Implement move up functionality
+                          console.log('Move up block', block.id);
+                        }}
+                        onMoveDown={() => {
+                          // TODO: Implement move down functionality
+                          console.log('Move down block', block.id);
+                        }}
+                        workspace={workspace}
+                        page={page}
+                        onNavigateToPage={(pageId) => {
+                          // TODO: Implement navigation to specific page
+                          console.log('Navigate to page:', pageId);
+                        }}
+                      />
+                    </div>
+                  ))
+                ];
+
+                // Show empty state only if no content at all
+                if (contentToRender.length === 0 || (blocksForView.length === 0 && !reasoningContent && !visualizationsContent)) {
+                  return (
+                    <div className="text-center py-12">
+                      <Layout className="h-12 w-12 text-gray-400 dark:text-gray-500 mx-auto mb-4" />
+                      <h3 className="text-lg font-medium text-gray-900 dark:text-gray-100 mb-2">
+                        No {selectedView} content yet
+                      </h3>
+                      <p className="text-gray-500 dark:text-gray-400 mb-6">
+                        {selectedView === 'analysis' && 'This view shows text, headings, quotes, and analysis content'}
+                        {selectedView === 'data' && 'This view shows tables, stats, and data visualizations'}
+                        {selectedView === 'visualizations' && 'This view shows interactive charts and graphs generated from your queries'}
+                        {selectedView === 'history' && 'This view shows all content chronologically'}
+                        {selectedView === 'reasoning' && 'This view shows AI reasoning and thought processes'}
+                      </p>
+                      <Button onClick={() => setShowAddBlockMenu(true)}>
+                        <Plus className="h-4 w-4 mr-2" />
+                        Add Content
+                      </Button>
+                    </div>
+                  );
+                }
+
+                return contentToRender;
+              })()}
+            </div>
+
+            {/* Quick Actions for New Query */}
+            {selectedView === 'analysis' && (
+              <div className="mt-8 bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg p-4">
                 <h3 className="font-medium text-gray-900 dark:text-gray-100 mb-3">Quick Actions</h3>
                 <div className="flex gap-2">
                   <Button size="sm" variant="outline" onClick={() => handleRunNewQuery()}>
-                    <Plus className="h-4 w-4 mr-2" />
-                    Add Analysis
+                    <Play className="h-4 w-4 mr-2" />
+                    Run New Query
                   </Button>
                   <Button size="sm" variant="outline">
                     <RotateCcw className="h-4 w-4 mr-2" />
                     Refresh Data
                   </Button>
                 </div>
-                </div>
-            </div>
-          )}
-
-          {selectedView === 'data' && (
-            <div className="max-w-6xl mx-auto">
-              {analysisData.currentTable ? (
-              <TableDisplay
-                headers={analysisData.currentTable.properties?.tableData?.headers || []}
-                rows={analysisData.currentTable.properties?.tableData?.data || []}
-                totalRows={analysisData.currentTable.properties?.tableData?.data?.length || 0}
-                title="Latest Query Results"
-                showControls={true}
-                maxRows={50}
-                onDownload={() => {
-                  console.log('Download CSV');
-                }}
-                onFilter={() => {
-                  console.log('Filter data');
-                }}
-              />
-              ) : (
-                <div className="text-center py-12">
-                  <Database className="h-12 w-12 text-gray-400 dark:text-gray-500 mx-auto mb-4" />
-                  <h3 className="text-lg font-medium text-gray-900 dark:text-gray-100 mb-2">No Data Available</h3>
-                  <p className="text-gray-500 dark:text-gray-400 mb-6">Run a query to see data results here.</p>
-                  <Button onClick={() => handleRunNewQuery()}>
-                    <Play className="h-4 w-4 mr-2" />
-                    Run Query
-                  </Button>
               </div>
-              )}
-            </div>
-          )}
+            )}
+          </div>
 
-          {selectedView === 'history' && (
-            <div className="max-w-4xl mx-auto">
-              <h2 className="text-lg font-semibold text-gray-900 dark:text-gray-100 mb-6">Analysis History</h2>
-              <div className="space-y-4">
-                {analysisData.analysisHistory.length > 0 ? (
-                  analysisData.analysisHistory.map((block, index) => (
-                    <div key={block.id} className="border border-gray-200 dark:border-gray-700 rounded-lg p-6 bg-white dark:bg-gray-800">
-                    <div className="flex items-center justify-between mb-4">
-                      <div className="flex items-center gap-3">
-                          <div className="w-3 h-3 rounded-full bg-blue-500 dark:bg-blue-400" />
-                          <h3 className="font-medium text-gray-900 dark:text-gray-100">Analysis Step {index + 1}</h3>
-                      </div>
-                      <span className="text-sm text-gray-500 dark:text-gray-400">
-                          {new Date().toLocaleString()}
-                      </span>
-                    </div>
-                    
-                      <div className="prose prose-sm max-w-none dark:prose-invert">
-                        <ReactMarkdown>{block.content}</ReactMarkdown>
-                      </div>
-                    </div>
-                  ))
-                ) : (
-                  <div className="text-center py-12">
-                    <Clock className="h-12 w-12 text-gray-400 dark:text-gray-500 mx-auto mb-4" />
-                    <h3 className="text-lg font-medium text-gray-900 dark:text-gray-100 mb-2">No Analysis History</h3>
-                    <p className="text-gray-500 dark:text-gray-400 mb-6">Your analysis steps will appear here as you work.</p>
-                    <Button onClick={() => handleRunNewQuery()}>
-                      <Play className="h-4 w-4 mr-2" />
-                      Start Analysis
-                    </Button>
-                  </div>
-                )}
-              </div>
-            </div>
-          )}
-
-          {selectedView === 'reasoning' && (
-            <div className="max-w-4xl mx-auto space-y-6">
-              <div className="flex items-center justify-between">
-                <h2 className="text-lg font-semibold text-gray-900 dark:text-gray-100">AI Reasoning Chains</h2>
-                <div className="text-sm text-gray-500 dark:text-gray-400">
-                  {reasoningChains.size} total chain{reasoningChains.size !== 1 ? 's' : ''}
-                </div>
-              </div>
-              
-              {/* Incomplete chains notification */}
-              {incompleteChains && incompleteChains.length > 0 && (
-                <div className="bg-yellow-50 dark:bg-yellow-900/30 border border-yellow-200 dark:border-yellow-700 rounded-lg p-4">
-                  <div className="flex items-center gap-2 mb-2">
-                    <AlertTriangle className="h-5 w-5 text-yellow-600 dark:text-yellow-400" />
-                    <h3 className="font-medium text-yellow-900 dark:text-yellow-100">Incomplete Queries Found</h3>
-                  </div>
-                  <p className="text-sm text-yellow-800 dark:text-yellow-200 mb-3">
-                    {incompleteChains.length} query{incompleteChains.length !== 1 ? 'ies were' : ' was'} interrupted. You can resume or retry them.
-                  </p>
-                </div>
-              )}
-
-              {/* Reasoning chains display */}
-              {Array.from(reasoningChains.entries()).length > 0 ? (
-                <div className="space-y-4">
-                  {Array.from(reasoningChains.entries()).map(([blockId, reasoningData]) => (
-                      <ReasoningChain
-                      key={blockId}
-                      reasoningData={reasoningData}
-                      title={`Block ${blockId.substring(0, 8)} - AI Reasoning`}
-                        collapsed={false}
-                      showRecoveryOptions={!reasoningData.isComplete}
-                      onResumeQuery={handleResumeQuery}
-                      onRetryQuery={handleRetryQuery}
-                    />
-                  ))}
-                        </div>
-              ) : (
-                    <div className="text-center py-12">
-                      <GitBranch className="h-12 w-12 text-gray-400 dark:text-gray-500 mx-auto mb-4" />
-                      <h3 className="text-lg font-medium text-gray-900 dark:text-gray-100 mb-2">No AI Reasoning Available</h3>
-                      <p className="text-gray-500 dark:text-gray-400 mb-6">
-                        The AI reasoning chain will appear here after running queries. 
-                        This shows how the AI thinks through problems step by step.
-                      </p>
-                  <Button onClick={() => handleRunNewQuery()}>
-                        <Play className="h-4 w-4 mr-2" />
-                        Run Query to See Reasoning
-                      </Button>
-                    </div>
-              )}
-            </div>
+          {/* Click outside to close add block menu */}
+          {showAddBlockMenu && (
+            <div
+              className="fixed inset-0 z-40"
+              onClick={() => setShowAddBlockMenu(false)}
+            />
           )}
         </div>
       </div>

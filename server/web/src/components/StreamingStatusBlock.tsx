@@ -3,7 +3,16 @@ import { Loader2, X, Clock } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
 interface StreamingEvent {
-  type: 'status' | 'progress' | 'error' | 'complete' | 'partial_sql' | 'analysis_chunk';
+  type: 'status' | 'progress' | 'error' | 'complete' | 'partial_sql' | 'analysis_chunk' |
+        // ENHANCED: Add all detailed reasoning event types
+        'detailed_reasoning_start' | 'sql_queries_section' | 'sql_query_executed' | 'no_sql_queries' |
+        'tool_executions_section' | 'tool_execution_completed' | 'no_tool_executions' |
+        'schema_discovery_section' | 'schema_discovered' | 'no_schema_discovery' |
+        'execution_plans_section' | 'execution_plan_detail' | 'no_execution_plans' |
+        'final_synthesis_analysis' | 'no_final_synthesis' | 'detailed_reasoning_complete' |
+        'reasoning_chain_warning' | 'session_updated' |
+        // VISUALIZATION: Add missing visualization event types
+        'visualization_created' | 'visualization_stage' | 'chart_config';
   message: string;
   timestamp: string;
   metadata?: any;
@@ -42,7 +51,7 @@ export const StreamingStatusBlock = ({
   }, []);
 
   return (
-    <div className="relative p-4 bg-gray-50 dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 mb-2">
+    <div className="relative p-4 bg-gray-50 dark:bg-gray-950 rounded-lg border border-gray-200 dark:border-gray-800 mb-2">
       {/* Header */}
       <div className="flex items-center justify-between mb-3">
         <div className="flex items-center gap-2">
@@ -71,7 +80,7 @@ export const StreamingStatusBlock = ({
       {/* Progress bar */}
       <div className="w-full bg-gray-200 dark:bg-gray-700 rounded-full h-1.5 mb-3">
         <div 
-          className="bg-blue-500 h-1.5 rounded-full transition-all duration-500 ease-out"
+          className="bg-gray-600 dark:bg-gray-400 h-1.5 rounded-full transition-all duration-500 ease-out"
           style={{ width: `${Math.round(progress * 100)}%` }}
         />
       </div>
@@ -81,9 +90,9 @@ export const StreamingStatusBlock = ({
         {/* Current Status - Direct from backend */}
         {status && (
           <div className="flex items-start gap-2">
-            <div className="w-2 h-2 rounded-full bg-blue-500 animate-pulse mt-1.5 flex-shrink-0" />
+            <div className="w-2 h-2 rounded-full bg-gray-500 dark:bg-gray-400 animate-pulse mt-1.5 flex-shrink-0" />
             <div className="flex-1">
-              <div className="text-sm text-blue-600 dark:text-blue-400 font-medium">
+              <div className="text-sm text-gray-700 dark:text-gray-300 font-medium">
                 {status}
               </div>
               <div className="text-xs text-gray-400 dark:text-gray-500">
@@ -108,6 +117,18 @@ export const StreamingStatusBlock = ({
                     event.type === 'error' ? 'bg-red-400' :
                     event.type === 'complete' ? 'bg-green-400' :
                     event.type === 'progress' ? 'bg-yellow-400' :
+                    // ENHANCED: Special styling for detailed reasoning events
+                    event.type.includes('sql_query') ? 'bg-gray-500' :
+                    event.type.includes('tool_execution') ? 'bg-purple-400' :
+                    event.type.includes('schema_') ? 'bg-indigo-400' :
+                    event.type.includes('execution_plan') ? 'bg-orange-400' :
+                    event.type.includes('synthesis') ? 'bg-green-400' :
+                    event.type === 'detailed_reasoning_start' ? 'bg-cyan-400' :
+                    event.type === 'detailed_reasoning_complete' ? 'bg-emerald-400' :
+                    // VISUALIZATION: Special styling for visualization events
+                    event.type === 'visualization_created' ? 'bg-pink-400' :
+                    event.type === 'visualization_stage' ? 'bg-rose-400' :
+                    event.type === 'chart_config' ? 'bg-fuchsia-400' :
                     'bg-gray-400 dark:bg-gray-500'
                   )} />
                   <div className="flex-1 min-w-0">
@@ -126,12 +147,12 @@ export const StreamingStatusBlock = ({
         
         {/* Fallback: If no history, show current status prominently */}
         {(!showHistory || !streamingHistory || streamingHistory.length === 0) && status && (
-          <div className="bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg p-3 mt-2">
-            <div className="text-sm text-blue-800 dark:text-blue-200 font-medium">
+          <div className="bg-gray-100 dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-lg p-3 mt-2">
+            <div className="text-sm text-gray-800 dark:text-gray-200 font-medium">
               {status}
             </div>
             {progress > 0 && (
-              <div className="text-xs text-blue-600 dark:text-blue-400 mt-1">
+              <div className="text-xs text-gray-600 dark:text-gray-400 mt-1">
                 {Math.round(progress * 100)}% complete
               </div>
             )}

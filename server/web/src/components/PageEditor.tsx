@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { flushSync } from 'react-dom';
-import { Page, Workspace, Block } from '@/types';
+import { Page, Workspace, Block, ReasoningChainEvent } from '@/types';
 import { BlockEditor } from './BlockEditor';
 import { EmojiPicker } from './EmojiPicker';
 import { BottomStatusBar } from './BottomStatusBar';
@@ -10,6 +10,15 @@ import { agentClient, AgentQueryResponse, StreamingCallbacks } from '@/lib/agent
 import { orchestrationAgent } from '@/lib/orchestration/agent';
 import { StreamingStatusBlock } from './StreamingStatusBlock';
 import { useStorageManager } from '@/hooks/useStorageManager';
+
+// Enhanced markdown detection patterns for streaming
+const STREAMING_MARKDOWN_PATTERNS = {
+  heading: /^#{1,3}\s/m,
+  list: /^[-*+]\s|^\d+\.\s/m,
+  quote: /^>\s/m,
+  code: /^```/m,
+  divider: /^---+/m
+};
 
 interface PageEditorProps {
   page: Page;
@@ -28,12 +37,7 @@ interface PageEditorProps {
 }
 
 // Enhanced reasoning chain interface for better typing
-interface ReasoningChainEvent {
-  type: 'status' | 'progress' | 'error' | 'complete' | 'partial_sql' | 'analysis_chunk' | 'classifying' | 'database_selected' | 'schema_loading' | 'query_generating' | 'query_executing' | 'partial_results' | 'planning' | 'aggregating';
-  message: string;
-  timestamp: string;
-  metadata?: any;
-}
+// ✅ Remove local interface - use global ReasoningChainEvent from types/index.ts
 
 interface ReasoningChainData {
   events: ReasoningChainEvent[];
@@ -94,7 +98,15 @@ export const PageEditor = ({
     blockId?: string;
     query?: string;
     history: Array<{
-      type: 'status' | 'progress' | 'error' | 'complete' | 'partial_sql' | 'analysis_chunk';
+      type: 'status' | 'progress' | 'error' | 'complete' | 'partial_sql' | 'analysis_chunk' |
+            // ✅ NEW: Add all detailed reasoning event types
+            'detailed_reasoning_start' | 'session_updated' | 
+            'sql_queries_section' | 'sql_query_executed' | 'no_sql_queries' |
+            'tool_executions_section' | 'tool_execution_completed' | 'no_tool_executions' |
+            'schema_discovery_section' | 'schema_discovered' | 'no_schema_discovery' |
+            'execution_plans_section' | 'execution_plan_detail' | 'no_execution_plans' |
+            'final_synthesis_analysis' | 'no_final_synthesis' | 'detailed_reasoning_complete' |
+            'reasoning_chain_warning';
       message: string;
       timestamp: string;
       metadata?: any;
@@ -167,7 +179,23 @@ export const PageEditor = ({
   }, [page.id, storageManager]);
 
   const addReasoningChainEvent = useCallback((sessionId: string, event: ReasoningChainEvent) => {
+    // Skip reasoning chain events for trivial operations
+    if (sessionId.startsWith('trivial_')) {
+      console.log(`🧠 Skipping reasoning chain event for trivial session ${sessionId}:`, event.type, event.message);
+      return;
+    }
+    
     console.log(`🧠 Adding reasoning chain event for session ${sessionId}:`, event.type, event.message);
+    
+    // ✅ SPECIAL DEBUG: Log complete events specifically
+    if (event.type === 'complete') {
+      console.log(`🏁 PageEditor: COMPLETE EVENT for session ${sessionId}:`, {
+        eventType: event.type,
+        message: event.message,
+        metadata: event.metadata,
+        timestamp: event.timestamp
+      });
+    }
     
     setActiveReasoningChains(prev => {
       const current = prev.get(sessionId) || {
@@ -190,11 +218,33 @@ export const PageEditor = ({
         return prev; // Return unchanged map
       }
       
+      // ✅ DEBUG: Log progress calculation details
+      let newProgress;
+      if (event.type === 'complete') {
+        newProgress = 1.0;
+      } else if (event.metadata?.progress) {
+        newProgress = parseFloat(event.metadata.progress) / 100;
+      } else {
+        // ✅ FIX: Don't reduce progress once it reaches 100%
+        newProgress = current.progress >= 1.0 ? 1.0 : Math.min(current.progress + 0.05, 0.98);
+      }
+      
+      console.log(`🧠 ReasoningChain Progress Update:`, {
+        eventType: event.type,
+        sessionId: sessionId,
+        currentProgress: current.progress,
+        metadataProgress: event.metadata?.progress,
+        metadataProgressType: typeof event.metadata?.progress,
+        calculatedProgress: newProgress,
+        isComplete: event.type === 'complete',
+        eventMessage: event.message
+      });
+
       const updated: ReasoningChainData = {
         ...current,
         events: [...current.events, event],
         lastUpdated: new Date().toISOString(),
-        progress: event.type === 'complete' ? 1.0 : Math.min(current.progress + 0.1, 0.9),
+        progress: newProgress,
         currentStep: event.message,
         sessionId
       };
@@ -210,6 +260,12 @@ export const PageEditor = ({
   }, [saveReasoningChainDebounced]);
 
   const initializeReasoningChain = useCallback((sessionId: string, query: string, blockId?: string) => {
+    // Skip reasoning chain creation for trivial operations
+    if (sessionId.startsWith('trivial_')) {
+      console.log(`🧠 Skipping reasoning chain initialization for trivial session ${sessionId}`);
+      return;
+    }
+    
     console.log(`🧠 Initializing reasoning chain for session ${sessionId} with query: ${query}`);
     
     const initialData: ReasoningChainData = {
@@ -240,6 +296,12 @@ export const PageEditor = ({
   }, [saveReasoningChainDebounced]);
 
   const completeReasoningChain = useCallback((sessionId: string, success: boolean = true, finalMessage?: string, blockId?: string) => {
+    // Skip reasoning chain completion for trivial operations
+    if (sessionId.startsWith('trivial_')) {
+      console.log(`🧠 Skipping reasoning chain completion for trivial session ${sessionId}, success: ${success}`);
+      return;
+    }
+    
     console.log(`🧠 Completing reasoning chain for session ${sessionId}, success: ${success}`);
     
     setActiveReasoningChains(prev => {
@@ -512,7 +574,9 @@ export const PageEditor = ({
         id: `block_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
         type: 'text' as const,
         content: '',
-        order: 0
+        order: 0,
+        createdAt: new Date(),
+        updatedAt: new Date()
       };
       updatedBlocks = [newBlock];
       console.log('🚨 No blocks remaining, added default block:', newBlock);
@@ -641,6 +705,18 @@ export const PageEditor = ({
   // Handle trivial operations using fast Bedrock client
   const handleTrivialQuery = async (query: string, blockId: string, classification: any) => {
     console.log(`⚡ PageEditor: Processing trivial query with fast client`);
+    console.log(`⚡ PageEditor: Query='${query}', Current BlockId='${blockId}'`);
+    console.log(`⚡ PageEditor: Current page state:`, {
+      pageId: page.id,
+      totalBlocks: page.blocks.length,
+      blockIds: page.blocks.map(b => b.id),
+      currentBlockExists: page.blocks.some(b => b.id === blockId),
+      currentBlockDetails: page.blocks.find(b => b.id === blockId) ? {
+        id: blockId,
+        type: page.blocks.find(b => b.id === blockId)?.type,
+        content: page.blocks.find(b => b.id === blockId)?.content?.substring(0, 50) + '...'
+      } : 'NOT FOUND'
+    });
     
     // Initialize streaming state for trivial operation
     setStreamingState({
@@ -652,9 +728,20 @@ export const PageEditor = ({
       history: []
     });
 
-    // Create new block immediately
+    // Create new block immediately after the current block
+    console.log(`⚡ PageEditor: About to call onAddBlock with afterBlockId='${blockId}'...`);
     const newBlockId = onAddBlock(blockId);
-    console.log(`➕ PageEditor: New block created for trivial operation: ${newBlockId}`);
+    console.log(`➕ PageEditor: New block created for trivial operation: ${newBlockId} (after block: ${blockId})`);
+    console.log(`➕ PageEditor: Page state after onAddBlock:`, {
+      totalBlocks: page.blocks.length,
+      blockIds: page.blocks.map(b => b.id),
+      newBlockExists: page.blocks.some(b => b.id === newBlockId),
+      newBlockDetails: page.blocks.find(b => b.id === newBlockId) ? {
+        id: newBlockId,
+        type: page.blocks.find(b => b.id === newBlockId)?.type,
+        content: page.blocks.find(b => b.id === newBlockId)?.content?.substring(0, 50) + '...'
+      } : 'NOT FOUND YET'
+    });
 
     // Generate session ID for reasoning chain
     const sessionId = `trivial_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
@@ -737,20 +824,39 @@ export const PageEditor = ({
               progress: Math.min(prev.progress + 0.1, 0.9)
             }));
             
+            // Enhanced progress tracking with multiline detection
+            const chunkLines = chunk.partial_result ? chunk.partial_result.split('\n').length : 0;
             addReasoningChainEvent(sessionId, {
               type: 'progress',
-              message: `Generating content chunk (${chunk.partial_result?.length || 0} chars)`,
+              message: `Generating content chunk (${chunk.partial_result?.length || 0} chars, ${chunkLines} lines)`,
               timestamp: new Date().toISOString(),
-              metadata: { chunkSize: chunk.partial_result?.length }
+              metadata: { 
+                chunkSize: chunk.partial_result?.length, 
+                linesDetected: chunkLines,
+                isMultiline: chunkLines > 1
+              }
             });
             
-            // Show streaming text in real-time using partial_result
+            // Enhanced streaming preview with multiline detection
             if (chunk.partial_result) {
-              setPendingAIUpdate({ 
-                blockId: newBlockId, 
-                content: `⚡ **Fast AI Streaming...**\n\n${chunk.partial_result}\n\n`
-              });
+              const hasNewlines = chunk.partial_result.includes('\n');
+              const lineCount = chunk.partial_result.split('\n').length;
+              
+              if (hasNewlines && lineCount > 1) {
+                // Show multiline preview during streaming
+                setPendingAIUpdate({ 
+                  blockId: newBlockId
+                  //content: `⚡ **Fast AI Streaming** (${lineCount} lines detected)\n\n${chunk.partial_result}\n\n`
+                });
+              } else {
+                // Regular streaming preview
+                setPendingAIUpdate({ 
+                  blockId: newBlockId 
+                  //content: `⚡ **Fast AI Streaming...**\n\n${chunk.partial_result}\n\n`
+                });
+              }
             }
+            
           } else if (chunk.type === 'complete') {
             const result = chunk.result || query;
             const duration = chunk.duration || 0;
@@ -765,21 +871,46 @@ export const PageEditor = ({
               metadata: { duration, cached, resultLength: result.length }
             });
             
-            // Update block with clean final result
-            const hasMultilineMarkdown = result.includes('\n') && 
-              (result.includes('## ') || result.includes('### ') || result.includes('- ') || result.includes('> '));
+            // Check for multiline content that should be split into separate blocks
+            const lines = result.split('\n');
+            const nonEmptyLines = lines.filter(line => line.trim()).length;
+            const hasMultipleLines = lines.length > 1;
             
-            if (hasMultilineMarkdown) {
-              console.log(`📝 PageEditor: Trivial result contains multiline markdown, triggering markdown parsing`);
+            console.log(`📝 PageEditor: COMPLETION ANALYSIS:`, {
+              resultLength: result.length,
+              totalLines: lines.length,
+              nonEmptyLines: nonEmptyLines,
+              hasMultipleLines: hasMultipleLines,
+              shouldTriggerMultiline: hasMultipleLines && nonEmptyLines > 1,
+              resultPreview: result.substring(0, 100) + (result.length > 100 ? '...' : ''),
+              linesPreview: lines.slice(0, 3)
+            });
+            
+            if (hasMultipleLines && nonEmptyLines > 1) {
+              console.log(`📝 PageEditor: ✅ TRIGGERING MULTILINE - ${lines.length} lines (${nonEmptyLines} non-empty)`);
+              console.log(`📝 PageEditor: Lines to process:`, lines.map((line, i) => `${i}: "${line}"`));
+              
               addReasoningChainEvent(sessionId, {
                 type: 'status',
-                message: 'Processing multiline markdown result',
+                message: `Processing multiline result into ${lines.length} separate blocks`,
                 timestamp: new Date().toISOString(),
-                metadata: { markdownDetected: true }
+                metadata: { 
+                  totalLines: lines.length,
+                  nonEmptyLines: nonEmptyLines,
+                  multilineDetected: true
+                }
               });
-              handleMarkdownPaste(result, newBlockId);
+              
+              // Clear any pending update to avoid conflicts
+              setPendingAIUpdate(null);
+              
+              // Use the new multiline handler for line-by-line block creation
+              console.log(`📝 PageEditor: About to call handleTrivialMultilineResult with blockId: ${newBlockId}`);
+              handleTrivialMultilineResult(result, newBlockId);
+              
             } else {
-              console.log(`📝 PageEditor: Trivial result is simple text, updating block directly`);
+              console.log(`📝 PageEditor: ❌ NOT MULTILINE - Using direct block update`);
+              console.log(`📝 PageEditor: Reason: hasMultipleLines=${hasMultipleLines}, nonEmptyLines=${nonEmptyLines}`);
               setPendingAIUpdate({ 
                 blockId: newBlockId, 
                 content: result
@@ -894,17 +1025,23 @@ export const PageEditor = ({
         finalRowCount?: number;
       } = {};
       
-      // Call the streaming agent API
+      // Call the streaming agent API with captured data enabled
       await agentClient.queryStream({
         question: query,
-        analyze: true
+        analyze: true,
+        show_captured_data: true,  // ✅ Enable captured data display
+        verbose: true,             // Also enable verbose output
+        show_outputs: true,        // And comprehensive output breakdown
+        page_id: page.id,
+        workspace_id: workspace.id,
+        block_id: newBlockId    // Pass the new block ID created for this query
       }, {
         onStatus: (message) => {
           console.log(`📊 Status: ${message}`);
           setStreamingState(prev => ({
             ...prev,
             status: message,
-            progress: Math.min(prev.progress + 0.1, 0.9),
+            progress: Math.min(prev.progress + 0.05, 0.95), // ✅ FIX: Smaller increments, higher cap
             history: [...prev.history, {
               type: 'status',
               message,
@@ -916,6 +1053,36 @@ export const PageEditor = ({
             type: 'status',
             message,
             timestamp: new Date().toISOString()
+          });
+        },
+        
+        onProgress: (message, progress) => {
+          console.log(`📈 PageEditor Progress Callback:`, {
+            message: message,
+            progressRaw: progress,
+            progressType: typeof progress,
+            progressValue: parseFloat(progress.toString()),
+            progressDecimal: parseFloat(progress.toString()) / 100,
+            sessionId: sessionId
+          });
+          
+          const progressDecimal = parseFloat(progress.toString()) / 100; // Convert percentage to decimal, handle strings
+          setStreamingState(prev => ({
+            ...prev,
+            status: message,
+            progress: progressDecimal,
+            history: [...prev.history, {
+              type: 'progress',
+              message,
+              timestamp: new Date().toISOString()
+            }]
+          }));
+          
+          addReasoningChainEvent(sessionId, {
+            type: 'progress',
+            message,
+            timestamp: new Date().toISOString(),
+            metadata: { progress } // ✅ Include actual progress value in metadata
           });
         },
         
@@ -1086,6 +1253,121 @@ export const PageEditor = ({
             timestamp: new Date().toISOString()
           });
         },
+
+        // ✅ NEW: Handle detailed reasoning events from backend
+        onDetailedReasoningEvent: (event) => {
+          console.log(`🧠 PageEditor: Received detailed reasoning event: ${event.type}`, event);
+          
+          // ✅ ENHANCED: Log visualization events with special attention
+          if (['chart_config_json', 'hybrid_chart_config_json', 'visualization_created'].includes(event.type)) {
+            console.log(`🎨 PageEditor: ✅ PROCESSING VISUALIZATION EVENT:`, {
+              type: event.type,
+              sessionId: event.session_id,
+              hasChartConfig: !!event.chart_config,
+              hasMetadata: !!event.metadata,
+              hasMetadataChartConfig: !!event.metadata?.chart_config,
+              eventKeys: Object.keys(event),
+              metadataKeys: event.metadata ? Object.keys(event.metadata) : []
+            });
+          }
+          
+          // ✅ Type guard: Ensure event type is valid before adding to history
+          const eventType = event.type as ReasoningChainEvent['type'];
+          
+          // Update streaming state with detailed reasoning event (use type casting for debugging)
+          setStreamingState(prev => ({
+            ...prev,
+            status: event.message || `Processing ${event.type}...`,
+            history: [...prev.history, {
+              type: 'status' as any, // Use status type for compatibility
+              message: event.message || `${event.type}: Processing...`,
+              timestamp: event.timestamp,
+              metadata: {
+                // Pass through all the detailed event data
+                originalEventType: event.type,
+                timestamp: event.timestamp,
+                session_id: event.session_id,
+                message: event.message,
+                query_number: event.query_number,
+                source: event.source,
+                query_text: event.query_text,
+                execution_time_ms: event.execution_time_ms,
+                rows_returned: event.rows_returned,
+                execution_number: event.execution_number,
+                tool_id: event.tool_id,
+                success: event.success,
+                call_id: event.call_id,
+                error_message: event.error_message,
+                tables_found: event.tables_found,
+                content_preview: event.content_preview,
+                plan_number: event.plan_number,
+                plan_id: event.plan_id,
+                strategy: event.strategy,
+                operations_count: event.operations_count,
+                synthesis_length: event.synthesis_length,
+                confidence_score: event.confidence_score,
+                sources_used: event.sources_used,
+                synthesis_preview: event.synthesis_preview,
+                // Include visualization-specific fields
+                chart_config: event.chart_config,
+                metadata: event.metadata,
+                ...event // Include any other fields
+              }
+            }]
+          }));
+
+          // Special handling for visualization events that CanvasWorkspace needs to detect
+          if (['chart_config_json', 'hybrid_chart_config_json', 'visualization_created', 'visualization_complete'].includes(event.type)) {
+            console.log(`🎨 PageEditor: ✅ ADDING VISUALIZATION EVENT TO REASONING CHAIN:`, {
+              originalType: event.type,
+              sessionId: event.session_id,
+              hasChartConfig: !!event.chart_config,
+              hasMetadata: !!event.metadata,
+              hasMetadataChartConfig: !!event.metadata?.chart_config
+            });
+            
+            // ✅ ENHANCED DEBUG: Log the exact metadata structure being created
+            const metadataToStore = {
+              ...event.metadata, // Include the metadata with chart_config
+              // Also include direct event properties for backwards compatibility
+              chart_config: event.chart_config || event.metadata?.chart_config,
+              chart_type: event.chart_type,
+              dataset_size: event.dataset_size,
+              intent: event.intent,
+              file_path: event.file_path,
+              json_size: event.json_size,
+              originalEventData: event
+            };
+            
+            console.log(`🎨 PageEditor: ✅ METADATA STRUCTURE BEING STORED:`, {
+              metadataKeys: Object.keys(metadataToStore),
+              hasChartConfig: !!metadataToStore.chart_config,
+              chartConfigKeys: metadataToStore.chart_config ? Object.keys(metadataToStore.chart_config) : [],
+              chartConfigPreview: metadataToStore.chart_config ? JSON.stringify(metadataToStore.chart_config).substring(0, 150) + '...' : 'null',
+              originalEventMetadata: event.metadata,
+              directEventChartConfig: event.chart_config
+            });
+            
+            // Add with original type so CanvasWorkspace can find it
+            addReasoningChainEvent(sessionId, {
+              type: event.type as any, // ✅ PRESERVE ORIGINAL TYPE!
+              message: event.message || `${event.type}: Processing...`,
+              timestamp: event.timestamp,
+              metadata: metadataToStore
+            });
+          } else {
+            // For non-visualization events, use status type for compatibility
+            addReasoningChainEvent(sessionId, {
+              type: 'status' as any,
+              message: event.message || `${event.type}: Processing...`,
+              timestamp: event.timestamp,
+              metadata: {
+                originalEventType: event.type,
+                ...event
+              }
+            });
+          }
+        },
         
         onPlanning: (step, operationsPlanned) => {
           console.log(`📋 Planning: ${step}`);
@@ -1134,31 +1416,83 @@ export const PageEditor = ({
           });
         },
         
-        onComplete: async (results, sessionId) => {
-          console.log(`🎯 PageEditor: Query completed with sessionId: ${sessionId}`);
+        onComplete: async (results, backendSessionId) => {
+          console.log(`🎯 PageEditor: Query completed with backend sessionId: ${backendSessionId}, frontend sessionId: ${sessionId}`);
           console.log(`🎯 PageEditor: Results:`, results);
           
-          // Update reasoning chain as complete
-          if (sessionId && activeReasoningChains.has(sessionId)) {
-            const reasoningChain = activeReasoningChains.get(sessionId);
-            if (reasoningChain) {
-              reasoningChain.isComplete = true;
-              reasoningChain.status = 'completed';
-              reasoningChain.progress = 1.0;
-              reasoningChain.lastUpdated = new Date().toISOString();
-              
-              // Save completed reasoning chain
-              try {
-                await storageManager.saveReasoningChain(reasoningChain);
-                await storageManager.completeReasoningChain(sessionId, true, newBlockId);
-                console.log(`✅ PageEditor: Reasoning chain marked as complete: ${sessionId}`);
-              } catch (error) {
-                console.error(`❌ PageEditor: Failed to complete reasoning chain: ${error}`);
+          // ✅ FIX: Use the frontend sessionId for reasoning chain completion
+          const completionSessionId = sessionId; // Use frontend session ID, not backend
+          
+          // ✅ ENHANCED DEBUG: Log complete results structure including visualization data
+          console.log(`🎯 PageEditor: ✅ COMPLETE RESULTS DEBUGGING:`);
+          console.log(`🎯   - Results type: ${typeof results}`);
+          console.log(`🎯   - Results keys: ${results ? Object.keys(results) : 'null'}`);
+          console.log(`🎯   - Has rows: ${!!results?.rows} (length: ${results?.rows?.length || 0})`);
+          console.log(`🎯   - Has analysis: ${!!results?.analysis} (length: ${results?.analysis?.length || 0})`);
+          console.log(`🎯   - Has SQL: ${!!results?.sql} (length: ${results?.sql?.length || 0})`);
+          console.log(`🎯   - Has captured data: ${!!results?.captured_data}`);
+          console.log(`🎯   - Has visualization data: ${!!results?.visualization_data} (length: ${results?.visualization_data?.length || 0})`);
+          console.log(`🎯   - Has complete chart config: ${!!results?.complete_chart_config}`);
+          console.log(`🎯   - Has chart JSON file path: ${!!results?.chart_json_file_path}`);
+          
+          // ✅ ENHANCED DEBUG: Detailed visualization data logging
+          if (results?.visualization_data && results.visualization_data.length > 0) {
+            console.log(`🎨 PageEditor: ✅ VISUALIZATION DATA FOUND IN RESULTS!`);
+            console.log(`🎨   - Visualization data length: ${results.visualization_data.length}`);
+            results.visualization_data.forEach((viz, index) => {
+              console.log(`🎨   - [${index}] Type: ${viz.type}, Chart: ${viz.chartType || 'N/A'}`);
+              console.log(`🎨   - [${index}] Has chart config: ${!!viz.chartConfig}`);
+              console.log(`🎨   - [${index}] Keys: ${Object.keys(viz)}`);
+              if (viz.chartConfig) {
+                console.log(`🎨   - [${index}] Chart config keys: ${Object.keys(viz.chartConfig)}`);
+                console.log(`🎨   - [${index}] Chart config preview: ${JSON.stringify(viz.chartConfig).substring(0, 100)}...`);
               }
+            });
+          } else {
+            console.log(`🎨 PageEditor: ❌ NO VISUALIZATION DATA FOUND IN RESULTS`);
+          }
+          
+          if (results?.complete_chart_config) {
+            console.log(`🎨 PageEditor: ✅ COMPLETE CHART CONFIG FOUND:`);
+            console.log(`🎨   - Config keys: ${Object.keys(results.complete_chart_config)}`);
+            console.log(`🎨   - Config preview: ${JSON.stringify(results.complete_chart_config).substring(0, 200)}...`);
+          }
+          
+          if (results?.chart_json_file_path) {
+            console.log(`🎨 PageEditor: ✅ CHART JSON FILE PATH: ${results.chart_json_file_path}`);
+          }
+          
+          // ✅ FIX: Use proper reasoning chain completion instead of direct mutation
+          if (completionSessionId && activeReasoningChains.has(completionSessionId)) {
+            // Add final completion event with visualization data if available
+            if (results?.visualization_data && results.visualization_data.length > 0) {
+              console.log(`🎨 PageEditor: Adding visualization data to reasoning chain`);
+              addReasoningChainEvent(completionSessionId, {
+                type: 'visualization_data',
+                message: `Found ${results.visualization_data.length} visualization events`,
+                timestamp: new Date().toISOString(),
+                metadata: {
+                  visualization_data: results.visualization_data,
+                  complete_chart_config: results.complete_chart_config,
+                  chart_json_file_path: results.chart_json_file_path
+                }
+              });
             }
             
-            // Clean up active reasoning chain
-            activeReasoningChains.delete(sessionId);
+            // Properly complete the reasoning chain using the state update mechanism
+            completeReasoningChain(completionSessionId, true, 'Query processing completed successfully', newBlockId);
+            
+            // Save completed reasoning chain
+            try {
+              const reasoningChain = activeReasoningChains.get(completionSessionId);
+              if (reasoningChain) {
+                await storageManager.saveReasoningChain(reasoningChain);
+                await storageManager.completeReasoningChain(completionSessionId, true, newBlockId);
+                console.log(`✅ PageEditor: Reasoning chain marked as complete: ${completionSessionId}`);
+              }
+            } catch (error) {
+              console.error(`❌ PageEditor: Failed to save reasoning chain: ${error}`);
+            }
           }
           
           // Extract canvas data from results using existing function
@@ -1191,8 +1525,19 @@ export const PageEditor = ({
               // pageId will be set to Canvas page when it's created
             },
             originalQuery: query,
-            originalPageId: page.id  // Store original page reference
+            originalPageId: page.id,  // Store original page reference
+            // ✅ ENHANCED: Add visualization data to canvas data
+            visualizationData: results?.visualization_data || [],
+            completeChartConfig: results?.complete_chart_config || null,
+            chartJsonFilePath: results?.chart_json_file_path || null
           };
+          
+          console.log(`🎯 PageEditor: Enhanced canvas data with visualization:`, {
+            hasVisualizationData: !!fullCanvasData.visualizationData?.length,
+            visualizationDataLength: fullCanvasData.visualizationData?.length || 0,
+            hasCompleteChartConfig: !!fullCanvasData.completeChartConfig,
+            hasChartJsonFilePath: !!fullCanvasData.chartJsonFilePath
+          });
           
           // Create analysis commit for Canvas system integration
           if (sessionId && extractedCanvasData.fullAnalysis) {
@@ -1287,7 +1632,10 @@ export const PageEditor = ({
               // Try to re-execute the query to get the data
               const fallbackResponse = await agentClient.query({
                 question: query,
-                analyze: !!accumulatedData.analysis
+                analyze: !!accumulatedData.analysis,
+                page_id: page.id,
+                workspace_id: workspace.id,
+                block_id: newBlockId
               });
               
               console.log(`🔧 PageEditor: Fallback query response:`, {
@@ -1459,6 +1807,13 @@ export const PageEditor = ({
       rowsLength: response.rows?.length || 0,
       hasAnalysis: !!response.analysis,
       hasSql: !!response.sql,
+      hasCapturedData: !!(response as any).captured_data,
+      capturedDataStructure: (response as any).captured_data ? {
+        sqlQueries: (response as any).captured_data.sql_queries?.length || 0,
+        toolExecutions: (response as any).captured_data.tool_executions?.length || 0,
+        schemaData: (response as any).captured_data.schema_data?.length || 0,
+        hasFinalSynthesis: !!(response as any).captured_data.final_synthesis
+      } : null,
       firstRowSample: response.rows?.[0] ? Object.keys(response.rows[0]).slice(0, 5) : []
     });
     
@@ -1474,6 +1829,25 @@ export const PageEditor = ({
     if (response.sql) {
       canvasData.sqlQuery = response.sql;
       console.log('🎯 createCanvasPreviewFromResponse: Stored SQL query:', response.sql.substring(0, 100) + '...');
+    }
+
+    // Store captured execution data
+    const capturedData = (response as any).captured_data;
+    if (capturedData) {
+      canvasData.capturedExecutionData = {
+        sqlQueries: capturedData.sql_queries || [],
+        toolExecutions: capturedData.tool_executions || [],
+        schemaData: capturedData.schema_data || [],
+        finalSynthesis: capturedData.final_synthesis || null,
+        executionSummary: capturedData.execution_summary || {}
+      };
+      console.log('🎯 createCanvasPreviewFromResponse: Stored captured execution data:', {
+        sqlQueries: canvasData.capturedExecutionData.sqlQueries.length,
+        toolExecutions: canvasData.capturedExecutionData.toolExecutions.length,
+        schemaData: canvasData.capturedExecutionData.schemaData.length,
+        totalExecutionTime: canvasData.capturedExecutionData.executionSummary.total_execution_time,
+        databasesAccessed: canvasData.capturedExecutionData.executionSummary.databases_accessed?.length || 0
+      });
     }
     
     // Store full data - Handle mixed schemas from cross-database queries
@@ -1951,6 +2325,54 @@ export const PageEditor = ({
     };
   };
 
+  // Navigation functions for up/down arrow keys
+  const handleFocusNextBlock = useCallback(() => {
+    if (!focusedBlockId) return;
+    
+    const currentIndex = page.blocks.findIndex(b => b.id === focusedBlockId);
+    if (currentIndex === -1 || currentIndex >= page.blocks.length - 1) return;
+    
+    const nextBlock = page.blocks[currentIndex + 1];
+    if (nextBlock) {
+      setFocusedBlockId(nextBlock.id);
+      clearSelection(); // Clear any selection when navigating
+      
+      // Focus the textarea in the next block after a brief delay
+      setTimeout(() => {
+        const nextBlockElement = document.querySelector(`[data-block-id="${nextBlock.id}"] textarea`);
+        if (nextBlockElement) {
+          (nextBlockElement as HTMLTextAreaElement).focus();
+          // Position cursor at the beginning of the content
+          (nextBlockElement as HTMLTextAreaElement).setSelectionRange(0, 0);
+        }
+      }, 10);
+    }
+  }, [focusedBlockId, page.blocks, clearSelection]);
+
+  const handleFocusPreviousBlock = useCallback(() => {
+    if (!focusedBlockId) return;
+    
+    const currentIndex = page.blocks.findIndex(b => b.id === focusedBlockId);
+    if (currentIndex <= 0) return;
+    
+    const previousBlock = page.blocks[currentIndex - 1];
+    if (previousBlock) {
+      setFocusedBlockId(previousBlock.id);
+      clearSelection(); // Clear any selection when navigating
+      
+      // Focus the textarea in the previous block after a brief delay
+      setTimeout(() => {
+        const prevBlockElement = document.querySelector(`[data-block-id="${previousBlock.id}"] textarea`);
+        if (prevBlockElement) {
+          (prevBlockElement as HTMLTextAreaElement).focus();
+          // Position cursor at the end of the content
+          const content = (prevBlockElement as HTMLTextAreaElement).value;
+          (prevBlockElement as HTMLTextAreaElement).setSelectionRange(content.length, content.length);
+        }
+      }, 10);
+    }
+  }, [focusedBlockId, page.blocks, clearSelection]);
+
   const handleBlockMouseDown = (blockId: string) => {
     return (e: React.MouseEvent) => {
       handleMouseDown(blockId, e);
@@ -1985,7 +2407,9 @@ export const PageEditor = ({
         id: `block_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
         type: 'text' as const,
         content: '',
-        order: 0
+        order: 0,
+        createdAt: new Date(),
+        updatedAt: new Date()
       };
       updatedBlocks = [newBlock];
       console.log('🚨 No blocks remaining, added default block:', newBlock);
@@ -2023,25 +2447,87 @@ export const PageEditor = ({
     clearSelection();
     console.log('🚨 clearSelection called');
     
-    console.log('🚨 === STEP 4: DEFERRED STORAGE CLEANUP ===');
+    console.log('🚨 === STEP 4: STORAGE CLEANUP (BATCH) ===');
     
-    // Step 3: Clean up storage (deferred to avoid interfering with UI)
-    console.log('🚨 Scheduling deferred storage cleanup for blocks:', blocksToDelete);
+    // Step 3: Clean up storage in batch to avoid race conditions
+    // For multi-block deletion, we handle storage cleanup differently to avoid racing calls to onDeleteBlock
+    if (blocksToDelete.length === 1) {
+      // Single block deletion - use the existing onDeleteBlock function
+      console.log('🚨 Single block deletion - using onDeleteBlock');
+      const blockId = blocksToDelete[0];
     setTimeout(() => {
-      console.log('🚨 Starting deferred storage cleanup for blocks:', blocksToDelete);
-      blocksToDelete.forEach((blockId, index) => {
-        console.log(`🚨 [DEFERRED ${index + 1}/${blocksToDelete.length}] Calling onDeleteBlock for: ${blockId}`);
-        
+        console.log(`🚨 [SINGLE] Calling onDeleteBlock for: ${blockId}`);
         try {
           onDeleteBlock(blockId);
-          console.log(`🚨 [DEFERRED ${index + 1}/${blocksToDelete.length}] onDeleteBlock completed for: ${blockId}`);
+          console.log(`🚨 [SINGLE] onDeleteBlock completed for: ${blockId}`);
         } catch (error) {
-          console.error(`🚨 [DEFERRED ${index + 1}/${blocksToDelete.length}] Error in onDeleteBlock for ${blockId}:`, error);
+          console.error(`🚨 [SINGLE] Error in onDeleteBlock for ${blockId}:`, error);
         }
-      });
-      
-      console.log('🚨 === DEFERRED STORAGE CLEANUP COMPLETED ===');
-    }, 50); // Small delay to ensure UI update is processed first
+      }, 50);
+    } else {
+      // Multi-block deletion - handle storage cleanup directly to avoid race conditions
+      console.log('🚨 Multi-block deletion - handling storage cleanup directly');
+      setTimeout(async () => {
+        console.log('🚨 Starting batch storage cleanup for blocks:', blocksToDelete);
+        
+        try {
+          // Use the existing storageManager from the hook
+          if (!storageManager) {
+            throw new Error('StorageManager not available');
+          }
+          
+          // Check for canvas blocks and handle their cleanup
+          const canvasBlocksToCleanup: string[] = [];
+          blocksToDelete.forEach(blockId => {
+            const blockToDelete = page.blocks.find(b => b.id === blockId);
+            if (blockToDelete?.type === 'canvas' && blockToDelete.properties?.canvasPageId) {
+              canvasBlocksToCleanup.push(blockToDelete.properties.canvasPageId);
+            }
+          });
+          
+          // Clean up canvas pages if any
+          if (canvasBlocksToCleanup.length > 0) {
+            console.log('🎨 Cleaning up canvas pages:', canvasBlocksToCleanup);
+            for (const canvasPageId of canvasBlocksToCleanup) {
+              try {
+                await storageManager.deletePage(canvasPageId);
+                console.log('✅ Canvas page deleted from storage:', canvasPageId);
+              } catch (error) {
+                console.warn('⚠️ Failed to delete canvas page from storage:', canvasPageId, error);
+              }
+            }
+          }
+          
+          // Delete blocks from storage in batch
+          console.log(`🚨 Deleting ${blocksToDelete.length} blocks from storage...`);
+          for (const blockId of blocksToDelete) {
+            try {
+              await storageManager.deleteBlock(blockId);
+              console.log(`🚨 [BATCH] Block deleted from storage: ${blockId}`);
+            } catch (error) {
+              console.warn(`🚨 [BATCH] Failed to delete block from storage: ${blockId}`, error);
+            }
+          }
+          
+          console.log('✅ Batch storage cleanup completed');
+        } catch (error) {
+          console.error('❌ Error in batch storage cleanup:', error);
+          // Fallback to individual onDeleteBlock calls if storage manager approach fails
+          console.log('🔄 Falling back to individual onDeleteBlock calls');
+          blocksToDelete.forEach((blockId, index) => {
+            setTimeout(() => {
+              console.log(`🚨 [FALLBACK ${index + 1}/${blocksToDelete.length}] Calling onDeleteBlock for: ${blockId}`);
+              try {
+                onDeleteBlock(blockId);
+                console.log(`🚨 [FALLBACK ${index + 1}/${blocksToDelete.length}] onDeleteBlock completed for: ${blockId}`);
+              } catch (error) {
+                console.error(`🚨 [FALLBACK ${index + 1}/${blocksToDelete.length}] Error in onDeleteBlock for ${blockId}:`, error);
+              }
+            }, index * 50); // Stagger the calls to avoid race conditions
+          });
+        }
+      }, 50);
+    }
     
     // Log final state after a short delay
     setTimeout(() => {
@@ -2051,7 +2537,7 @@ export const PageEditor = ({
       console.log('🚨 === END handleDeleteSelectedWithBlocks ===');
     }, 100);
     
-  }, [page.blocks, loggedOnUpdatePage, onDeleteBlock, clearSelection, selectedBlocks]);
+  }, [page.blocks, loggedOnUpdatePage, onDeleteBlock, clearSelection, selectedBlocks, storageManager]);
 
   // Handle keyboard shortcuts for selection
   useEffect(() => {
@@ -2459,7 +2945,7 @@ export const PageEditor = ({
   };
 
   // Handle markdown paste from BlockEditor  
-  const handleMarkdownPaste = (markdownText: string, targetBlockId: string) => {
+  const handleMarkdownPaste = useCallback((markdownText: string, targetBlockId: string) => {
     console.log('🎯 PageEditor: Handling markdown paste for block:', targetBlockId);
     console.log('🎯 PageEditor: Markdown text:', markdownText);
     
@@ -2471,90 +2957,372 @@ export const PageEditor = ({
       return;
     }
     
-    // Verify the target block exists
-    const targetBlockExists = page.blocks.some(block => block.id === targetBlockId);
-    if (!targetBlockExists) {
-      console.error('🎯 PageEditor: Target block does not exist:', targetBlockId);
-      return;
-    }
-    
-    const targetBlockIndex = page.blocks.findIndex(block => block.id === targetBlockId);
-    if (targetBlockIndex === -1) {
-      console.error('🎯 PageEditor: Could not find target block index');
-      return;
-    }
+    // Helper function to attempt block processing with retries
+    const attemptBlockProcessing = (retryCount = 0) => {
+      const maxRetries = 5; // Shorter retry for paste operations
+      
+      // Verify the target block exists
+      const targetBlockExists = page.blocks.some(block => block.id === targetBlockId);
+      
+      if (!targetBlockExists) {
+        if (retryCount < maxRetries) {
+          console.log(`🎯 PageEditor: Target block ${targetBlockId} not found for paste, retrying in 50ms (attempt ${retryCount + 1}/${maxRetries})`);
+          setTimeout(() => attemptBlockProcessing(retryCount + 1), 50);
+          return;
+        } else {
+          console.error('🎯 PageEditor: Target block does not exist for paste after max retries:', targetBlockId);
+          return;
+        }
+      }
+      
+      console.log(`🎯 PageEditor: Target block ${targetBlockId} found after ${retryCount} retries, proceeding with paste processing`);
+      
+      const targetBlockIndex = page.blocks.findIndex(block => block.id === targetBlockId);
+      if (targetBlockIndex === -1) {
+        console.error('🎯 PageEditor: Could not find target block index for paste after retries');
+        return;
+      }
 
-    // Update the target block with the first parsed block
-    const firstBlock = parsedBlocks[0];
-    console.log('🎯 PageEditor: Updating target block with:', firstBlock);
-    
-    // Start with current page blocks
-    let updatedBlocks = [...page.blocks];
-    
-    // Update the target block with the first parsed block
-    const updatedTargetBlock = {
-      ...updatedBlocks[targetBlockIndex],
-      type: firstBlock.type,
-      content: firstBlock.content,
-      indentLevel: firstBlock.indentLevel || 0
-    };
-    updatedBlocks[targetBlockIndex] = updatedTargetBlock;
-    
-    // For multiple blocks, create additional blocks
-    if (parsedBlocks.length > 1) {
-      // Create new blocks for the remaining parsed content
-      const newBlocks = parsedBlocks.slice(1).map((blockData, index) => ({
-        id: `block_${Date.now()}_${Math.random().toString(36).substr(2, 9)}_${index}`,
-        type: blockData.type,
-        content: blockData.content,
-        order: targetBlockIndex + 1 + index,
-        indentLevel: blockData.indentLevel || 0
+      // Update the target block with the first parsed block
+      const firstBlock = parsedBlocks[0];
+      console.log('🎯 PageEditor: Updating target block with:', firstBlock);
+      
+      // Start with current page blocks
+      let updatedBlocks = [...page.blocks];
+      
+      // Update the target block with the first parsed block
+      const updatedTargetBlock = {
+        ...updatedBlocks[targetBlockIndex],
+        type: firstBlock.type,
+        content: firstBlock.content,
+        indentLevel: firstBlock.indentLevel || 0
+      };
+      updatedBlocks[targetBlockIndex] = updatedTargetBlock;
+      
+      // For multiple blocks, create additional blocks
+      if (parsedBlocks.length > 1) {
+        // Create new blocks for the remaining parsed content
+        const newBlocks = parsedBlocks.slice(1).map((blockData, index) => ({
+          id: `block_${Date.now()}_${Math.random().toString(36).substr(2, 9)}_${index}`,
+          type: blockData.type,
+          content: blockData.content,
+          order: targetBlockIndex + 1 + index,
+          indentLevel: blockData.indentLevel || 0
+        }));
+        
+        console.log('🎯 PageEditor: Creating new blocks:', newBlocks);
+        
+        // Insert the new blocks after the target block
+        updatedBlocks.splice(targetBlockIndex + 1, 0, ...newBlocks);
+        
+        // Save each new block to storage individually
+        newBlocks.forEach((block, index) => {
+          setTimeout(async () => {
+            console.log(`🎯 PageEditor: Saving block ${block.id} to storage`);
+            try {
+              await storageManager.saveBlock(block, page.id);
+              console.log(`✅ PageEditor: Block ${block.id} saved to storage successfully`);
+            } catch (error) {
+              console.warn(`⚠️ PageEditor: Could not save block ${block.id} to storage:`, error);
+            }
+          }, 100 * (index + 1));
+        });
+      }
+      
+      // Reorder all blocks to have clean sequential orders
+      const reorderedBlocks = updatedBlocks.map((block, index) => ({
+        ...block,
+        order: index
       }));
       
-      console.log('🎯 PageEditor: Creating new blocks:', newBlocks);
+      console.log('🎯 PageEditor: Updating page with all blocks (including updated target)');
+      loggedOnUpdatePage({ blocks: reorderedBlocks });
       
-      // Insert the new blocks after the target block
-      updatedBlocks.splice(targetBlockIndex + 1, 0, ...newBlocks);
-      
-      // Save each new block to storage individually
-      newBlocks.forEach((block, index) => {
-        setTimeout(async () => {
-          console.log(`🎯 PageEditor: Saving block ${block.id} to storage`);
-          try {
-            await storageManager.saveBlock(block, page.id);
-            console.log(`✅ PageEditor: Block ${block.id} saved to storage successfully`);
-          } catch (error) {
-            console.warn(`⚠️ PageEditor: Could not save block ${block.id} to storage:`, error);
+      // Save the updated target block to storage
+      setTimeout(async () => {
+        console.log(`🎯 PageEditor: Saving updated target block ${targetBlockId} to storage`);
+        try {
+          const finalTargetBlock = reorderedBlocks.find(b => b.id === targetBlockId);
+          if (finalTargetBlock) {
+            await storageManager.saveBlock(finalTargetBlock, page.id);
+            console.log(`✅ PageEditor: Updated target block ${targetBlockId} saved to storage successfully`);
+          } else {
+            console.warn(`⚠️ PageEditor: Could not find target block ${targetBlockId} in reordered blocks`);
           }
-        }, 100 * (index + 1));
+        } catch (error) {
+          console.warn(`⚠️ PageEditor: Could not save updated target block ${targetBlockId} to storage:`, error);
+        }
+      }, 50); // Save target block first, before the new blocks
+    };
+    
+    // Start the block processing attempt
+    attemptBlockProcessing();
+  }, [page.blocks, page.id, storageManager, loggedOnUpdatePage]);
+
+  // Handle multiline results from trivial AI client (line-by-line block creation)
+  const handleTrivialMultilineResult = useCallback((resultText: string, targetBlockId: string) => {
+    console.log('🔥 === MULTILINE HANDLER CALLED ===');
+    console.log('⚡ PageEditor: Handling trivial multiline result for block:', targetBlockId);
+    console.log('⚡ PageEditor: Result text length:', resultText.length);
+    console.log('⚡ PageEditor: Result text preview:', resultText.substring(0, 200) + '...');
+    console.log('⚡ PageEditor: Current page.blocks count at handler start:', page.blocks.length);
+    console.log('⚡ PageEditor: Current page.blocks IDs:', page.blocks.map(b => b.id));
+    
+    // Split by newlines to create individual blocks
+    const lines = resultText.split('\n');
+    console.log('⚡ PageEditor: Split into', lines.length, 'lines');
+    console.log('⚡ PageEditor: Lines preview:', lines.slice(0, 5).map((line, i) => `${i}: "${line}"`));
+    
+    if (lines.length === 0) {
+      console.log('⚡ PageEditor: No lines found, falling back to simple content');
+      setPendingAIUpdate({ 
+        blockId: targetBlockId, 
+        content: resultText
       });
+      return;
     }
     
+    // OPTIMISTIC APPROACH: Create all blocks at once without waiting for target block
+    console.log('⚡ PageEditor: Using optimistic multiline block creation');
+    
+    // We know the target block should be created at the end of current blocks
+    // So we'll work with current page state and add the target block + new blocks
+    const currentBlocks = [...page.blocks];
+    const targetBlockIndex = currentBlocks.length; // Target block will be at the end
+    
+    console.log('⚡ PageEditor: Current blocks count:', currentBlocks.length);
+    console.log('⚡ PageEditor: Target block will be at index:', targetBlockIndex);
+    
+    // Generate standard block IDs using the same format as normal blocks
+    const generateStandardBlockId = (): string => {
+      // Generate a random 9-character alphanumeric string (same format as normal blocks)
+      const chars = 'abcdefghijklmnopqrstuvwxyz0123456789';
+      let result = '';
+      for (let i = 0; i < 9; i++) {
+        result += chars.charAt(Math.floor(Math.random() * chars.length));
+      }
+      return result;
+    };
+
+    // Create blocks directly in page state with standard IDs
+    const allBlocks = [...currentBlocks]; // Start with existing blocks
+    const createdBlockIds: string[] = []; // Track created block IDs
+    
+    lines.forEach((line, index) => {
+      const trimmedLine = line.trim();
+      
+      // Determine block type based on content
+      let blockType: Block['type'] = 'text';
+      let blockContent = line; // Keep original spacing for text blocks
+      
+      // Check for markdown patterns
+      if (trimmedLine.startsWith('## ')) {
+        blockType = 'heading2';
+        blockContent = trimmedLine.replace(/^##\s/, '');
+      } else if (trimmedLine.startsWith('### ')) {
+        blockType = 'heading3';
+        blockContent = trimmedLine.replace(/^###\s/, '');
+      } else if (trimmedLine.startsWith('# ')) {
+        blockType = 'heading1';
+        blockContent = trimmedLine.replace(/^#\s/, '');
+      } else if (trimmedLine.startsWith('- ') || trimmedLine.startsWith('* ') || trimmedLine.startsWith('+ ')) {
+        blockType = 'bullet';
+        blockContent = trimmedLine.replace(/^[-*+]\s/, '');
+      } else if (/^\d+\.\s/.test(trimmedLine)) {
+        blockType = 'numbered';
+        blockContent = trimmedLine.replace(/^\d+\.\s/, '');
+      } else if (trimmedLine.startsWith('> ')) {
+        blockType = 'quote';
+        blockContent = trimmedLine.replace(/^>\s/, '');
+      } else if (trimmedLine === '---' || trimmedLine === '---') {
+        blockType = 'divider';
+        blockContent = '';
+      } else {
+        // Regular text block - preserve original spacing
+        blockType = 'text';
+        blockContent = line; // Keep original line with spacing
+      }
+      
+      // For the first line, use the target block ID (already created by onAddBlock)
+      // For subsequent lines, generate standard block IDs
+      let blockId: string;
+      if (index === 0) {
+        blockId = targetBlockId;
+      } else {
+        // Generate a standard block ID (same format as normal blocks)
+        blockId = generateStandardBlockId();
+      }
+      
+      createdBlockIds.push(blockId);
+      
+      // Create the block object
+      const block = {
+        id: blockId,
+        type: blockType,
+        content: blockContent,
+        order: targetBlockIndex + index,
+        indentLevel: 0,
+        properties: {},
+        pageId: page.id
+      };
+      
+      allBlocks.push(block);
+      
+      console.log(`⚡ PageEditor: Created block ${index + 1}/${lines.length}:`, {
+        id: blockId,
+        type: blockType,
+        content: blockContent.substring(0, 30) + (blockContent.length > 30 ? '...' : ''),
+        isTarget: index === 0,
+        usedStandardId: index > 0
+      });
+    });
+    
     // Reorder all blocks to have clean sequential orders
-    const reorderedBlocks = updatedBlocks.map((block, index) => ({
+    const reorderedBlocks = allBlocks.map((block, index) => ({
       ...block,
       order: index
     }));
     
-    console.log('🎯 PageEditor: Updating page with all blocks (including updated target)');
-    loggedOnUpdatePage({ blocks: reorderedBlocks });
+    console.log('⚡ PageEditor: Optimistically updating page with all multiline blocks');
+    console.log('⚡ PageEditor: Total blocks:', reorderedBlocks.length);
+    console.log('⚡ PageEditor: New blocks added:', lines.length);
     
-    // Save the updated target block to storage
-    setTimeout(async () => {
-      console.log(`🎯 PageEditor: Saving updated target block ${targetBlockId} to storage`);
-      try {
-        const finalTargetBlock = reorderedBlocks.find(b => b.id === targetBlockId);
-        if (finalTargetBlock) {
-          await storageManager.saveBlock(finalTargetBlock, page.id);
-          console.log(`✅ PageEditor: Updated target block ${targetBlockId} saved to storage successfully`);
-        } else {
-          console.warn(`⚠️ PageEditor: Could not find target block ${targetBlockId} in reordered blocks`);
+    // Update page state with all blocks at once
+    console.log('🔥 === ABOUT TO UPDATE PAGE STATE ===');
+    console.log('⚡ PageEditor: Calling loggedOnUpdatePage with', reorderedBlocks.length, 'blocks');
+    loggedOnUpdatePage({ blocks: reorderedBlocks });
+    console.log('🔥 === PAGE STATE UPDATE COMPLETED ===');
+    
+    // Save all new blocks to storage directly (excluding the target block which was already created)
+    const blocksToSave = reorderedBlocks.slice(targetBlockIndex + 1); // Skip the target block
+    console.log('⚡ PageEditor: Saving', blocksToSave.length, 'new multiline blocks to storage');
+    
+    blocksToSave.forEach((block, index) => {
+      setTimeout(async () => {
+        console.log(`⚡ PageEditor: Saving multiline block ${block.id} to storage (${index + 1}/${blocksToSave.length})`);
+        try {
+          await storageManager.saveBlock(block, page.id);
+          console.log(`✅ PageEditor: Multiline block ${block.id} saved to storage successfully`);
+        } catch (error) {
+          console.warn(`⚠️ PageEditor: Could not save multiline block ${block.id} to storage:`, error);
         }
-      } catch (error) {
-        console.warn(`⚠️ PageEditor: Could not save updated target block ${targetBlockId} to storage:`, error);
+      }, 100 * (index + 1)); // Staggered saves with delays
+    });
+    
+  }, [page.blocks, page.id, storageManager, loggedOnUpdatePage, setPendingAIUpdate]);
+
+  // Handle markdown results from trivial AI client
+  const handleTrivialMarkdownResult = useCallback((markdownText: string, targetBlockId: string) => {
+    console.log('⚡ PageEditor: Handling trivial markdown result for block:', targetBlockId);
+    console.log('⚡ PageEditor: Trivial markdown text:', markdownText);
+    
+    // Use the same parsing logic as regular markdown paste
+    const parsedBlocks = parseMarkdownContent(markdownText);
+    console.log('⚡ PageEditor: Parsed trivial blocks:', parsedBlocks);
+    
+    if (parsedBlocks.length === 0) {
+      console.log('⚡ PageEditor: No trivial blocks parsed, falling back to simple content');
+      setPendingAIUpdate({ 
+        blockId: targetBlockId, 
+        content: markdownText
+      });
+      return;
+    }
+    
+    // Helper function to attempt block processing with retries
+    const attemptBlockProcessing = (retryCount = 0) => {
+      const maxRetries = 10; // Maximum 10 retries (1 second total)
+      
+      // Verify the target block exists
+      const targetBlockExists = page.blocks.some(block => block.id === targetBlockId);
+      
+      if (!targetBlockExists) {
+        if (retryCount < maxRetries) {
+          console.log(`⚡ PageEditor: Target block ${targetBlockId} not found, retrying in 100ms (attempt ${retryCount + 1}/${maxRetries})`);
+          setTimeout(() => attemptBlockProcessing(retryCount + 1), 100);
+          return;
+        } else {
+          console.error('⚡ PageEditor: Target block does not exist after max retries, falling back to pendingAIUpdate:', targetBlockId);
+          // Fallback: use the pending update mechanism instead
+          setPendingAIUpdate({ 
+            blockId: targetBlockId, 
+            content: markdownText
+          });
+          return;
+        }
       }
-    }, 50); // Save target block first, before the new blocks
-  };
+      
+      console.log(`⚡ PageEditor: Target block ${targetBlockId} found after ${retryCount} retries, proceeding with markdown processing`);
+      
+      const targetBlockIndex = page.blocks.findIndex(block => block.id === targetBlockId);
+      if (targetBlockIndex === -1) {
+        console.error('⚡ PageEditor: Could not find target block index for trivial result after retries');
+        setPendingAIUpdate({ 
+          blockId: targetBlockId, 
+          content: markdownText
+        });
+        return;
+      }
+
+      // Update the target block with the first parsed block
+      const firstBlock = parsedBlocks[0];
+      console.log('⚡ PageEditor: Updating target block with trivial result:', firstBlock);
+      
+      // Start with current page blocks
+      let updatedBlocks = [...page.blocks];
+      
+      // Update the target block with the first parsed block
+      const updatedTargetBlock = {
+        ...updatedBlocks[targetBlockIndex],
+        type: firstBlock.type,
+        content: firstBlock.content,
+        indentLevel: firstBlock.indentLevel || 0
+      };
+      updatedBlocks[targetBlockIndex] = updatedTargetBlock;
+      
+      // For multiple blocks, create additional blocks using onAddBlock
+      if (parsedBlocks.length > 1) {
+        // Create new blocks using onAddBlock for proper ID generation
+        const newBlockIds: string[] = [];
+        let lastBlockId = targetBlockId;
+        
+        parsedBlocks.slice(1).forEach((blockData, index) => {
+          const newBlockId = onAddBlock(lastBlockId, blockData.type);
+          newBlockIds.push(newBlockId);
+          lastBlockId = newBlockId; // Update for next iteration
+          
+          console.log(`⚡ PageEditor: Created trivial block ${index + 1}/${parsedBlocks.length - 1} with ID: ${newBlockId}`);
+        });
+        
+        console.log('⚡ PageEditor: Created trivial block IDs:', newBlockIds);
+        
+        // Update content for all created blocks (they already exist from onAddBlock calls)
+        newBlockIds.forEach((blockId, index) => {
+          const blockData = parsedBlocks[index + 1]; // Skip first block (already handled)
+          setTimeout(() => {
+            console.log(`⚡ PageEditor: Updating trivial block ${blockId} content (${index + 1}/${newBlockIds.length})`);
+            onUpdateBlock(blockId, {
+              type: blockData.type,
+              content: blockData.content,
+              indentLevel: blockData.indentLevel || 0
+            });
+            console.log(`✅ PageEditor: Trivial block ${blockId} content updated successfully`);
+          }, 50 * (index + 1)); // Staggered updates
+        });
+      }
+      
+      // Update the target block with the first parsed block content
+      console.log('⚡ PageEditor: Updating target block content');
+      onUpdateBlock(targetBlockId, {
+        type: firstBlock.type,
+        content: firstBlock.content,
+        indentLevel: firstBlock.indentLevel || 0
+      });
+    };
+    
+    // Start the block processing attempt
+    attemptBlockProcessing();
+  }, [page.blocks, page.id, storageManager, loggedOnUpdatePage, onAddBlock, onUpdateBlock]);
 
   // Generate breadcrumbs from workspace and page data
   const breadcrumbs = [
@@ -2726,6 +3494,8 @@ export const PageEditor = ({
                     isFocused={focusedBlockId === block.id}
                     onMoveUp={() => handleMoveBlock(block.id, 'up')}
                     onMoveDown={() => handleMoveBlock(block.id, 'down')}
+                    onFocusNextBlock={handleFocusNextBlock}
+                    onFocusPreviousBlock={handleFocusPreviousBlock}
                     onSelect={handleBlockSelect(block.id)}
                     onMouseDown={handleBlockMouseDown(block.id)}
                     onMouseEnter={handleBlockMouseEnterDuringGlobalDrag(block.id)}

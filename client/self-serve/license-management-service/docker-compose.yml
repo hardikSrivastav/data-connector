@@ -1,0 +1,101 @@
+services:
+  # PostgreSQL Database
+  license-db:
+    image: postgres:15
+    container_name: license-db
+    environment:
+      POSTGRES_DB: license_db
+      POSTGRES_USER: license_user
+      POSTGRES_PASSWORD: license_pass
+    ports:
+      - "5434:5432"
+    volumes:
+      - license_db_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U license_user -d license_db"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Redis for session management
+  license-redis:
+    image: redis:7-alpine
+    container_name: license-redis
+    ports:
+      - "6381:6379"
+    volumes:
+      - license_redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Backend API Service
+  license-api:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: license-api
+    environment:
+      DATABASE_URL: postgresql://license_user:license_pass@license-db:5432/license_db
+      REDIS_URL: redis://license-redis:6379
+      JWT_SECRET: your-super-secret-jwt-key-change-in-production
+      PHONE_HOME_URL: http://localhost:8020
+    ports:
+      - "8020:8000"
+    volumes:
+      - ./backend/app:/app/app
+    depends_on:
+      license-db:
+        condition: service_healthy
+      license-redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    restart: unless-stopped
+
+  # Frontend Portal
+  license-frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: license-frontend
+    environment:
+      VITE_API_URL: http://localhost:8020
+    ports:
+      - "3020:5173"
+    volumes:
+      - ./frontend/src:/app/src
+    depends_on:
+      - license-api
+    restart: unless-stopped
+
+  # License Agent (for testing)
+  license-agent:
+    build:
+      context: ./agent
+      dockerfile: Dockerfile
+    container_name: license-agent-demo
+    environment:
+      LICENSE_FILE: /app/demo-license.jwt
+      PHONE_HOME_URL: http://license-api:8000
+      TARGET_APP_PORT: 8080
+    ports:
+      - "9020:9020"
+    volumes:
+      - ./agent/demo-license.jwt:/app/demo-license.jwt:ro
+    depends_on:
+      - license-api
+    restart: unless-stopped
+
+volumes:
+  license_db_data:
+  license_redis_data:
+
+networks:
+  default:
+    name: license-management-network

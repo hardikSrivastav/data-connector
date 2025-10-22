@@ -1,0 +1,134 @@
+# Ceneca Configuration
+# Copy this file to config.yaml and customize for your environment
+
+# Default database to use for queries if not specified
+default_database: mongodb
+
+# MongoDB Configuration
+# You can define multiple MongoDB instances with different names
+mongodb:
+  # Main MongoDB instance
+  main:
+    uri: "mongodb://your-host:27017/your_database"
+    database: "your_database"
+    pool_size: 10
+    connect_timeout_ms: 5000
+  
+  # Additional MongoDB instances (optional)
+  # Uncomment and configure as needed:
+  #
+  # secondary:
+  #   uri: "mongodb://your-host:27017/secondary_database"
+  #   database: "secondary_database"
+  #   pool_size: 10
+  #   connect_timeout_ms: 5000
+
+# PostgreSQL Configuration (optional)
+# Uncomment if you want to connect to PostgreSQL:
+#
+# postgres:
+#   main:
+#     host: your-postgres-host.company.com
+#     port: 5432
+#     database: your_database_name
+#     user: your_user
+#     password: your_secure_password
+#     ssl_mode: require  # Use 'require' for production
+
+# MySQL Configuration (optional)
+# Uncomment if you want to connect to MySQL:
+#
+# mysql:
+#   main:
+#     host: your-mysql-host.company.com
+#     port: 3306
+#     database: your_database_name
+#     user: your_user
+#     password: your_secure_password
+
+# LLM Configuration
+llm:
+  provider: "openai"      # Options: openai, anthropic, bedrock
+  model: "gpt-4"          # Model to use
+  api_key: "your_api_key" # Your LLM API key
+  max_tokens: 2000        # Maximum tokens per request
+  temperature: 0.7        # Sampling temperature (0.0-1.0)
+
+# AWS Bedrock Configuration (optional)
+# Uncomment if using AWS Bedrock for LLM:
+#
+# aws:
+#   access_key_id: your_aws_access_key
+#   secret_access_key: your_aws_secret_key
+#   region: us-east-1
+#
+# bedrock:
+#   enabled: true
+#   model_id: anthropic.claude-3-sonnet-20240229-v1:0
+#   runtime_region: us-east-1
+#   max_tokens: 4000
+#   temperature: 0.1
+
+# Anthropic Configuration (optional)
+# Uncomment if using Anthropic directly:
+#
+# anthropic:
+#   api_key: your_anthropic_api_key
+#   model: claude-3-opus-20240229
+#   max_tokens: 4000
+
+# Logging Configuration
+logging:
+  level: "info"           # Options: debug, info, warning, error
+  format: "json"          # Options: json, text
+  destination: "file"     # Options: file, stdout
+  file_path: "/var/log/ceneca-agent.log"
+
+# Web Interface Configuration
+web:
+  enabled: true
+  port: 8787
+  host: "0.0.0.0"
+  cors:
+    enabled: true
+    allowed_origins: ["*"]  # Restrict this in production
+
+# Security Settings
+security:
+  request_timeout_seconds: 60
+  max_request_size_mb: 10
+
+# Performance Settings (optional)
+performance:
+  max_analysis_steps: 10
+  max_rows_direct: 100000
+  default_sample_size: 1000
+  max_query_timeout: 60
+
+# Redis Cache (optional - improves performance)
+# Uncomment if you want to use Redis for caching:
+#
+# redis:
+#   host: your-redis-host.company.com
+#   port: 6379
+#   password: your_redis_password  # Optional
+#   db: 0
+#   enabled: true
+#   ttl: 3600  # Cache TTL in seconds
+
+# Vector Database (optional - for semantic search)
+# Uncomment if you want to use Qdrant:
+#
+# qdrant:
+#   host: your-qdrant-host.company.com
+#   port: 6333
+#   grpc_port: 6334
+#   api_key: your_qdrant_api_key  # Optional
+#   collection: corporate_knowledge
+#   prefer_grpc: false
+
+# Enterprise Settings
+enterprise:
+  deployment_name: "Ceneca at YourCompany"
+  contact_email: admin@yourcompany.com
+  support_url: https://support.yourcompany.com/ceneca

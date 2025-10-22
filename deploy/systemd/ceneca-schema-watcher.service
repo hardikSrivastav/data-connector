@@ -1,0 +1,31 @@
+[Unit]
+Description=Ceneca Schema Watcher
+Documentation=https://github.com/your-org/data-connector
+After=network.target postgresql.service mongodb.service
+Wants=postgresql.service mongodb.service
+
+[Service]
+Type=simple
+User=ceneca
+Group=ceneca
+WorkingDirectory=/opt/ceneca/data-connector/server
+Environment=PYTHONPATH=/opt/ceneca/data-connector/server
+Environment=SCHEMA_WATCHER_INTERVAL=1800
+Environment=SCHEMA_REGISTRY_PATH=/opt/ceneca/data-connector/server/agent/db/registry/schema_registry.db
+ExecStart=/opt/ceneca/venv/bin/python -m agent.db.registry.schema_watcher --interval 1800
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=ceneca-schema-watcher
+
+# Security settings
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/ceneca/data-connector/server/agent/db/registry
+ReadWritePaths=/home/ceneca/.data-connector
+
+[Install]
+WantedBy=multi-user.target

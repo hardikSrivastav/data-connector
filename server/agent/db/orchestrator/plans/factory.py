@@ -162,6 +162,71 @@ def create_operation(
                     depends_on=depends_on,
                     metadata=metadata
                 )
+            elif db_type == "shiprocket":
+                # ShipRocket operation parameters
+                cross_db_logger.info(f"🔨 Creating ShipRocket operation with endpoint: {params.get('endpoint')}")
+                return operation_class(
+                    id=id,
+                    source_id=source_id,
+                    endpoint=params.get("endpoint", "orders"),
+                    query_params=params.get("query_params", {}),
+                    api_method=params.get("api_method", "GET"),
+                    limit=params.get("limit", 100),
+                    depends_on=depends_on,
+                    metadata=metadata
+                )
+            elif db_type == "payu":
+                # PayU operation parameters
+                cross_db_logger.info(f"🔨 Creating PayU operation with endpoint: {params.get('endpoint')}")
+                return operation_class(
+                    id=id,
+                    source_id=source_id,
+                    endpoint=params.get("endpoint", "transactions"),
+                    query_params=params.get("query_params", {}),
+                    api_method=params.get("api_method", "GET"),
+                    limit=params.get("limit", 100),
+                    depends_on=depends_on,
+                    metadata=metadata
+                )
+            elif db_type == "easebuzz":
+                # EaseBuzz operation parameters
+                cross_db_logger.info(f"🔨 Creating EaseBuzz operation with endpoint: {params.get('endpoint')}")
+                return operation_class(
+                    id=id,
+                    source_id=source_id,
+                    endpoint=params.get("endpoint", "transactions"),
+                    query_params=params.get("query_params", {}),
+                    api_method=params.get("api_method", "GET"),
+                    limit=params.get("limit", 100),
+                    depends_on=depends_on,
+                    metadata=metadata
+                )
+            elif db_type == "uniware":
+                # Uniware operation parameters
+                cross_db_logger.info(f"🔨 Creating Uniware operation with endpoint: {params.get('endpoint')}")
+                return operation_class(
+                    id=id,
+                    source_id=source_id,
+                    endpoint=params.get("endpoint", "orders"),
+                    query_params=params.get("query_params", {}),
+                    api_method=params.get("api_method", "GET"),
+                    limit=params.get("limit", 100),
+                    depends_on=depends_on,
+                    metadata=metadata
+                )
+            elif db_type == "ga4":
+                # GA4 operation parameters
+                cross_db_logger.info(f"🔨 Creating GA4 operation with endpoint: {params.get('endpoint')}")
+                return operation_class(
+                    id=id,
+                    source_id=source_id,
+                    endpoint=params.get("endpoint", "reports"),
+                    query_params=params.get("query_params", {}),
+                    api_method=params.get("api_method", "GET"),
+                    limit=params.get("limit", 100),
+                    depends_on=depends_on,
+                    metadata=metadata
+                )
         except Exception as e:
             cross_db_logger.error(f"🔨 Error creating {db_type} operation: {str(e)}")
             cross_db_logger.error(f"🔨 Exception type: {type(e)}")
@@ -249,6 +314,16 @@ def create_plan_from_dict(plan_dict: Dict[str, Any]) -> QueryPlan:
                 db_type = "slack"
             elif "Shopify" in op_type:
                 db_type = "shopify"
+            elif "Shiprocket" in op_type:
+                db_type = "shiprocket"
+            elif "PayU" in op_type:
+                db_type = "payu"
+            elif "EaseBuzz" in op_type or "Easebuzz" in op_type:
+                db_type = "easebuzz"
+            elif "Uniware" in op_type:
+                db_type = "uniware"
+            elif "GA4" in op_type:
+                db_type = "ga4"
         
         # Get params based on the operation type
         params = {}
@@ -291,6 +366,23 @@ def create_plan_from_dict(plan_dict: Dict[str, Any]) -> QueryPlan:
             operation_params = op_dict.get("params", {})
             params = {
                 "endpoint": operation_params.get("endpoint", op_dict.get("endpoint", "orders")),
+                "query_params": operation_params.get("query_params", op_dict.get("query_params", {})),
+                "method": operation_params.get("method", op_dict.get("api_method", "GET")),
+                "limit": operation_params.get("limit", op_dict.get("limit", 100))
+            }
+        elif db_type in ["shiprocket", "payu", "easebuzz", "uniware", "ga4"]:
+            # DTC adapters - all use similar API endpoint structure
+            operation_params = op_dict.get("params", {})
+            default_endpoint = {
+                "shiprocket": "orders",
+                "payu": "transactions", 
+                "easebuzz": "transactions",
+                "uniware": "orders",
+                "ga4": "reports"
+            }.get(db_type, "orders")
+            
+            params = {
+                "endpoint": operation_params.get("endpoint", op_dict.get("endpoint", default_endpoint)),
                 "query_params": operation_params.get("query_params", op_dict.get("query_params", {})),
                 "method": operation_params.get("method", op_dict.get("api_method", "GET")),
                 "limit": operation_params.get("limit", op_dict.get("limit", 100))

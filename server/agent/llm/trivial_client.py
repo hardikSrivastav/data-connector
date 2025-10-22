@@ -29,7 +29,7 @@ logger = logging.getLogger(__name__)
 TRIVIAL_CONFIG = {
     "max_tokens": 500,
     "temperature": 0.3,
-    "prompt": """You are an intelligent text assistant. Analyze the user's request and improve their text accordingly. You can:
+    "prompt": """You are an intelligent text assistant. Respond to the user's request directly and helpfully. You can:
 
 - Fix grammar, spelling, and punctuation errors
 - Improve clarity, readability, and flow
@@ -40,16 +40,43 @@ TRIVIAL_CONFIG = {
 - Add examples and clarifications
 - Generate new content based on the request
 
-Always format your response with proper markdown:
+Always format your response with proper markdown for optimal readability:
+
+**Text Formatting:**
 - Use **bold** for emphasis and key points
 - Use *italic* for subtle emphasis or technical terms
 - Use `code` for technical terms, commands, or specific references
-- Use ## headings for major sections
-- Use ### subheadings for subsections
-- Use - bullet points for lists and examples
-- Use > blockquotes for important notes or quotes
 
-Preserve the original meaning and intent while making the requested improvements. Be concise but thorough."""
+**Structure and Organization:**
+- Use ## headings for major sections when covering multiple topics
+- Use ### subheadings for subsections within a topic
+- Use - bullet points for lists, examples, and key items
+- Use 1. numbered lists for steps or ordered information
+- Use > blockquotes for important notes, quotes, or callouts
+
+**Special Content:**
+- Use ```code blocks``` for code examples or formatted text
+- Use --- horizontal dividers to separate distinct sections
+
+**Examples of Good Formatting:**
+
+For a request like "explain machine learning":
+## Machine Learning Overview
+Machine learning is a **subset of artificial intelligence** that enables systems to learn from data.
+
+### Key Types
+- **Supervised Learning**: Uses labeled data
+- **Unsupervised Learning**: Finds patterns in unlabeled data  
+- **Reinforcement Learning**: Learns through rewards
+
+### Common Applications
+1. Image recognition
+2. Natural language processing
+3. Recommendation systems
+
+For content generation, structure your response logically with proper headings and sections. For text editing, maintain the original structure while improving clarity and formatting.
+
+Be direct and concise while providing exactly what the user asks for."""
 }
 
 # Cache for frequently requested operations
@@ -178,8 +205,16 @@ class TrivialLLMClient:
             if block_type != "text":
                 context_note = f"\n\nNote: This is a {block_type} block."
         
-        # Build the final prompt with the user's request and text
-        final_prompt = f"{base_prompt}{context_note}\n\nUser Request: {operation}\n\nText to improve: {text}"
+        # Determine if this is content generation vs text editing
+        is_content_generation = not text.strip()
+        
+        if is_content_generation:
+            # For content generation, just respond to the user's request directly
+            final_prompt = f"{base_prompt}{context_note}\n\nUser Request: {operation}\n\nProvide a direct response to the user's request using proper markdown formatting. Do not include meta-commentary or structure analysis."
+        else:
+            # For text editing, frame it as improvement
+            final_prompt = f"{base_prompt}{context_note}\n\nUser Request: {operation}\n\nText to improve: {text}"
+        
         logger.info(f"🔨 TrivialClient: Final prompt: '{final_prompt}'")
         return final_prompt
     
@@ -556,20 +591,9 @@ class TrivialLLMClient:
     
     def get_supported_operations(self) -> List[str]:
         """Get list of supported trivial operations."""
-        return [
-            "fix_grammar",
-            "improve_clarity", 
-            "make_concise",
-            "fix_spelling",
-            "improve_tone",
-            "expand_text",
-            "simplify_language",
-            "add_examples",
-            "summarize_content",
-            "generate_title",
-            "create_outline",
-            "general_improvement"
-        ]
+        # Return indicator that all natural language requests are supported
+        # This allows the frontend to pass through any user request without categorization
+        return ["natural_language_request"]
     
     def is_enabled(self) -> bool:
         """Check if the trivial client is enabled and ready."""
@@ -597,7 +621,9 @@ class TrivialLLMClient:
                 "provider": self.provider,
                 "model": self.model,
                 "test_successful": True,
-                "cache_size": len(self._cache)
+                "cache_size": len(self._cache),
+                "supports_natural_language": True,
+                "supported_operations": self.get_supported_operations()
             }
             
         except Exception as e:

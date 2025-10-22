@@ -1,0 +1,33 @@
+# Ceneca Authentication Configuration - TESTING MODE
+# This configuration disables SSO for easier local testing
+# ⚠️  WARNING: DO NOT USE IN PRODUCTION ⚠️
+
+# SSO Configuration
+sso:
+  # Set to false to disable SSO authentication
+  # This allows testing Ceneca without configuring Okta/SSO
+  enabled: false
+  default_protocol: oidc
+
+  # OIDC/OAuth2 Configuration (not used when disabled, but required format)
+  oidc:
+    provider: "Testing"
+    client_id: "not-used-in-testing"
+    client_secret: "not-used-in-testing"
+    issuer: "https://not-used.example.com"
+    discovery_url: "https://not-used.example.com/.well-known/openid_configuration"
+    redirect_uri: "http://localhost/auth/callback"
+    scopes:
+      - "openid"
+      - "email"
+      - "profile"
+    claims_mapping:
+      user_id: "sub"
+      email: "email"
+      name: "name"
+      groups: "groups"
+
+# Role Mappings (not used in testing mode)
+role_mappings:
+  "test-users": "user"
+
