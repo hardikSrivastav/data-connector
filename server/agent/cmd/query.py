@@ -802,6 +802,7 @@ def query(
     question: str = typer.Argument(..., help="Natural language question to translate to a database query"),
     analyze: bool = typer.Option(False, "--analyze", "-a", help="Analyze query results"),
     orchestrate: bool = typer.Option(False, "--orchestrate", "-o", help="Use multi-step orchestrated analysis"),
+    simple: bool = typer.Option(False, "--simple", "-s", help="Use simple registry query engine (no planning overhead)"),
     db_uri: Optional[str] = typer.Option(None, "--uri", "-u", help="Database connection URI (overrides settings)"),
     db_type: Optional[str] = typer.Option(None, "--type", "-t", help="Database type ('postgres', 'mongodb', 'shiprocket', 'ga4', etc.)")
 ):
@@ -811,6 +812,101 @@ def query(
     async def run():
         try:
             settings = Settings()
+            
+            # Use simple query engine if requested
+            if simple:
+                console.print("[bold cyan]Using Simple Registry Query Engine[/bold cyan]")
+                console.print("(Direct adapter execution without planning overhead)")
+                console.print()
+                
+                from agent.db.simple_query_engine import SimpleRegistryQueryEngine
+                
+                # Create simple query engine
+                engine = SimpleRegistryQueryEngine()
+                
+                # Parse db_types if provided
+                db_types_list = None
+                if db_type:
+                    db_types_list = [db_type]
+                    console.print(f"Targeting database type: [bold]{db_type}[/bold]")
+                else:
+                    console.print("Classifying databases...")
+                
+                # Execute query
+                with Progress(
+                    SpinnerColumn(),
+                    TextColumn("[progress.description]{task.description}"),
+                    console=console,
+                ) as progress:
+                    task = progress.add_task(description="Executing query...", total=None)
+                    result = await engine.execute(
+                        question=question,
+                        analyze=analyze,
+                        db_types=db_types_list
+                    )
+                    progress.update(task, completed=True)
+                
+                # Display results
+                console.print()
+                if result.get('success'):
+                    console.print(Panel(f"[bold green]✅ Query Successful[/bold green]", style="green"))
+                    
+                    # Show databases queried
+                    databases = result.get('databases_queried', [])
+                    console.print(f"\n[bold]Databases Queried:[/bold] {', '.join(databases) if databases else 'None'}")
+                    
+                    # Show execution time
+                    exec_time = result.get('execution_time', 0)
+                    console.print(f"[bold]Execution Time:[/bold] {exec_time:.2f}s")
+                    
+                    # Show results
+                    results_data = result.get('results', [])
+                    console.print(f"\n[bold]Results:[/bold] {len(results_data)} rows")
+                    
+                    if results_data:
+                        # Create table with results
+                        if len(results_data) > 0:
+                            # Get all unique keys from results
+                            all_keys = set()
+                            for row in results_data[:10]:  # Sample first 10 for keys
+                                if isinstance(row, dict):
+                                    all_keys.update(row.keys())
+                            
+                            # Create table
+                            table = Table(show_header=True, header_style="bold magenta")
+                            for key in sorted(all_keys):
+                                table.add_column(key)
+                            
+                            # Add rows (limit to 20 for display)
+                            for row in results_data[:20]:
+                                if isinstance(row, dict):
+                                    table.add_row(*[str(row.get(k, '')) for k in sorted(all_keys)])
+                            
+                            console.print(table)
+                            
+                            if len(results_data) > 20:
+                                console.print(f"\n[dim]... and {len(results_data) - 20} more rows[/dim]")
+                    
+                    # Show analysis if requested
+                    if analyze and result.get('analysis'):
+                        console.print("\n[bold]Analysis:[/bold]")
+                        console.print(Panel(result['analysis'], style="cyan"))
+                    
+                    # Show individual source results
+                    individual = result.get('individual_results', {})
+                    if individual:
+                        console.print("\n[bold]Per-Database Results:[/bold]")
+                        for source_id, source_result in individual.items():
+                            success_icon = "✅" if source_result.get('success') else "❌"
+                            row_count = source_result.get('row_count', 0)
+                            exec_time = source_result.get('execution_time', 0)
+                            console.print(f"  {success_icon} {source_id}: {row_count} rows in {exec_time:.2f}s")
+                else:
+                    console.print(Panel(f"[bold red]❌ Query Failed[/bold red]", style="red"))
+                    error = result.get('error', 'Unknown error')
+                    console.print(f"[red]Error:[/red] {error}")
+                
+                return
             
             # If db_type is specified, update the Settings.DB_TYPE
             if db_type:

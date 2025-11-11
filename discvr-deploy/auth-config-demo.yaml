@@ -1,0 +1,24 @@
+# Demo Authentication Configuration
+# Minimal auth config for demo deployment - no SSO required
+
+# Authentication settings
+auth:
+  enabled: false  # Disable auth for demo
+  provider: "none"  # No auth provider
+  
+# Demo mode settings
+demo:
+  enabled: true
+  default_user: "demo_user"
+  
+# Security settings (relaxed for demo)
+security:
+  require_https: false
+  session_timeout_hours: 24
+  
+# CORS settings for demo
+cors:
+  enabled: true
+  allowed_origins: ["*"]
+  allowed_methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"]
+  allowed_headers: ["*"]

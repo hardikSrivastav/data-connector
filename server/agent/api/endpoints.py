@@ -142,6 +142,11 @@ class CrossDatabaseQueryRequest(BaseModel):
     save_session: bool = True
     dry_run: bool = False
 
+class SimpleQueryRequest(BaseModel):
+    question: str
+    analyze: bool = False
+    db_types: Optional[List[str]] = None
+
 class ClassifyRequest(BaseModel):
     question: str
     threshold: float = 0.3
@@ -526,6 +531,84 @@ async def cross_database_query(request: CrossDatabaseQueryRequest, http_request:
         log_request_response(cross_db_logger, "/cross-database-query", request_data, {}, duration, error_msg)
         
         logger.error(f"❌ Error in cross-database query: {str(e)}")
+        logger.error(f"❌ Traceback: {traceback.format_exc()}")
+        raise HTTPException(status_code=500, detail=error_msg)
+
+@router.post("/simple-query")
+async def simple_query(request: SimpleQueryRequest, http_request: Request):
+    """
+    Execute query using simplified registry-based engine (no planning overhead)
+    
+    This endpoint bypasses the plan-execution mechanism and directly executes
+    queries through adapters. Suitable for independent multi-database queries
+    without complex cross-DB joins or dependencies.
+    
+    Args:
+        request: SimpleQueryRequest with question, analyze flag, and optional db_types
+        http_request: HTTP request for user authentication
+        
+    Returns:
+        Dictionary with query results from all databases
+    """
+    start_time = time.time()
+    
+    # Get current user for audit
+    current_user = await get_current_user_from_request(http_request)
+    
+    # Create logger for simple query endpoint
+    simple_logger = create_endpoint_logger("simple_query")
+    
+    request_data = {
+        "endpoint": "/simple-query",
+        "user": current_user,
+        "question": request.question,
+        "analyze": request.analyze,
+        "db_types": request.db_types
+    }
+    
+    simple_logger.info(f"⚡ Simple query started for user: {current_user}")
+    simple_logger.info(f"Request details: {json.dumps(request_data, indent=2)}")
+    logger.info(f"⚡ API ENDPOINT: /simple-query - Processing simplified query for user: {current_user}")
+    logger.info(f"📥 Request: question='{request.question}', db_types={request.db_types}")
+    
+    try:
+        # Import and create simple query engine
+        from ..db.simple_query_engine import SimpleRegistryQueryEngine
+        
+        simple_logger.info("Creating SimpleRegistryQueryEngine instance")
+        engine = SimpleRegistryQueryEngine()
+        
+        # Execute query
+        simple_logger.info(f"Executing query: {request.question}")
+        result = await engine.execute(
+            question=request.question,
+            analyze=request.analyze,
+            db_types=request.db_types
+        )
+        
+        simple_logger.info(f"Query execution completed: success={result.get('success')}, rows={len(result.get('results', []))}")
+        
+        duration = time.time() - start_time
+        log_request_response(simple_logger, "/simple-query", request_data, {
+            "success": result.get("success"),
+            "databases_queried": result.get("databases_queried", []),
+            "result_count": len(result.get("results", [])),
+            "execution_time": result.get("execution_time")
+        }, duration)
+        
+        simple_logger.info(f"Simple query completed in {duration:.2f}s")
+        logger.info(f"✅ Simple query processed: success={result.get('success')}")
+        
+        return result
+        
+    except Exception as e:
+        duration = time.time() - start_time
+        error_msg = f"Simple query failed: {str(e)}"
+        simple_logger.error(f"Simple query failed after {duration:.2f}s: {error_msg}")
+        simple_logger.error(f"Exception details: {traceback.format_exc()}")
+        log_request_response(simple_logger, "/simple-query", request_data, {}, duration, error_msg)
+        
+        logger.error(f"❌ Error in simple query: {str(e)}")
         logger.error(f"❌ Traceback: {traceback.format_exc()}")
         raise HTTPException(status_code=500, detail=error_msg)
 

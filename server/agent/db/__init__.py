@@ -10,6 +10,7 @@ from .execute import test_conn
 from .db_orchestrator import Orchestrator
 from . import adapters
 from .introspect import get_schema_metadata
+from .simple_query_engine import SimpleRegistryQueryEngine
 
 # Re-export core classes
 __all__ = [
@@ -17,6 +18,7 @@ __all__ = [
     'Orchestrator',
     'adapters',
     'get_schema_metadata',
+    'SimpleRegistryQueryEngine',
 ]
 
 # Import orchestrator package if needed - as a separate namespace

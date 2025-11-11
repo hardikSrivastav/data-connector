@@ -1,0 +1,91 @@
+version: '3.8'
+
+services:
+  # PostgreSQL Database - For web application storage (pages, blocks, workspaces)
+  postgres-storage:
+    image: postgres:15
+    container_name: stock-demo-postgres
+    ports:
+      - "5432:5432"  # Standard PostgreSQL port
+    environment:
+      - POSTGRES_DB=notion_clone
+      - POSTGRES_USER=notion_user
+      - POSTGRES_PASSWORD=notion_password
+    volumes:
+      - postgres-storage-data:/var/lib/postgresql/data
+    networks:
+      - stock-demo-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U notion_user -d notion_clone"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # MongoDB Database - For agent data analysis
+  mongodb-stock-demo:
+    image: mongo:7
+    container_name: stock-demo-mongodb
+    ports:
+      - "27017:27017"  # Standard MongoDB port
+    environment:
+      - MONGO_INITDB_DATABASE=financial_data
+    volumes:
+      - stock-demo-data:/data/db
+    networks:
+      - stock-demo-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Ceneca Agent - Uses pre-built image
+  ceneca-agent:
+    image: hardiksriv/agent:latest
+    container_name: stock-demo-ceneca
+    ports:
+      - "8787:8787"  # Agent API port
+    volumes:
+      # Mount the config.yaml file into the container
+      - ./config.yaml:/app/config/config.yaml:ro
+      # Mount auth config (no SSO for demo)
+      - ./auth-config.yaml:/app/config/auth-config.yaml:ro
+      # Data persistence
+      - ceneca-demo-data:/app/data
+      - ceneca-demo-logs:/app/logs
+      - ceneca-demo-cache:/app/cache
+    environment:
+      - CENECA_MODE=demo
+      - CENECA_CONFIG_PATH=/app/config/config.yaml
+      - DATA_CONNECTOR_AUTH_CONFIG=/app/config/auth-config.yaml
+      - DATABASE_URL=postgresql://notion_user:notion_password@postgres-storage:5432/notion_clone
+      - DISABLE_AUTH=true
+      - LOG_LEVEL=info
+      - PYTHONPATH=/app
+    networks:
+      - stock-demo-network
+    depends_on:
+      postgres-storage:
+        condition: service_healthy
+      mongodb-stock-demo:
+        condition: service_healthy
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8787/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+networks:
+  stock-demo-network:
+    driver: bridge
+
+volumes:
+  postgres-storage-data:
+  stock-demo-data:
+  ceneca-demo-data:
+  ceneca-demo-logs:
+  ceneca-demo-cache:

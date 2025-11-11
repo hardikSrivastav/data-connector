@@ -53,23 +53,27 @@ class AuthConfig:
             ValueError: If config is invalid
         """
         if config_path is None:
-            # Try default locations
-            possible_paths = [
-                Path.home() / ".data-connector" / "auth-config.yaml",
-                Path.cwd() / "auth-config.yaml",
-                Path.cwd() / "config" / "auth-config.yaml"
-            ]
-            
-            config_path = None
-            for path in possible_paths:
-                if path.exists():
-                    config_path = str(path)
-                    break
-                    
-            if not config_path:
-                raise FileNotFoundError(
-                    f"auth-config.yaml not found in any of: {[str(p) for p in possible_paths]}"
-                )
+            # First check environment variable
+            if os.environ.get("DATA_CONNECTOR_AUTH_CONFIG"):
+                config_path = os.environ["DATA_CONNECTOR_AUTH_CONFIG"]
+            else:
+                # Try default locations
+                possible_paths = [
+                    Path.home() / ".data-connector" / "auth-config.yaml",
+                    Path.cwd() / "auth-config.yaml",
+                    Path.cwd() / "config" / "auth-config.yaml"
+                ]
+                
+                config_path = None
+                for path in possible_paths:
+                    if path.exists():
+                        config_path = str(path)
+                        break
+                        
+                if not config_path:
+                    raise FileNotFoundError(
+                        f"auth-config.yaml not found in any of: {[str(p) for p in possible_paths]} and DATA_CONNECTOR_AUTH_CONFIG not set"
+                    )
         
         logger.info(f"Loading auth config from: {config_path}")
         

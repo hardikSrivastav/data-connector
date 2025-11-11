@@ -1,0 +1,23 @@
+# Demo Authentication Configuration - Completely Disabled
+# Perfect for development, testing, and demo deployments
+
+sso:
+  # Disable all authentication
+  enabled: false
+  default_protocol: "oidc"
+  
+  # Valid OIDC config to satisfy validation (not used when disabled)
+  oidc:
+    provider: "demo"
+    client_id: "DEMO_CLIENT_ID_NOT_USED"
+    client_secret: "DEMO_CLIENT_SECRET_NOT_USED" 
+    issuer: "https://demo.localhost"
+    discovery_url: "https://demo.localhost/.well-known/openid-configuration"
+    redirect_uri: "http://localhost:8787/api/agent/auth/callback"
+    scopes: ["openid", "email", "profile"]
+    claims_mapping:
+      email: "email"
+      name: "name"
+
+# No role mappings needed for demo
+role_mappings: {}

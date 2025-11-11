@@ -1,0 +1,69 @@
+version: '3.8'
+
+services:
+  # MongoDB Database
+  mongodb-stock-demo:
+    image: mongo:7
+    container_name: stock-demo-mongodb
+    ports:
+      - "27017:27017"
+    environment:
+      - MONGO_INITDB_DATABASE=financial_data
+    volumes:
+      - stock-demo-data:/data/db
+    networks:
+      - stock-demo-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Ceneca Agent - Platform Agnostic
+  ceneca-agent:
+    # Option 1: Use multi-platform image (works on Intel, AMD, ARM)
+    image: hardiksriv/agent:multiplatform
+    
+    # Option 2: Build locally (fallback if image pull fails)
+    # build:
+    #   context: ../server
+    #   dockerfile: Dockerfile
+    
+    container_name: stock-demo-ceneca
+    ports:
+      - "8787:8787"
+    volumes:
+      - ./config.yaml:/app/config/config.yaml:ro
+      - ./auth-config-demo.yaml:/app/config/auth-config.yaml:ro
+      - ceneca-demo-data:/app/data
+      - ceneca-demo-logs:/app/logs
+      - ceneca-demo-cache:/app/cache
+    environment:
+      - CENECA_MODE=demo
+      - CENECA_CONFIG_PATH=/app/config/config.yaml
+      - CENECA_AUTH_CONFIG_PATH=/app/config/auth-config.yaml
+      - LOG_LEVEL=info
+      - PYTHONPATH=/app
+    networks:
+      - stock-demo-network
+    depends_on:
+      mongodb-stock-demo:
+        condition: service_healthy
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8787/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+networks:
+  stock-demo-network:
+    driver: bridge
+
+volumes:
+  stock-demo-data:
+  ceneca-demo-data:
+  ceneca-demo-logs:
+  ceneca-demo-cache:
