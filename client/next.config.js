@@ -1,16 +1,19 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
-  // Disable ESLint during build
-  eslint: {
-    ignoreDuringBuilds: true,
-  },
+  // Force webpack instead of Turbopack to avoid symlink issues
+  turbo: false,
+  
   // Ignore TypeScript errors during build
   typescript: {
     ignoreBuildErrors: true,
   },
   // Enable React strict mode
   reactStrictMode: true,
-  // Note: SWC minification is on by default and no longer configurable via next.config.js
+  
+  // Set the correct root directory
+  turbopack: {
+    root: __dirname,
+  },
   
   // Add API rewrites to proxy to backend
   async rewrites() {
