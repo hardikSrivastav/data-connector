@@ -1,19 +1,17 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
-  // Force webpack instead of Turbopack to avoid symlink issues
-  turbo: false,
+  // Configure Turbopack (required for Next.js 16+)
+  turbopack: {
+    root: __dirname,
+  },
   
   // Ignore TypeScript errors during build
   typescript: {
     ignoreBuildErrors: true,
   },
+  
   // Enable React strict mode
   reactStrictMode: true,
-  
-  // Set the correct root directory
-  turbopack: {
-    root: __dirname,
-  },
   
   // Add API rewrites to proxy to backend
   async rewrites() {

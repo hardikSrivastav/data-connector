@@ -8,6 +8,21 @@ const nextConfig: NextConfig = {
   typescript: {
     ignoreBuildErrors: true,
   },
+  webpack: (config, { isServer }) => {
+    config.watchOptions = {
+      ...config.watchOptions,
+      ignored: [
+        '**/node_modules',
+        '**/.git',
+        '**/venv',
+        '**/venv311',
+        '**/self-serve/**/venv/**',
+        '**/__pycache__',
+        '**/*.pyc',
+      ]
+    }
+    return config
+  },
 };
 
 export default nextConfig;
